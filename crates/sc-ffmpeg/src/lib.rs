@@ -3,10 +3,14 @@
 #![cfg(target_os = "linux")]
 
 mod convert;
+mod encoder;
 mod hw;
+mod mux;
 mod recorder;
 
 pub use convert::Bgra2Nv12;
+pub use encoder::Encoder;
+pub use mux::Mp4Muxer;
 pub use recorder::Recorder;
 
 use ffmpeg_next as ff;

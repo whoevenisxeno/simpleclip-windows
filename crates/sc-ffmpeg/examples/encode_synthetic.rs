@@ -14,9 +14,11 @@ fn main() {
         .expect("open recorder");
 
     let frame_count = fps * secs;
+    let frame_ns = 1_000_000_000 / fps as i64;
     for i in 0..frame_count {
         let nv12 = moving_bars(w as usize, h as usize, i);
-        rec.push_nv12(&nv12).expect("push frame");
+        rec.push_nv12(&nv12, i as i64 * frame_ns)
+            .expect("push frame");
     }
     rec.finish().expect("finish");
     println!("wrote {frame_count} frames to {path}");

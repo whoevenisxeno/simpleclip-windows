@@ -28,7 +28,8 @@ fn main() {
                 let nv12 = conv
                     .convert(&frame.data, frame.stride as usize)
                     .expect("convert");
-                rec.push_nv12(&nv12).expect("encode");
+                rec.push_nv12(&nv12, frame.timestamp.as_nanos())
+                    .expect("encode");
                 n += 1;
             }
             Err(_) => continue,
