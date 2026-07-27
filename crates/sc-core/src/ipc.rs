@@ -1,3 +1,4 @@
+use crate::audio::AudioDevice;
 use crate::capture::{CaptureState, MonitorInfo};
 use crate::encode::EncoderKind;
 use crate::{Error, Result};
@@ -24,6 +25,8 @@ pub enum Request {
     Stop,
     Pause,
     Resume,
+    ListMonitors,
+    ListAudioDevices,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +47,8 @@ pub enum Response {
     Pong,
     Status(StatusReport),
     Saved { path: PathBuf, duration_secs: f64 },
+    Monitors(Vec<MonitorInfo>),
+    AudioDevices(Vec<AudioDevice>),
     Ok,
     Error { message: String },
 }

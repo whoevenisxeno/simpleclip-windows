@@ -57,6 +57,8 @@ fn main() -> Result<()> {
         } => {
             println!("saved {} ({:.1}s)", path.display(), duration_secs)
         }
+        Response::Monitors(m) => println!("{}", serde_json::to_string_pretty(&m)?),
+        Response::AudioDevices(d) => println!("{}", serde_json::to_string_pretty(&d)?),
         Response::Ok | Response::Pong => println!("ok"),
         Response::Error { message } => {
             eprintln!("error: {message}");

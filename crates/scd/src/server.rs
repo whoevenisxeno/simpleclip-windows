@@ -71,5 +71,10 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             daemon.set_state(CaptureState::Active);
             Response::Ok
         }
+        // Enumeration is served by the capture/audio backends, which land in
+        // Phase 1. Until then the daemon reports nothing detected rather than
+        // faking devices; the wizard handles the empty case.
+        Request::ListMonitors => Response::Monitors(Vec::new()),
+        Request::ListAudioDevices => Response::AudioDevices(Vec::new()),
     }
 }
