@@ -1,93 +1,83 @@
 # SimpleClip
 
-SimpleClip is a lightweight instant-replay clipping application for Windows and Linux. It continuously buffers your screen and audio in memory and writes the last N seconds to disk on a hotkey press. There is no record button and no interruption to the buffer while a clip is saved.
+Instant replay for Linux. SimpleClip always keeps the last N seconds of your
+screen buffered in RAM. When something worth keeping happens, you hit a hotkey
+and it writes those seconds to a file. There is no record button, and the buffer
+never stops.
 
-It runs as a background daemon (`scd`) with a CLI (`sc`) and a small tray/GUI client on top. The daemon is the only part that has to stay alive; the CLI, tray icon, and hotkey layer can all fail or restart without losing the buffer.
+Think ShadowPlay / Medal instant replay, but a small daemon and a hotkey instead
+of a launcher and an account.
 
-## Features
+## Status
 
-- Rolling replay buffer with configurable duration (15s / 30s / 1min / custom), capped by a RAM budget you set
-- Global hotkey saves the buffer to a file without pausing or dropping capture
-- Manual start/stop recording, separate from the replay path
-- Screenshot hotkey, pulled from the live capture
-- Clip trimming (stream-copy on keyframes, re-encode only when a frame-accurate cut is requested)
-- Clip gallery grouped by date, with playback and reveal-in-folder
-- First-launch setup wizard: monitor, microphone, replay duration, save location, hotkeys, quality
-- System tray with capture state (active / paused / needs re-authorization)
-- Post-save hook: runs a user-defined script with a JSON event after every save
-- Full CLI + local IPC surface, usable standalone without the GUI
+Usable. The core loop works today: the daemon buffers continuously and a hotkey
+saves the last N seconds to a valid, shareable MP4. Rough edges remain (see
+Roadmap). Linux only for now.
 
-## Capture
+- Rolling replay buffer, hardware encoded
+- Hotkey to save the last N seconds (set from the app, no root, no manual config)
+- GUI: setup wizard, live dashboard, clip gallery, and a lot of settings
+- Desktop notification and sound on save
+- Everything runs unprivileged
 
-- **Windows 11**: Windows Graphics Capture, falling back to DXGI Desktop Duplication. Hardware encode via NVENC, AMF, or QSV depending on GPU.
-- **Linux**: `xdg-desktop-portal` + PipeWire. Tested on Hyprland and niri; also works on KWin, Mutter, and X11. Hardware encode via NVENC or VA-API. PipeWire is required; there is no PulseAudio-only path.
-- macOS is not supported.
+## Requirements
 
-Encoding defaults to H.264 for compatibility. HEVC and AV1 are available as opt-in settings. Software encoding is only used if no hardware encoder is detected, and is off by default in release builds.
+- A modern Linux desktop on Wayland with PipeWire and `xdg-desktop-portal`
+- A GPU with VA-API H.264 encode (AMD or Intel)
+- Hyprland for the fully automatic hotkey setup. Other compositors work too, you
+  just bind the key to `sc save` yourself.
 
-## Installation
+## Install
 
-**Windows**
 ```
-winget install SimpleClip
+git clone https://github.com/whoevenisxeno/SimpleClip
+cd SimpleClip
+./packaging/install.sh
 ```
-or download the portable build from the Releases page.
 
-**Linux**
-```
-# Arch / AUR
-yay -S simpleclip
-
-# AppImage
-chmod +x SimpleClip-*.AppImage && ./SimpleClip-*.AppImage
-```
-A Flatpak build is also available; some capture paths and the evdev hotkey fallback are constrained under sandboxing (documented in `docs/`).
+This builds release binaries and installs `scd`, `sc`, and `sc-gui` to
+`~/.local/bin` with a desktop launcher. On Hyprland, the daemon manages its own
+hotkey config, so once it runs there is nothing else to set up.
 
 ## Usage
 
-On first launch, the setup wizard walks through monitor, microphone, buffer duration, save location, and hotkeys.
+- The daemon `scd` runs in the background and buffers continuously.
+- Press the save hotkey (default SUPER+F10) to write the last N seconds.
+- Run `sc-gui` for the wizard, live dashboard, gallery, and settings.
+- Or drive it from the CLI:
 
-On Linux, hotkeys are bound in your compositor config and mapped to CLI commands, for example on Hyprland:
 ```
-bind = SUPER, F10, exec, sc save
-bind = SUPER, F11, exec, sc screenshot
+sc save --last 30   # save the last 30 seconds
+sc status           # capture state, buffer fill, encoder
+sc pause / sc resume
 ```
-On Windows, hotkeys are registered directly by the app during setup.
 
-CLI reference:
+## How it works
 
-| Command | Description |
-|---|---|
-| `sc save [--last SECONDS]` | Save the last N seconds from the buffer (defaults to configured duration) |
-| `sc screenshot` | Save a still frame from the live capture |
-| `sc record` / `sc stop` | Start/stop a manual recording |
-| `sc status` | Show capture state, buffer fill, selected monitor, encoder, and A/V drift (`--json` for machine-readable output) |
-| `sc pause` / `sc resume` | Pause or resume capture |
-| `scd` | The daemon itself; run with `--foreground` or `--verbose` for debugging |
+A long-lived daemon (`scd`) owns capture and the buffer; `sc` and `sc-gui` are
+thin clients that talk to it over a local socket. Only the daemon has to stay
+alive, so the GUI or a hotkey can crash without losing the buffer.
+
+Capture goes through `xdg-desktop-portal` and PipeWire. Frames are converted and
+encoded on the GPU (VA-API H.264) into a rolling ring buffer of encoded packets.
+Saving snapshots the buffer and muxes a keyframe-aligned faststart MP4 without
+ever stalling capture.
 
 ## Configuration
 
-Settings are stored as hand-editable TOML and hot-reloaded on change:
+Settings live in `~/.config/simpleclip/config.toml` (hand-editable, hot-reloaded)
+and are also exposed in the GUI: buffer length, RAM cap, bitrate, codec, capture
+FPS, cursor, save location and naming, notifications, and the hotkey.
 
-- Linux: `~/.config/simpleclip/config.toml`
-- Windows: `%APPDATA%\SimpleClip\config.toml`
+## Roadmap
 
-An invalid config keeps the daemon running on the last known-good settings and raises a tray warning instead of crashing.
-
-## Documentation
-
-- `ARCHITECTURE.md` - daemon/client split, capture/encoder/audio trait boundaries, buffer design
-- `docs/DECISIONS.md` - resolved design decisions and their rationale
-- `docs/OPEN-QUESTIONS.md` - unresolved technical questions being tracked
-
-## Privacy
-
-No telemetry, no accounts, no network calls beyond an optional, disableable update check. All logs are local.
+- Audio (desktop + mic) in the clips
+- Screenshot hotkey
+- System tray icon
+- Restore token so the screen-share prompt only appears once
+- NVIDIA (NVENC) encode path
+- Packaging: AUR, AppImage
 
 ## License
 
-Core project is dual-licensed MIT OR Apache-2.0. Any GPL-licensed component (e.g. an optional x264 software encoder) is isolated behind an opt-in build feature and does not affect the default build's license.
-
-## Contributing
-
-Contributions are handled through pull requests against `main`. See `CONTRIBUTING.md` for coding standards, commit conventions, and the CI requirements (fmt, clippy, license/advisory checks) that PRs must pass.
+MIT OR Apache-2.0.
