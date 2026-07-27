@@ -1,0 +1,15 @@
+[package]
+name = "sc-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sc-gui"
+path = "src/main.rs"
+
+[dependencies]
+sc-core.workspace = true
+anyhow.workspace = true

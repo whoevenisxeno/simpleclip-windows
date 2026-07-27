@@ -1,0 +1,18 @@
+[package]
+name = "sc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sc"
+path = "src/main.rs"
+
+[dependencies]
+sc-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+interprocess.workspace = true

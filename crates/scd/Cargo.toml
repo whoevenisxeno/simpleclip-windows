@@ -1,0 +1,25 @@
+[package]
+name = "scd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "scd"
+path = "src/main.rs"
+
+[dependencies]
+sc-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+interprocess.workspace = true
+notify.workspace = true
+crossbeam-channel.workspace = true
+directories.workspace = true

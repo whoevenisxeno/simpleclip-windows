@@ -1,0 +1,55 @@
+# Decisions
+
+Lightweight ADRs. Each entry records a resolved choice and why, so we don't
+relitigate it. Newest first.
+
+## D-0007 · IPC framing: newline-delimited JSON
+Phase 0. Debuggable by eye and with `nc`, trivially versioned via an envelope,
+zero schema-compiler step. The brief allows revisiting only if profiling shows it
+matters; capture/encode dominate cost, not control-plane messages. Envelope carries
+a `version` field, checked on every read.
+
+## D-0006 · Local socket via `interprocess`
+Phase 0. One API for Unix domain sockets and Windows named pipes, so the daemon and
+clients share a single IPC code path. Namespaced names (`GenericNamespaced`) avoid
+stale socket files on Linux (abstract namespace) and map cleanly to named pipes on
+Windows. Socket name overridable via `SC_SOCKET` for tests / side-by-side daemons.
+
+## D-0005 · Ring stores encoded packets, evicts whole GOPs
+Phase 0. Raw 1080p60 is ~370 MB/s — untenable in RAM. We buffer encoded packets
+with timestamps instead. Eviction removes whole leading GOPs so the front is always
+a keyframe and a saved clip starts cleanly. Trade: needs a short GOP (1–2s) for tight
+"last N seconds" boundaries; documented in the encoder config.
+
+## D-0004 · Daemon + thin clients
+Phase 0. Reliability pillar. `scd` owns capture and the buffer; `sc`, the tray, and
+`sc-gui` are all just IPC clients. A UI or hotkey crash cannot take down capture.
+
+## D-0003 · egui for the GUI, no webview
+Phase 0 (implementation Phase 5). Pure-Rust, single-binary, trivial cross-compile,
+keeps the lightweight promise. Tauri/webview rejected — the runtime weight
+contradicts the footprint goal. Native-look is the accepted trade.
+
+## D-0002 · FFmpeg/libav for encode + mux, LGPL link
+Phase 0 (implementation Phase 1). One dependency covers every hardware encoder
+(NVENC/VA-API/QSV/AMF), software fallback, and muxing on both OSes. Link LGPL
+FFmpeg; any GPL piece (x264) stays behind an opt-in Cargo feature so the default
+build is permissive. `libobs` rejected: GPL-3.0 and requires shipping OBS.
+
+## D-0001 · Rust, workspace of four crates
+Phase 0. Memory safety for a 24/7 background process, mature capture/encode crates,
+single-binary distribution. Layout: `sc-core` (contracts), `scd` (daemon),
+`sc` (CLI), `sc-gui` (egui client). MSRV = latest stable − 2.
+
+## D-0000 · Bootstrap Linux-first
+Phase 0. The maintainer's daily driver is Hyprland/Wayland on an AMD RX 6650 XT
+(VA-API), so Linux gives the fastest dogfooding loop. The platform abstraction is
+designed up front so Windows slots in at Phase 4 without rework. This sequences the
+work; it does not demote Windows.
+
+---
+
+### Dev-machine facts (reference implementation target)
+- Compositor: Hyprland (Wayland), priority tier-1 target
+- GPU: AMD Radeon RX 6650 XT → VA-API encode (H.264 High/Main + HEVC confirmed via `vainfo`)
+- PipeWire 1.6.8, FFmpeg n8.1.2 (libavcodec 62), Rust 1.97.1
