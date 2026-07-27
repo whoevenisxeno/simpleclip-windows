@@ -19,6 +19,9 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "MPL-2.0",
+    # ffmpeg-next / ffmpeg-sys-next Rust wrappers. The linked FFmpeg library is
+    # system LGPL (not a cargo dep); these bindings are WTFPL (permissive).
+    "WTFPL",
 ]
 confidence-threshold = 0.9
 

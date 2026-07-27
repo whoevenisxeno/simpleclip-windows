@@ -3,6 +3,16 @@
 Lightweight ADRs. Each entry records a resolved choice and why, so we don't
 relitigate it. Newest first.
 
+## D-0008 · FFmpeg binding: `ffmpeg-next`, dynamically linked to system FFmpeg
+Phase 1. A spike confirmed `ffmpeg-next` 8.1.0 builds and links against the
+system's FFmpeg 8.1 (libavcodec 62) — its major version tracks FFmpeg's, which
+sidesteps the usual "binding lags the system lib" trap. It finds `h264_vaapi` /
+`hevc_vaapi` and re-exports raw FFI (`ffmpeg_next::ffi`) for the hardware-context
+work the safe API doesn't cover. VA-API `av_hwdevice_ctx_create` opened cleanly on
+the AMD RX 6650 XT. Linux links the distro FFmpeg (LGPL); Windows bundling is
+decided at Phase 4. Note: system FFmpeg ships `libx264` but not `libopenh264`,
+which feeds the Q3 software-fallback choice — irrelevant where hardware works.
+
 ## D-0007 · IPC framing: newline-delimited JSON
 Phase 0. Debuggable by eye and with `nc`, trivially versioned via an envelope,
 zero schema-compiler step. The brief allows revisiting only if profiling shows it

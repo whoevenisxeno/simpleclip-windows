@@ -1,0 +1,18 @@
+[package]
+name = "sc-ffmpeg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sc-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# FFmpeg is linked from the system library, which Phase 1 only targets on Linux.
+# The Windows encode path lands in Phase 4; until then this crate is a no-op there
+# so `cargo build --workspace` stays green on the Windows CI runner.
+[target.'cfg(target_os = "linux")'.dependencies]
+ffmpeg-next.workspace = true

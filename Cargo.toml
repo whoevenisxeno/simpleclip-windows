@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui"]
+members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg"]
 
 [workspace.package]
 version = "0.1.0"
@@ -25,6 +25,7 @@ notify = "8"
 toml = "0.8"
 directories = "6"
 crossbeam-channel = "0.5"
+ffmpeg-next = "8.1"
 
 [profile.release]
 lto = "thin"
