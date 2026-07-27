@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg"]
+members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg", "crates/sc-capture"]
 
 [workspace.package]
 version = "0.1.0"

@@ -2,9 +2,11 @@
 // the crate compiles to nothing; the Windows encoder lands in Phase 4.
 #![cfg(target_os = "linux")]
 
+mod convert;
 mod hw;
 mod recorder;
 
+pub use convert::Bgra2Nv12;
 pub use recorder::Recorder;
 
 use ffmpeg_next as ff;
