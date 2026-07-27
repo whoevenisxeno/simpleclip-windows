@@ -28,4 +28,3 @@ directories.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 sc-capture = { path = "../sc-capture" }
 sc-ffmpeg = { path = "../sc-ffmpeg" }
-evdev = "0.12"

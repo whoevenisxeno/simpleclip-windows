@@ -43,6 +43,8 @@ fn handle_event(res: notify::Result<Event>, path: &std::path::Path, daemon: &Dae
     }
     match Config::load(path) {
         Ok(cfg) => {
+            #[cfg(target_os = "linux")]
+            crate::hypr::sync_hotkey(&cfg.hotkeys.save);
             daemon.set_config(cfg);
             tracing::info!("config hot-reloaded");
         }

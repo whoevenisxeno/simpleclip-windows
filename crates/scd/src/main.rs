@@ -1,5 +1,5 @@
 #[cfg(target_os = "linux")]
-mod hotkeys;
+mod hypr;
 mod naming;
 mod notify;
 #[cfg(target_os = "linux")]
@@ -52,13 +52,10 @@ fn main() -> Result<()> {
         std::thread::spawn(move || d.start_capture());
     }
 
-    // SimpleClip listens for its own save hotkey (needs the `input` group).
+    // Keep the compositor's save-hotkey bind in sync with config (no elevated
+    // permissions needed; SimpleClip owns and reloads its own Hyprland snippet).
     #[cfg(target_os = "linux")]
-    {
-        let hotkey = daemon.config.read().unwrap().hotkeys.save.clone();
-        let d = daemon.clone();
-        hotkeys::spawn(&hotkey, std::sync::Arc::new(move || d.hotkey_save()));
-    }
+    hypr::sync_hotkey(&daemon.config.read().unwrap().hotkeys.save);
 
     server::serve(daemon)
 }
