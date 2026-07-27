@@ -11,7 +11,7 @@ to `DECISIONS.md`. Status: 🔴 open · 🟡 spiking · 🟢 resolved (see ADR).
 | Q4 | Confirm newline-JSON IPC isn't a bottleneck under real load. | — | 🟢 D-0007 (revisit if profiled) |
 | Q5 | egui video-playback for gallery/trim: embed frames vs delegate to system player. | Phase 6 | 🔴 |
 | Q6 | GlobalShortcuts portal status on Hyprland / niri / KWin / Mutter (secondary hotkey path only). | Phase 3 | 🔴 |
-| Q7 | Zero-copy GPU-frame → encoder path. v1 may use a CPU-download path; log the perf cost, mark zero-copy as later optimization. | Phase 1 | 🔴 |
+| Q7 | Zero-copy GPU-frame → encoder path. v1 uses CPU-download: portal delivers BGRA in mapped memory → swscale BGRA→NV12 → VA-API upload. Proven working; cost = one swscale + one GPU upload per frame. DMA-BUF zero-copy is a later optimization. | Phase 1 | 🟡 CPU path |
 | Q8 | Exclusive-fullscreen "no frames" detection heuristics per platform. | Phase 3/4 | 🔴 |
 
 ## Spike plan for the next phase (Phase 1, Linux)

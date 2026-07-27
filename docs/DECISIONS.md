@@ -3,6 +3,24 @@
 Lightweight ADRs. Each entry records a resolved choice and why, so we don't
 relitigate it. Newest first.
 
+## D-0009 · Linux capture: ashpd (portal ScreenCast) + pipewire-rs 0.10
+Phase 1. A spike proved the full path on Hyprland: `ashpd` drives the
+xdg-desktop-portal ScreenCast (create session, select monitor, start, open the
+PipeWire remote fd), and `pipewire` 0.10 consumes the node. Findings that shape
+the real backend:
+- **Runtime:** ashpd with the `async-io` backend + `pollster::block_on` avoids
+  pulling tokio into the daemon. The blocking PipeWire mainloop runs on its own
+  thread while the portal session is held alive in scope.
+- **Pixel format:** the compositor delivers **BGRA** (4 bpp, stride = width*4).
+  VA-API wants NV12, so a **swscale BGRA->NV12** step sits between capture and the
+  encoder (this is the Q7 CPU-download cost, made concrete).
+- **Framerate is dynamic (`0/1`):** frames arrive on damage, not a fixed cadence.
+  Frames must be timestamped from the PipeWire buffer clock, never an assumed fps
+  — load-bearing for the <50ms A/V sync target.
+- **Versions matter:** pipewire/libspa **0.10** build against system PipeWire
+  1.6.8; 0.8 does not (`spa_pod_builder` layout changed). Do not depend on ashpd's
+  bundled `pipewire` feature — it collides on the `pipewire-0.3` links key.
+
 ## D-0008 · FFmpeg binding: `ffmpeg-next`, dynamically linked to system FFmpeg
 Phase 1. A spike confirmed `ffmpeg-next` 8.1.0 builds and links against the
 system's FFmpeg 8.1 (libavcodec 62) — its major version tracks FFmpeg's, which
