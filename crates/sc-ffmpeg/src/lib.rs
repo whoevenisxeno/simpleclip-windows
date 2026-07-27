@@ -9,7 +9,7 @@ mod mux;
 mod recorder;
 
 pub use convert::Bgra2Nv12;
-pub use encoder::Encoder;
+pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
 pub use recorder::Recorder;
 

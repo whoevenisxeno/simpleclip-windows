@@ -1,4 +1,4 @@
-use crate::encoder::Encoder;
+use crate::encoder::{CodecParams, Encoder};
 use crate::{Error, Result};
 use ffmpeg_next::ffi;
 use sc_core::encode::EncodedPacket;
@@ -23,6 +23,12 @@ pub struct Mp4Muxer {
 
 impl Mp4Muxer {
     pub fn new(path: &std::path::Path, enc: &Encoder) -> Result<Self> {
+        Self::from_params(path, &enc.codec_params()?)
+    }
+
+    /// Build a muxer from a codec-params snapshot, so a clip can be written on a
+    /// save thread without borrowing the live encoder.
+    pub fn from_params(path: &std::path::Path, params: &CodecParams) -> Result<Self> {
         let path_c = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| Error::Ffmpeg("path has interior NUL".into()))?;
         unsafe {
@@ -32,7 +38,7 @@ impl Mp4Muxer {
                 base_ns: None,
                 finished: false,
             };
-            if let Err(e) = m.open(&path_c, enc) {
+            if let Err(e) = m.open(&path_c, params.as_ptr()) {
                 m.cleanup();
                 return Err(e);
             }
@@ -42,7 +48,11 @@ impl Mp4Muxer {
 }
 
 impl Mp4Muxer {
-    unsafe fn open(&mut self, path_c: &CString, enc: &Encoder) -> Result<()> {
+    unsafe fn open(
+        &mut self,
+        path_c: &CString,
+        params: *const ffi::AVCodecParameters,
+    ) -> Result<()> {
         let mp4 = CString::new("mp4").unwrap();
         let rc = ffi::avformat_alloc_output_context2(
             &mut self.oc,
@@ -63,10 +73,10 @@ impl Mp4Muxer {
                 ctx: "avformat_new_stream",
             });
         }
-        if ffi::avcodec_parameters_from_context((*st).codecpar, enc.ctx()) < 0 {
+        if ffi::avcodec_parameters_copy((*st).codecpar, params) < 0 {
             return Err(Error::Av {
                 code: -1,
-                ctx: "avcodec_parameters_from_context",
+                ctx: "avcodec_parameters_copy",
             });
         }
         (*st).time_base = IN_TB;

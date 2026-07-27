@@ -15,6 +15,9 @@ pub struct Bgra2Nv12 {
     height: i32,
 }
 
+// Owned by, and used from, a single encode thread; moving it there is sound.
+unsafe impl Send for Bgra2Nv12 {}
+
 impl Bgra2Nv12 {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         let (w, h) = (width as i32, height as i32);

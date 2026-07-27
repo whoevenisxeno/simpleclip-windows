@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg", "crates/sc-capture"]
 
 [workspace.package]
-version = "1.1.0"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"

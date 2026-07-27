@@ -23,3 +23,8 @@ interprocess.workspace = true
 notify.workspace = true
 crossbeam-channel.workspace = true
 directories.workspace = true
+
+# Capture + encode pipeline (Linux Phase 1). The Windows backend arrives in Phase 4.
+[target.'cfg(target_os = "linux")'.dependencies]
+sc-capture = { path = "../sc-capture" }
+sc-ffmpeg = { path = "../sc-ffmpeg" }

@@ -21,6 +21,9 @@ pub struct Encoder {
     base_ns: Option<i64>,
 }
 
+// Owned by, and used from, a single encode thread; moving it there is sound.
+unsafe impl Send for Encoder {}
+
 impl Encoder {
     pub fn new(
         width: u32,
@@ -48,10 +51,6 @@ impl Encoder {
             }
             Ok(enc)
         }
-    }
-
-    pub(crate) fn ctx(&self) -> *mut ffi::AVCodecContext {
-        self.ctx
     }
 }
 
@@ -240,5 +239,49 @@ impl Encoder {
 impl Drop for Encoder {
     fn drop(&mut self) {
         self.cleanup();
+    }
+}
+
+/// An owned snapshot of the encoder's codec parameters (dimensions + SPS/PPS
+/// extradata). Lets a muxer be built on a save thread without touching the live
+/// encoder. Safe to send across threads: it is plain owned data with no aliasing.
+pub struct CodecParams(*mut ffi::AVCodecParameters);
+
+// Send + Sync: after creation the AVCodecParameters is immutable; the muxer only
+// reads it (avcodec_parameters_copy), so sharing a reference across threads is safe.
+unsafe impl Send for CodecParams {}
+unsafe impl Sync for CodecParams {}
+
+impl CodecParams {
+    pub(crate) fn as_ptr(&self) -> *const ffi::AVCodecParameters {
+        self.0
+    }
+}
+
+impl Drop for CodecParams {
+    fn drop(&mut self) {
+        unsafe { ffi::avcodec_parameters_free(&mut self.0) };
+    }
+}
+
+impl Encoder {
+    pub fn codec_params(&self) -> Result<CodecParams> {
+        unsafe {
+            let p = ffi::avcodec_parameters_alloc();
+            if p.is_null() {
+                return Err(Error::Av {
+                    code: -1,
+                    ctx: "avcodec_parameters_alloc",
+                });
+            }
+            let params = CodecParams(p);
+            if ffi::avcodec_parameters_from_context(params.0, self.ctx) < 0 {
+                return Err(Error::Av {
+                    code: -1,
+                    ctx: "avcodec_parameters_from_context",
+                });
+            }
+            Ok(params)
+        }
     }
 }

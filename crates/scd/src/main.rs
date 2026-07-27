@@ -1,3 +1,6 @@
+mod naming;
+#[cfg(target_os = "linux")]
+mod pipeline;
 mod reload;
 mod server;
 mod state;
@@ -38,6 +41,13 @@ fn main() -> Result<()> {
     let daemon = Daemon::new(config);
     reload::spawn_watcher(config_path, daemon.clone());
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "scd starting");
+
+    // Start capture off-thread so the IPC server is reachable immediately (the
+    // portal consent dialog can take a while to be answered).
+    {
+        let d = daemon.clone();
+        std::thread::spawn(move || d.start_capture());
+    }
     server::serve(daemon)
 }
 

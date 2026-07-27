@@ -49,9 +49,15 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
     match req {
         Request::Ping => Response::Pong,
         Request::Status => Response::Status(daemon.status_report()),
-        // Phase 1+ wires these to the real pipeline; stubbed for the Phase 0 gate.
-        Request::Save { .. } | Request::Screenshot => Response::Error {
-            message: "capture not implemented until Phase 1".into(),
+        Request::Save { last_secs } => match daemon.save_clip(last_secs) {
+            Ok((path, duration_secs)) => Response::Saved {
+                path,
+                duration_secs,
+            },
+            Err(message) => Response::Error { message },
+        },
+        Request::Screenshot => Response::Error {
+            message: "screenshot lands in Phase 3".into(),
         },
         Request::Record => {
             daemon.set_recording(true);
