@@ -2,12 +2,14 @@
 // the crate compiles to nothing; the Windows encoder lands in Phase 4.
 #![cfg(target_os = "linux")]
 
+mod audio_encoder;
 mod convert;
 mod encoder;
 mod hw;
 mod mux;
 mod recorder;
 
+pub use audio_encoder::AacEncoder;
 pub use convert::Bgra2Nv12;
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;

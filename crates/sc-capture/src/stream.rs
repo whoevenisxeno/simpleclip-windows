@@ -20,6 +20,7 @@ pub fn run(
     frames: crossbeam_channel::Sender<VideoFrame>,
     dims: crossbeam_channel::Sender<(u32, u32)>,
     stop: pipewire::channel::Receiver<()>,
+    epoch: Instant,
 ) -> Result<()> {
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None).map_err(pwerr)?;
@@ -32,7 +33,7 @@ pub fn run(
     let data = Cap {
         frames,
         dims: Some(dims),
-        epoch: Instant::now(),
+        epoch,
         format: Default::default(),
     };
     let stream = pw::stream::StreamBox::new(

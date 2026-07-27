@@ -11,6 +11,7 @@ pub async fn run(
     frames: crossbeam_channel::Sender<VideoFrame>,
     dims: crossbeam_channel::Sender<(u32, u32)>,
     stop: pipewire::channel::Receiver<()>,
+    epoch: std::time::Instant,
 ) -> Result<()> {
     let proxy = Screencast::new()
         .await
@@ -49,5 +50,5 @@ pub async fn run(
         .map_err(|e| Error::Portal(e.to_string()))?;
     tracing::info!(node_id, "portal ScreenCast started");
 
-    stream::run(fd, node_id, frames, dims, stop)
+    stream::run(fd, node_id, frames, dims, stop, epoch)
 }

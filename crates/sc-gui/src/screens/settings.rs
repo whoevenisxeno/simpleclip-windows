@@ -81,6 +81,7 @@ fn quality(app: &mut ScApp, ui: &mut egui::Ui) {
 
 fn audio(app: &mut ScApp, ui: &mut egui::Ui) {
     widgets::card(ui, "Audio", |ui| {
+        ui.checkbox(&mut app.cfg.audio.desktop_enabled, "Capture desktop audio");
         ui.checkbox(&mut app.cfg.audio.mic_enabled, "Capture microphone");
         if app.cfg.audio.mic_enabled {
             ui.horizontal(|ui| {

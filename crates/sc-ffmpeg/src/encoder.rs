@@ -256,6 +256,28 @@ impl CodecParams {
     pub(crate) fn as_ptr(&self) -> *const ffi::AVCodecParameters {
         self.0
     }
+
+    /// Snapshot the codec parameters (dimensions/format + extradata) of any open
+    /// encoder context.
+    pub(crate) fn from_context(ctx: *mut ffi::AVCodecContext) -> Result<Self> {
+        unsafe {
+            let p = ffi::avcodec_parameters_alloc();
+            if p.is_null() {
+                return Err(Error::Av {
+                    code: -1,
+                    ctx: "avcodec_parameters_alloc",
+                });
+            }
+            let params = CodecParams(p);
+            if ffi::avcodec_parameters_from_context(params.0, ctx) < 0 {
+                return Err(Error::Av {
+                    code: -1,
+                    ctx: "avcodec_parameters_from_context",
+                });
+            }
+            Ok(params)
+        }
+    }
 }
 
 impl Drop for CodecParams {
@@ -266,22 +288,6 @@ impl Drop for CodecParams {
 
 impl Encoder {
     pub fn codec_params(&self) -> Result<CodecParams> {
-        unsafe {
-            let p = ffi::avcodec_parameters_alloc();
-            if p.is_null() {
-                return Err(Error::Av {
-                    code: -1,
-                    ctx: "avcodec_parameters_alloc",
-                });
-            }
-            let params = CodecParams(p);
-            if ffi::avcodec_parameters_from_context(params.0, self.ctx) < 0 {
-                return Err(Error::Av {
-                    code: -1,
-                    ctx: "avcodec_parameters_from_context",
-                });
-            }
-            Ok(params)
-        }
+        CodecParams::from_context(self.ctx)
     }
 }

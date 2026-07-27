@@ -38,6 +38,7 @@ pub struct CaptureSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct AudioSettings {
+    pub desktop_enabled: bool,
     pub desktop_device: String,
     pub mic_device: Option<String>,
     pub mic_enabled: bool,
@@ -114,6 +115,7 @@ impl Default for CaptureSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
+            desktop_enabled: true,
             desktop_device: String::new(),
             mic_device: None,
             mic_enabled: false,

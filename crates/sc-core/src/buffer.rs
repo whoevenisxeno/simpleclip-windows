@@ -94,6 +94,16 @@ impl PacketRing {
         }
         self.packets.iter().skip(start_idx).cloned().collect()
     }
+
+    /// Clone packets at or after `since` (nanoseconds). Used to line an audio
+    /// track up with the video snapshot's keyframe start so both begin together.
+    pub fn snapshot_since(&self, since: i64) -> Vec<EncodedPacket> {
+        self.packets
+            .iter()
+            .filter(|p| p.timestamp.as_nanos() >= since)
+            .cloned()
+            .collect()
+    }
 }
 
 #[cfg(test)]

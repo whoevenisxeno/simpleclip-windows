@@ -5,18 +5,21 @@ use sc_core::encode::EncodedPacket;
 use std::ffi::CString;
 use std::ptr;
 
+// Packet timestamps arrive in nanoseconds; we carry them through the muxer as
+// microseconds, then rescale to each stream's own timebase.
 const IN_TB: ffi::AVRational = ffi::AVRational {
     num: 1,
     den: 1_000_000,
 };
 
-/// Muxes already-encoded packets into a faststart MP4. Built from an `Encoder`
-/// so it copies the right codec parameters (SPS/PPS). Packet timestamps are
-/// normalized to the first packet written, so a clip snapshotted out of the ring
-/// buffer starts cleanly at zero.
+/// Muxes encoded video (and optionally AAC audio) into a faststart MP4. Built
+/// from encoder param snapshots so it can run on a save thread. Packet
+/// timestamps are normalized to the first packet written across both streams, so
+/// a clip taken out of the ring buffer starts at zero and stays A/V-aligned.
 pub struct Mp4Muxer {
     oc: *mut ffi::AVFormatContext,
-    stream_tb: ffi::AVRational,
+    video_tb: ffi::AVRational,
+    audio: Option<(i32, ffi::AVRational)>,
     base_ns: Option<i64>,
     finished: bool,
 }
@@ -26,24 +29,65 @@ impl Mp4Muxer {
         Self::from_params(path, &enc.codec_params()?)
     }
 
-    /// Build a muxer from a codec-params snapshot, so a clip can be written on a
-    /// save thread without borrowing the live encoder.
-    pub fn from_params(path: &std::path::Path, params: &CodecParams) -> Result<Self> {
+    pub fn from_params(path: &std::path::Path, video: &CodecParams) -> Result<Self> {
+        Self::open_all(path, video, None)
+    }
+
+    /// Video plus an AAC audio stream at `audio_rate` Hz.
+    pub fn with_audio(
+        path: &std::path::Path,
+        video: &CodecParams,
+        audio: &CodecParams,
+        audio_rate: i32,
+    ) -> Result<Self> {
+        Self::open_all(path, video, Some((audio, audio_rate)))
+    }
+}
+
+impl Mp4Muxer {
+    fn open_all(
+        path: &std::path::Path,
+        video: &CodecParams,
+        audio: Option<(&CodecParams, i32)>,
+    ) -> Result<Self> {
         let path_c = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| Error::Ffmpeg("path has interior NUL".into()))?;
         unsafe {
             let mut m = Self {
                 oc: ptr::null_mut(),
-                stream_tb: IN_TB,
+                video_tb: IN_TB,
+                audio: None,
                 base_ns: None,
                 finished: false,
             };
-            if let Err(e) = m.open(&path_c, params.as_ptr()) {
+            if let Err(e) = m.open(&path_c, video, audio) {
                 m.cleanup();
                 return Err(e);
             }
             Ok(m)
         }
+    }
+
+    unsafe fn add_stream(
+        &mut self,
+        params: *const ffi::AVCodecParameters,
+        tb: ffi::AVRational,
+    ) -> Result<i32> {
+        let st = ffi::avformat_new_stream(self.oc, ptr::null());
+        if st.is_null() {
+            return Err(Error::Av {
+                code: -1,
+                ctx: "avformat_new_stream",
+            });
+        }
+        if ffi::avcodec_parameters_copy((*st).codecpar, params) < 0 {
+            return Err(Error::Av {
+                code: -1,
+                ctx: "avcodec_parameters_copy",
+            });
+        }
+        (*st).time_base = tb;
+        Ok((*st).index)
     }
 }
 
@@ -51,7 +95,8 @@ impl Mp4Muxer {
     unsafe fn open(
         &mut self,
         path_c: &CString,
-        params: *const ffi::AVCodecParameters,
+        video: &CodecParams,
+        audio: Option<(&CodecParams, i32)>,
     ) -> Result<()> {
         let mp4 = CString::new("mp4").unwrap();
         let rc = ffi::avformat_alloc_output_context2(
@@ -66,20 +111,14 @@ impl Mp4Muxer {
                 ctx: "avformat_alloc_output_context2",
             });
         }
-        let st = ffi::avformat_new_stream(self.oc, ptr::null());
-        if st.is_null() {
-            return Err(Error::Av {
-                code: -1,
-                ctx: "avformat_new_stream",
-            });
-        }
-        if ffi::avcodec_parameters_copy((*st).codecpar, params) < 0 {
-            return Err(Error::Av {
-                code: -1,
-                ctx: "avcodec_parameters_copy",
-            });
-        }
-        (*st).time_base = IN_TB;
+        let vidx = self.add_stream(video.as_ptr(), IN_TB)?;
+        let aidx = match audio {
+            Some((p, rate)) => Some((
+                self.add_stream(p.as_ptr(), ffi::AVRational { num: 1, den: rate })?,
+                rate,
+            )),
+            None => None,
+        };
         if ffi::avio_open(&mut (*self.oc).pb, path_c.as_ptr(), ffi::AVIO_FLAG_WRITE) < 0 {
             return Err(Error::Av {
                 code: -1,
@@ -87,8 +126,10 @@ impl Mp4Muxer {
             });
         }
         let mut opts: *mut ffi::AVDictionary = ptr::null_mut();
-        let k = CString::new("movflags").unwrap();
-        let v = CString::new("+faststart").unwrap();
+        let (k, v) = (
+            CString::new("movflags").unwrap(),
+            CString::new("+faststart").unwrap(),
+        );
         ffi::av_dict_set(&mut opts, k.as_ptr(), v.as_ptr(), 0);
         let rc = ffi::avformat_write_header(self.oc, &mut opts);
         ffi::av_dict_free(&mut opts);
@@ -98,15 +139,34 @@ impl Mp4Muxer {
                 ctx: "avformat_write_header",
             });
         }
-        self.stream_tb = (*st).time_base;
+        self.video_tb = stream_tb(self.oc, vidx);
+        if let Some((ai, _)) = aidx {
+            self.audio = Some((ai, stream_tb(self.oc, ai)));
+        }
         Ok(())
     }
 }
 
+unsafe fn stream_tb(oc: *mut ffi::AVFormatContext, idx: i32) -> ffi::AVRational {
+    (*(*(*oc).streams.add(idx as usize))).time_base
+}
+
 impl Mp4Muxer {
-    /// Write one encoded packet. Timestamps are normalized to the first packet
-    /// so the output starts at zero regardless of when it was captured.
+    /// Write a video packet (stream 0).
     pub fn write(&mut self, ep: &EncodedPacket) -> Result<()> {
+        let tb = self.video_tb;
+        self.write_pkt(ep, 0, tb)
+    }
+
+    /// Write an audio packet, if this muxer has an audio stream.
+    pub fn write_audio(&mut self, ep: &EncodedPacket) -> Result<()> {
+        if let Some((idx, tb)) = self.audio {
+            return self.write_pkt(ep, idx, tb);
+        }
+        Ok(())
+    }
+
+    fn write_pkt(&mut self, ep: &EncodedPacket, idx: i32, tb: ffi::AVRational) -> Result<()> {
         let base = *self.base_ns.get_or_insert(ep.timestamp.as_nanos());
         let pts_us = (ep.timestamp.as_nanos() - base) / 1000;
         unsafe {
@@ -119,10 +179,10 @@ impl Mp4Muxer {
                 });
             }
             ptr::copy_nonoverlapping(ep.data.as_ptr(), (*pkt).data, ep.data.len());
-            let ts = ffi::av_rescale_q(pts_us, IN_TB, self.stream_tb);
+            let ts = ffi::av_rescale_q(pts_us.max(0), IN_TB, tb);
             (*pkt).pts = ts;
             (*pkt).dts = ts;
-            (*pkt).stream_index = 0;
+            (*pkt).stream_index = idx;
             if ep.keyframe {
                 (*pkt).flags |= ffi::AV_PKT_FLAG_KEY;
             }

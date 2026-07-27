@@ -12,7 +12,7 @@ fn main() {
     let secs: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(5);
 
     let (tx, rx) = crossbeam_channel::bounded(120);
-    let cap = sc_capture::start(tx).expect("start capture");
+    let cap = sc_capture::start(tx, None).expect("start capture");
     let (w, h) = (cap.width, cap.height);
     println!("capturing {w}x{h} for {secs}s -> {path}");
 
