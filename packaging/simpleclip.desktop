@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleClip
+GenericName=Instant Replay
+Comment=Save the last N seconds of your screen
+Exec=@BIN@/sc-gui
+Icon=simpleclip
+Terminal=false
+Categories=AudioVideo;Recorder;
+Keywords=clip;replay;record;capture;shadowplay;
