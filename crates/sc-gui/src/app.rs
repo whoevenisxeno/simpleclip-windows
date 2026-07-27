@@ -27,11 +27,11 @@ impl ScApp {
         let (tx, rx) = crossbeam_channel::unbounded();
         daemon::spawn_status_poller(cc.egui_ctx.clone(), tx);
         let cfg = config_io::load();
-        // Fresh install (no monitor chosen yet) drops straight into the wizard.
-        let screen = if cfg.capture.monitor_id.is_empty() {
-            Screen::Wizard
-        } else {
+        // Show the wizard only until it has been completed once.
+        let screen = if cfg.general.setup_complete {
             Screen::Dashboard
+        } else {
+            Screen::Wizard
         };
         Self {
             cfg,

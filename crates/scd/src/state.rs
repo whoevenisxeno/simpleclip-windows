@@ -69,8 +69,10 @@ impl Daemon {
             let p = guard.as_ref().ok_or("capture is not running")?;
             let cfg = self.config.read().unwrap();
             let secs = last_secs.unwrap_or(cfg.buffer.replay_duration_secs);
-            let path = crate::naming::clip_path(&cfg, None);
+            let app = crate::naming::foreground_app();
+            let path = crate::naming::clip_path(&cfg, app.as_deref());
             let dur = p.save(secs, &path).map_err(|e| e.to_string())?;
+            crate::notify::clip_saved(&path, dur, &cfg);
             Ok((path, dur))
         }
         #[cfg(not(target_os = "linux"))]

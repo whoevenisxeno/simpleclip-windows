@@ -1,4 +1,5 @@
 mod naming;
+mod notify;
 #[cfg(target_os = "linux")]
 mod pipeline;
 mod reload;

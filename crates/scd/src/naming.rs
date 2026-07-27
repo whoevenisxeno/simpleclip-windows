@@ -19,14 +19,62 @@ pub fn clip_path(cfg: &Config, app: Option<&str>) -> PathBuf {
         FolderPolicy::PerApp => base.join(app.unwrap_or("unknown")),
     };
 
+    let time = format!("{h:02}{mi:02}{s:02}");
     let name = cfg
         .save
         .filename_template
         .replace("{date}", &format!("{y:04}{mo:02}{d:02}"))
-        .replace("{time}", &format!("{h:02}{mi:02}{s:02}"))
+        .replace("{time}", &time)
         .replace("{app}", app.unwrap_or(""));
-    let name = name.trim_matches(&['_', '-', ' '][..]);
-    dir.join(format!("{name}.mp4"))
+    let name = clean(&name);
+    let path = dir.join(format!("{name}.mp4"));
+    // Same-day clips without a time in the name would collide; add one if needed.
+    if path.exists() {
+        return path.with_file_name(format!("{name}-{time}.mp4"));
+    }
+    path
+}
+
+/// Collapse anything that isn't alphanumeric or `_` into single dashes, so an
+/// empty {app} in "sc-{app}-{date}" yields "sc-<date>", not "sc--<date>".
+fn clean(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in s.chars() {
+        let c = if ch.is_ascii_alphanumeric() || ch == '_' {
+            ch
+        } else {
+            '-'
+        };
+        if c == '-' {
+            if prev_dash {
+                continue;
+            }
+            prev_dash = true;
+        } else {
+            prev_dash = false;
+        }
+        out.push(c);
+    }
+    out.trim_matches(&['-', '_'][..]).to_string()
+}
+
+/// Best-effort foreground app/game name for the {app} token (Hyprland).
+pub fn foreground_app() -> Option<String> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let class = v
+        .get("class")
+        .and_then(|c| c.as_str())
+        .filter(|s| !s.is_empty())?;
+    let app = clean(&class.to_ascii_lowercase());
+    (!app.is_empty()).then_some(app)
 }
 
 fn now_utc() -> (i64, u32, u32, u32, u32, u32) {

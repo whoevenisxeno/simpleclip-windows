@@ -84,6 +84,8 @@ pub struct GeneralSettings {
     pub update_check: bool,
     pub save_sound: bool,
     pub post_save_hook: Option<PathBuf>,
+    /// Set once the first-launch wizard finishes, so it never runs again.
+    pub setup_complete: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -142,7 +144,7 @@ impl Default for SaveSettings {
     fn default() -> Self {
         Self {
             directory: None,
-            filename_template: "{date}_{time}_{app}".to_string(),
+            filename_template: "sc-{app}-{date}".to_string(),
             folder_policy: FolderPolicy::PerDay,
             container: Container::Mp4,
             warn_at_gb: 50,
@@ -165,6 +167,7 @@ impl Default for GeneralSettings {
             update_check: true,
             save_sound: true,
             post_save_hook: None,
+            setup_complete: false,
         }
     }
 }

@@ -90,6 +90,7 @@ fn nav_buttons(app: &mut ScApp, ui: &mut egui::Ui) {
 }
 
 fn finish(app: &mut ScApp) {
+    app.cfg.general.setup_complete = true;
     match config_io::save(&app.cfg) {
         Ok(()) => {
             app.toast("setup saved - SimpleClip is configured", theme::OK);
