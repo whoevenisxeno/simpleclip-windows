@@ -1,59 +1,93 @@
 # SimpleClip
 
-Instant replay clipping that doesn't make you install OBS, run a webview, or pray your compositor supports some portal API from three months ago.
+SimpleClip is a lightweight instant-replay clipping application for Windows and Linux. It continuously buffers your screen and audio in memory and writes the last N seconds to disk on a hotkey press. There is no record button and no interruption to the buffer while a clip is saved.
 
-You never hit record. SimpleClip is always buffering the last N seconds of your screen (plus audio) in RAM. Something worth keeping happens, you smash a hotkey, and it dumps the buffer to a file. Buffering never stops. That's the whole app.
+It runs as a background daemon (`scd`) with a CLI (`sc`) and a small tray/GUI client on top. The daemon is the only part that has to stay alive; the CLI, tray icon, and hotkey layer can all fail or restart without losing the buffer.
 
-Built for gamers who want ShadowPlay / Instant Replay / Medal, minus the bloat, minus the Windows-only lock-in, and minus the account you never asked to create.
+## Features
 
-## Why this exists
+- Rolling replay buffer with configurable duration (15s / 30s / 1min / custom), capped by a RAM budget you set
+- Global hotkey saves the buffer to a file without pausing or dropping capture
+- Manual start/stop recording, separate from the replay path
+- Screenshot hotkey, pulled from the live capture
+- Clip trimming (stream-copy on keyframes, re-encode only when a frame-accurate cut is requested)
+- Clip gallery grouped by date, with playback and reveal-in-folder
+- First-launch setup wizard: monitor, microphone, replay duration, save location, hotkeys, quality
+- System tray with capture state (active / paused / needs re-authorization)
+- Post-save hook: runs a user-defined script with a JSON event after every save
+- Full CLI + local IPC surface, usable standalone without the GUI
 
-Every "instant replay" tool worth using is either Windows-only, tied to a specific GPU vendor, or a whole streaming suite (OBS) bolted onto a feature that should be a small daemon and a hotkey. Nothing decent exists for Linux desktops running Hyprland or niri. This is an attempt to fix that without dragging the Windows side down to match — both platforms are first-class, Linux just gets built first because it's what I actually use every day.
+## Capture
 
-## Status
+- **Windows 11**: Windows Graphics Capture, falling back to DXGI Desktop Duplication. Hardware encode via NVENC, AMF, or QSV depending on GPU.
+- **Linux**: `xdg-desktop-portal` + PipeWire. Tested on Hyprland and niri; also works on KWin, Mutter, and X11. Hardware encode via NVENC or VA-API. PipeWire is required; there is no PulseAudio-only path.
+- macOS is not supported.
 
-Early. Nothing here is production-ready yet — check the phase checklist below for where things actually stand before assuming any of this works.
+Encoding defaults to H.264 for compatibility. HEVC and AV1 are available as opt-in settings. Software encoding is only used if no hardware encoder is detected, and is off by default in release builds.
 
-- [ ] Phase 0 — workspace skeleton, capture/encoder/audio traits, IPC schema, CI
-- [ ] Phase 1 — Linux capture → encode → file (manual record, no ring buffer yet)
-- [ ] Phase 2 — the actual ring buffer + `sc save`
-- [ ] Phase 3 — hotkeys via compositor bind, tray icon, notifications
-- [ ] Phase 4 — Windows backend (WGC/DXGI, WASAPI)
-- [ ] Phase 5 — GUI wizard + settings
-- [ ] Phase 6 — clip gallery + trimming
-- [ ] Phase 7 — post-save hooks, packaging (AUR/AppImage/Flatpak/winget)
+## Installation
 
-## How it's built
+**Windows**
+```
+winget install SimpleClip
+```
+or download the portable build from the Releases page.
 
-- **Rust.** A background process that outlives your session needs to not fall over, and single-binary distribution matters when you're targeting AUR + winget.
-- **Daemon + thin client** — `scd` owns capture and the buffer and keeps running even if the tray icon or hotkey layer dies. `sc` is the CLI that talks to it over a local socket. There's no "GUI required" path; the CLI alone can drive everything.
-- **FFmpeg/libav** for encode and mux, hitting hardware encoders (NVENC / VA-API / QSV / AMF) directly instead of shipping a software x264 fallback by default.
-- **Linux capture** goes through `xdg-desktop-portal` + PipeWire — the only sane route on Wayland, with restore tokens so you're not re-approving screen access every boot.
-- **Windows capture** uses Windows Graphics Capture, falling back to DXGI Desktop Duplication. Windows 11 only — dropping Win10 support keeps the capture path simple.
+**Linux**
+```
+# Arch / AUR
+yay -S simpleclip
 
-No process injection, no exclusive-fullscreen hooking, no game-specific patches. If a game runs exclusive-fullscreen and capture goes dark, SimpleClip tells you to switch to borderless instead of trying to out-hack an anti-cheat.
+# AppImage
+chmod +x SimpleClip-*.AppImage && ./SimpleClip-*.AppImage
+```
+A Flatpak build is also available; some capture paths and the evdev hotkey fallback are constrained under sandboxing (documented in `docs/`).
 
-## Platform support
+## Usage
 
-| | Windows | Linux |
-|---|---|---|
-| Minimum | Windows 11 | Any distro with PipeWire |
-| Priority targets | — | Hyprland, niri |
-| Also works | — | KDE/KWin, GNOME/Mutter, X11 |
-| Audio | WASAPI loopback + mic | PipeWire (no PulseAudio-only path) |
+On first launch, the setup wizard walks through monitor, microphone, buffer duration, save location, and hotkeys.
 
-macOS is not implemented. The capture layer is written behind a trait so it could be added later, but nobody's building it right now.
+On Linux, hotkeys are bound in your compositor config and mapped to CLI commands, for example on Hyprland:
+```
+bind = SUPER, F10, exec, sc save
+bind = SUPER, F11, exec, sc screenshot
+```
+On Windows, hotkeys are registered directly by the app during setup.
 
-## Not doing (on purpose)
+CLI reference:
 
-- Cloud upload, accounts, auto-highlight detection — clip locally, do whatever you want with the file after
-- In-game overlay — you get a tray notification and an optional sound, that's it
-- HDR, multi-monitor simultaneous capture, after-the-press capture windows — all real features, all cut from v1 to ship something solid first
+| Command | Description |
+|---|---|
+| `sc save [--last SECONDS]` | Save the last N seconds from the buffer (defaults to configured duration) |
+| `sc screenshot` | Save a still frame from the live capture |
+| `sc record` / `sc stop` | Start/stop a manual recording |
+| `sc status` | Show capture state, buffer fill, selected monitor, encoder, and A/V drift (`--json` for machine-readable output) |
+| `sc pause` / `sc resume` | Pause or resume capture |
+| `scd` | The daemon itself; run with `--foreground` or `--verbose` for debugging |
+
+## Configuration
+
+Settings are stored as hand-editable TOML and hot-reloaded on change:
+
+- Linux: `~/.config/simpleclip/config.toml`
+- Windows: `%APPDATA%\SimpleClip\config.toml`
+
+An invalid config keeps the daemon running on the last known-good settings and raises a tray warning instead of crashing.
+
+## Documentation
+
+- `ARCHITECTURE.md` — daemon/client split, capture/encoder/audio trait boundaries, buffer design
+- `docs/DECISIONS.md` — resolved design decisions and their rationale
+- `docs/OPEN-QUESTIONS.md` — unresolved technical questions being tracked
+
+## Privacy
+
+No telemetry, no accounts, no network calls beyond an optional, disableable update check. All logs are local.
 
 ## License
 
-MIT OR Apache-2.0. Anything GPL-licensed (looking at you, x264) stays behind an opt-in build feature so the default build stays permissive.
+Core project is dual-licensed MIT OR Apache-2.0. Any GPL-licensed component (e.g. an optional x264 software encoder) is isolated behind an opt-in build feature and does not affect the default build's license.
 
 ## Contributing
 
-Not really set up for outside contributions yet — no CI, no issue templates, nothing. Once Phase 0 lands there'll be an actual `CONTRIBUTING.md`. Until then, open an issue if you want to talk about it.
+Contributions are handled through pull requests against `main`. See `CONTRIBUTING.md` for coding standards, commit conventions, and the CI requirements (fmt, clippy, license/advisory checks) that PRs must pass.
