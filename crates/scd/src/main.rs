@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+mod hotkeys;
 mod naming;
 mod notify;
 #[cfg(target_os = "linux")]
@@ -49,6 +51,15 @@ fn main() -> Result<()> {
         let d = daemon.clone();
         std::thread::spawn(move || d.start_capture());
     }
+
+    // SimpleClip listens for its own save hotkey (needs the `input` group).
+    #[cfg(target_os = "linux")]
+    {
+        let hotkey = daemon.config.read().unwrap().hotkeys.save.clone();
+        let d = daemon.clone();
+        hotkeys::spawn(&hotkey, std::sync::Arc::new(move || d.hotkey_save()));
+    }
+
     server::serve(daemon)
 }
 

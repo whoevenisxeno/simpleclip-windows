@@ -83,6 +83,7 @@ pub struct HotkeySettings {
 pub struct GeneralSettings {
     pub update_check: bool,
     pub save_sound: bool,
+    pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Set once the first-launch wizard finishes, so it never runs again.
     pub setup_complete: bool,
@@ -134,7 +135,7 @@ impl Default for EncodeSettings {
     fn default() -> Self {
         Self {
             codec: Codec::H264,
-            bitrate_kbps: 20_000,
+            bitrate_kbps: 8_000,
             gop_frames: 120,
         }
     }
@@ -155,8 +156,8 @@ impl Default for SaveSettings {
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
-            save: "Alt+F10".to_string(),
-            screenshot: "Alt+F9".to_string(),
+            save: "SUPER+F10".to_string(),
+            screenshot: "SUPER+F9".to_string(),
         }
     }
 }
@@ -166,6 +167,7 @@ impl Default for GeneralSettings {
         Self {
             update_check: true,
             save_sound: true,
+            notify: true,
             post_save_hook: None,
             setup_complete: false,
         }

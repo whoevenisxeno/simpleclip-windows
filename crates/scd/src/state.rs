@@ -130,3 +130,15 @@ impl Daemon {
         self.status.lock().unwrap().recording = recording;
     }
 }
+
+impl Daemon {
+    /// Invoked by the in-app hotkey listener.
+    pub fn hotkey_save(&self) {
+        match self.save_clip(None) {
+            Ok((path, secs)) => {
+                tracing::info!(path = %path.display(), secs, "clip saved via hotkey")
+            }
+            Err(e) => tracing::warn!(error = %e, "hotkey save failed"),
+        }
+    }
+}
