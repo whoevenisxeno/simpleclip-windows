@@ -92,7 +92,7 @@ fn nav_buttons(app: &mut ScApp, ui: &mut egui::Ui) {
 fn finish(app: &mut ScApp) {
     match config_io::save(&app.cfg) {
         Ok(()) => {
-            app.toast("setup saved \u{2013} SimpleClip is configured", theme::OK);
+            app.toast("setup saved - SimpleClip is configured", theme::OK);
             app.screen = Screen::Dashboard;
         }
         Err(e) => app.toast(format!("cannot save config: {e}"), theme::DANGER),
@@ -104,7 +104,7 @@ fn step_welcome(ui: &mut egui::Ui) {
         ui.label(
             "SimpleClip keeps the last few seconds of your screen buffered at all times. \
              When something worth keeping happens, you hit one hotkey and it writes the clip \
-             \u{2013} no record button, no interruption.",
+             - no record button, no interruption.",
         );
         ui.add_space(6.0);
         ui.label("This quick setup picks your monitor, audio, buffer length, and hotkey.");
@@ -116,7 +116,7 @@ fn step_monitor(app: &mut ScApp, ui: &mut egui::Ui) {
         if app.wizard.monitors.is_empty() {
             ui.colored_label(
                 theme::MUTED,
-                "No monitors reported yet \u{2013} capture detection lands in Phase 1. \
+                "No monitors reported yet - capture detection lands in Phase 1. \
                  You can still finish setup; the daemon will pick the primary display.",
             );
         }
@@ -212,7 +212,7 @@ fn step_replay(app: &mut ScApp, ui: &mut egui::Ui) {
         if over {
             ui.colored_label(
                 theme::DANGER,
-                "Over the cap \u{2013} lower the duration or raise the cap to continue.",
+                "Over the cap - lower the duration or raise the cap to continue.",
             );
         }
     });
@@ -258,7 +258,7 @@ fn step_hotkeys(app: &mut ScApp, ui: &mut egui::Ui) {
         if cfg!(target_os = "linux") {
             ui.label(
                 "On Wayland the most reliable hotkey is a compositor bind that runs the CLI. \
-                 Add these to your compositor config \u{2013} SimpleClip's daemon does the rest:",
+                 Add these to your compositor config - SimpleClip's daemon does the rest:",
             );
             ui.add_space(8.0);
             let hypr = "bind = SUPER, F10, exec, sc save\nbind = SUPER, F11, exec, sc screenshot";

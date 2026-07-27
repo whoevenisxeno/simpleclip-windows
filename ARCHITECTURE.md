@@ -1,8 +1,8 @@
 # Architecture
 
 SimpleClip is split into a long-lived **daemon** and several **thin clients**. The
-daemon is the only component that touches capture, so a crash in any client — the
-CLI, the tray, the GUI — cannot lose or corrupt the replay buffer.
+daemon is the only component that touches capture, so a crash in any client - the
+CLI, the tray, the GUI - cannot lose or corrupt the replay buffer.
 
 ```
                  ┌────────────────────────────────────────────┐
@@ -24,7 +24,7 @@ CLI, the tray, the GUI — cannot lose or corrupt the replay buffer.
 | `sc-core` | lib | Shared contracts: capture/encoder/audio traits, IPC schema, config, ring buffer, timestamps, errors. No platform code. |
 | `scd` | bin | The daemon. Owns capture, encode, the ring buffer, saving, and the IPC server. Survives client failure. |
 | `sc` | bin | CLI control client. One-shot request/response. Also the Linux hotkey mechanism (compositor binds a key to `sc save`). |
-| `sc-gui` | bin | egui client: setup wizard, gallery, trim, settings, tray. Also just an IPC client — never linked into the daemon. |
+| `sc-gui` | bin | egui client: setup wizard, gallery, trim, settings, tray. Also just an IPC client - never linked into the daemon. |
 
 ## Trait boundaries
 
@@ -39,7 +39,7 @@ Because everything crosses these traits, the buffer/save logic is testable again
 ## The replay buffer
 
 `PacketRing` (in `sc-core/src/buffer.rs`) is a byte-capped ring of **encoded**
-packets — not raw frames, which at 1080p60 would blow the RAM budget. It stores
+packets - not raw frames, which at 1080p60 would blow the RAM budget. It stores
 compressed video and audio packets with timestamps. Eviction drops **whole leading
 GOPs**, so the front is always a keyframe and a saved clip can start cleanly. One
 ring per track (video, desktop audio, mic).
@@ -66,5 +66,5 @@ rather than crashing.
 ## What is NOT here yet
 
 Phase 0 ships the skeleton and contracts only. Capture, encode, audio, save, tray,
-and GUI are stubbed behind their traits and filled in phase by phase — see the phase
+and GUI are stubbed behind their traits and filled in phase by phase - see the phase
 plan in the build brief and `docs/DECISIONS.md` for resolved choices.

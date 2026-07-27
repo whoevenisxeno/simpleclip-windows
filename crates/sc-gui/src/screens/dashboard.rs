@@ -35,9 +35,7 @@ fn connected(app: &mut ScApp, ui: &mut egui::Ui, s: &sc_core::ipc::StatusReport)
         ui.horizontal(|ui| {
             ui.label(format!(
                 "encoder: {}",
-                s.encoder
-                    .map(|e| format!("{e:?}"))
-                    .unwrap_or("\u{2013}".into())
+                s.encoder.map(|e| format!("{e:?}")).unwrap_or("-".into())
             ));
             ui.separator();
             ui.label(format!("A/V drift: {:.1} ms", s.drift_ms));

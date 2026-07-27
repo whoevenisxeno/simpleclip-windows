@@ -76,9 +76,9 @@ An invalid config keeps the daemon running on the last known-good settings and r
 
 ## Documentation
 
-- `ARCHITECTURE.md` — daemon/client split, capture/encoder/audio trait boundaries, buffer design
-- `docs/DECISIONS.md` — resolved design decisions and their rationale
-- `docs/OPEN-QUESTIONS.md` — unresolved technical questions being tracked
+- `ARCHITECTURE.md` - daemon/client split, capture/encoder/audio trait boundaries, buffer design
+- `docs/DECISIONS.md` - resolved design decisions and their rationale
+- `docs/OPEN-QUESTIONS.md` - unresolved technical questions being tracked
 
 ## Privacy
 
