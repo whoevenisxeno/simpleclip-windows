@@ -311,6 +311,8 @@ fn rename(app: &mut ScApp, clip: &Clip) {
     }
     match library::rename_clip(&current, &wanted) {
         Ok(new) => {
+            // A custom name no longer says which game this was, so remember it.
+            app.library.set_game_if_unset(&current, &clip.game);
             after_file_change(app, &current, &new);
             app.sheet.name_buf = new
                 .file_stem()

@@ -1,5 +1,6 @@
-//! Preview frames for the gallery: decode one frame from a clip and scale it
-//! down to RGB.
+//! Preview frames: decode one frame from a clip (a representative one for the
+//! gallery, or the frame at an exact time for the trim view) and scale it down
+//! to RGB.
 
 use crate::{Error, Result};
 use ffmpeg_next as ff;
@@ -15,21 +16,45 @@ fn err(e: ff::Error) -> Error {
 pub fn thumbnail(path: &Path, max_width: u32) -> Result<(u32, u32, Vec<u8>)> {
     // Seeking can fail or land somewhere undecodable on unusual files; fall back
     // to simply decoding the first frame.
-    match decode(path, max_width, true) {
+    match decode(path, max_width, Target::Quarter) {
         Ok(t) => Ok(t),
-        Err(_) => decode(path, max_width, false),
+        Err(_) => decode(path, max_width, Target::First),
     }
 }
 
-fn decode(path: &Path, max_width: u32, seek: bool) -> Result<(u32, u32, Vec<u8>)> {
+/// The frame shown at `secs` into the clip (the first frame at or after that
+/// time), for scrubbing in the trim view.
+pub fn frame_at(path: &Path, secs: f64, max_width: u32) -> Result<(u32, u32, Vec<u8>)> {
+    match decode(path, max_width, Target::At(secs.max(0.0))) {
+        Ok(t) => Ok(t),
+        Err(_) => decode(path, max_width, Target::First),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Target {
+    /// The very first frame.
+    First,
+    /// A quarter of the way in, nearest keyframe is fine.
+    Quarter,
+    /// The frame at this time in seconds, exactly.
+    At(f64),
+}
+
+fn decode(path: &Path, max_width: u32, target: Target) -> Result<(u32, u32, Vec<u8>)> {
     crate::init()?;
     let mut ictx = ff::format::input(&path).map_err(err)?;
-    let (index, params) = {
+    let (index, params, tb) = {
         let stream = ictx
             .streams()
             .best(ff::media::Type::Video)
             .ok_or_else(|| Error::Ffmpeg("no video stream".into()))?;
-        (stream.index(), stream.parameters())
+        let r = stream.time_base();
+        (
+            stream.index(),
+            stream.parameters(),
+            r.numerator() as f64 / r.denominator().max(1) as f64,
+        )
     };
     let mut decoder = ff::codec::context::Context::from_parameters(params)
         .map_err(err)?
@@ -38,29 +63,47 @@ fn decode(path: &Path, max_width: u32, seek: bool) -> Result<(u32, u32, Vec<u8>)
         .map_err(err)?;
 
     // Seek lands on the keyframe at or before the target.
-    let target = ictx.duration() / 4;
-    if seek && target > 0 {
-        let _ = ictx.seek(target, ..target);
+    let (seek_us, want_secs) = match target {
+        Target::First => (None, None),
+        Target::Quarter => (Some(ictx.duration() / 4), None),
+        Target::At(s) => (Some((s * ff::ffi::AV_TIME_BASE as f64) as i64), Some(s)),
+    };
+    if let Some(t) = seek_us.filter(|t| *t > 0) {
+        let _ = ictx.seek(t, ..t);
     }
 
     let mut frame = ff::frame::Video::empty();
     let mut got = false;
-    for (stream, packet) in ictx.packets() {
-        if stream.index() != index {
+    let mut decoded = 0u32;
+    // Is this frame the one we want? Exact targets skip frames until the time.
+    let wanted = |f: &ff::frame::Video| match want_secs {
+        None => true,
+        Some(s) => f.pts().is_none_or(|p| p as f64 * tb >= s - 0.001),
+    };
+    'packets: for (stream, packet) in ictx.packets() {
+        if stream.index() != index || decoder.send_packet(&packet).is_err() {
             continue;
         }
-        if decoder.send_packet(&packet).is_err() {
-            continue;
-        }
-        if decoder.receive_frame(&mut frame).is_ok() {
-            got = true;
-            break;
+        while decoder.receive_frame(&mut frame).is_ok() {
+            decoded += 1;
+            if wanted(&frame) || decoded > 900 {
+                got = true;
+                break 'packets;
+            }
         }
     }
     if !got {
-        // Flush any frames the decoder is still holding (very short clips).
+        // Flush frames the decoder is still holding (short clips, or a target
+        // at the very end): take the last one that comes out.
         let _ = decoder.send_eof();
-        got = decoder.receive_frame(&mut frame).is_ok();
+        let mut last = ff::frame::Video::empty();
+        while decoder.receive_frame(&mut last).is_ok() {
+            frame = last.clone();
+            got = true;
+            if wanted(&frame) {
+                break;
+            }
+        }
     }
     if !got {
         return Err(Error::Ffmpeg("no frame decoded".into()));
@@ -98,5 +141,6 @@ mod tests {
     #[test]
     fn missing_file_is_an_error() {
         assert!(thumbnail(Path::new("no-such-file.mp4"), 320).is_err());
+        assert!(frame_at(Path::new("no-such-file.mp4"), 3.0, 320).is_err());
     }
 }

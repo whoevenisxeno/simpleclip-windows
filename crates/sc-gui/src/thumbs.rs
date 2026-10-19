@@ -132,6 +132,19 @@ impl Thumbs {
         })
     }
 
+    /// How many previews are (ready, failed for good, still loading or retrying).
+    pub fn stats(&self) -> (usize, usize, usize) {
+        let mut s = (0, 0, 0);
+        for st in self.map.values() {
+            match st {
+                State::Ready(_) => s.0 += 1,
+                State::Failed { tries, .. } if *tries >= MAX_TRIES => s.1 += 1,
+                _ => s.2 += 1,
+            }
+        }
+        s
+    }
+
     /// True once every attempt has failed (so the UI can say so).
     pub fn gave_up(&self, path: &Path) -> bool {
         matches!(self.map.get(path), Some(State::Failed { tries, .. }) if *tries >= MAX_TRIES)
@@ -167,7 +180,7 @@ fn load(path: &Path, is_image: bool) -> Option<egui::ColorImage> {
 
 /// Decode a PNG into an egui image, shrinking big ones (screenshots) so the
 /// gallery doesn't hold full-resolution textures.
-fn decode_png(path: &Path) -> Option<egui::ColorImage> {
+pub fn decode_png(path: &Path) -> Option<egui::ColorImage> {
     let file = std::fs::File::open(path).ok()?;
     let mut reader = png::Decoder::new(std::io::BufReader::new(file))
         .read_info()

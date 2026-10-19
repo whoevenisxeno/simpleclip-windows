@@ -1,8 +1,14 @@
-//! Gallery preview images, generated on demand and cached on disk.
+//! Preview images (gallery thumbnails and trim-view frames), generated on demand
+//! and cached on disk.
+//!
+//! Several windows or retries can ask for the same preview at once, so every
+//! write goes to its own temp file and is renamed into place; if another request
+//! got there first, that result is used rather than reporting an error.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn cache_dir() -> PathBuf {
     directories::ProjectDirs::from("", "", "SimpleClip")
@@ -10,13 +16,14 @@ fn cache_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("thumbs"))
 }
 
-/// Cache key: path plus size and mtime, so an edited or replaced file gets a
-/// fresh preview.
-fn cache_name(path: &Path, width: u32) -> String {
+/// Cache key: path, size and mtime (so an edited or replaced file gets a fresh
+/// preview), the width, and for frame previews the time (to 1/10 s).
+fn cache_name(path: &Path, width: u32, at_tenths: Option<i64>) -> String {
     let meta = std::fs::metadata(path).ok();
     let mut h = DefaultHasher::new();
     path.hash(&mut h);
     width.hash(&mut h);
+    at_tenths.hash(&mut h);
     if let Some(m) = &meta {
         m.len().hash(&mut h);
         m.modified().ok().hash(&mut h);
@@ -24,19 +31,19 @@ fn cache_name(path: &Path, width: u32) -> String {
     format!("{:016x}.png", h.finish())
 }
 
-/// Return the path of a preview PNG for `path`, creating it if needed.
-#[cfg(any(target_os = "linux", windows))]
-pub fn cached_thumbnail(path: &Path, width: u32) -> Result<PathBuf, String> {
-    let width = width.clamp(64, 1280);
-    let dir = cache_dir();
-    let out = dir.join(cache_name(path, width));
-    if out.exists() {
-        return Ok(out);
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Encode `rgb` as a PNG at `out`, atomically and safely against a concurrent
+/// writer of the same file.
+fn write_png(out: &Path, w: u32, h: u32, rgb: &[u8]) -> Result<(), String> {
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let (w, h, rgb) = sc_ffmpeg::thumbnail(path, width).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // Write to a temp name first so a half-written file is never served.
-    let tmp = out.with_extension("tmp");
+    let tmp = out.with_extension(format!(
+        "{}-{}.tmp",
+        std::process::id(),
+        TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
     {
         let file = std::io::BufWriter::new(std::fs::File::create(&tmp).map_err(|e| e.to_string())?);
         let mut enc = png::Encoder::new(file, w, h);
@@ -44,10 +51,48 @@ pub fn cached_thumbnail(path: &Path, width: u32) -> Result<PathBuf, String> {
         enc.set_depth(png::BitDepth::Eight);
         enc.set_compression(png::Compression::Fast);
         enc.write_header()
-            .and_then(|mut wr| wr.write_image_data(&rgb))
+            .and_then(|mut wr| wr.write_image_data(rgb))
             .map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&tmp, &out).map_err(|e| e.to_string())?;
+    match std::fs::rename(&tmp, out) {
+        Ok(()) => Ok(()),
+        // Someone else finished the same preview first: that's fine.
+        Err(_) if out.exists() => {
+            let _ = std::fs::remove_file(&tmp);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e.to_string())
+        }
+    }
+}
+
+/// Return the path of a preview PNG for `path`, creating it if needed.
+#[cfg(any(target_os = "linux", windows))]
+pub fn cached_thumbnail(path: &Path, width: u32) -> Result<PathBuf, String> {
+    let width = width.clamp(64, 1280);
+    let out = cache_dir().join(cache_name(path, width, None));
+    if out.exists() {
+        return Ok(out);
+    }
+    let (w, h, rgb) = sc_ffmpeg::thumbnail(path, width).map_err(|e| e.to_string())?;
+    write_png(&out, w, h, &rgb)?;
+    Ok(out)
+}
+
+/// The frame of `path` at `secs`, as a cached PNG.
+#[cfg(any(target_os = "linux", windows))]
+pub fn cached_frame(path: &Path, secs: f64, width: u32) -> Result<PathBuf, String> {
+    let width = width.clamp(64, 1920);
+    let tenths = (secs.max(0.0) * 10.0).round() as i64;
+    let out = cache_dir().join(cache_name(path, width, Some(tenths)));
+    if out.exists() {
+        return Ok(out);
+    }
+    let (w, h, rgb) =
+        sc_ffmpeg::frame_at(path, tenths as f64 / 10.0, width).map_err(|e| e.to_string())?;
+    write_png(&out, w, h, &rgb)?;
     Ok(out)
 }
 
@@ -56,14 +101,39 @@ pub fn cached_thumbnail(_: &Path, _: u32) -> Result<PathBuf, String> {
     Err("not supported on this platform".into())
 }
 
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn cached_frame(_: &Path, _: f64, _: u32) -> Result<PathBuf, String> {
+    Err("not supported on this platform".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn cache_name_depends_on_width() {
+    fn cache_name_depends_on_width_and_time() {
         let p = Path::new("a.mp4");
-        assert_ne!(cache_name(p, 320), cache_name(p, 640));
-        assert_eq!(cache_name(p, 320), cache_name(p, 320));
+        assert_ne!(cache_name(p, 320, None), cache_name(p, 640, None));
+        assert_ne!(cache_name(p, 320, Some(10)), cache_name(p, 320, Some(11)));
+        assert_ne!(cache_name(p, 320, None), cache_name(p, 320, Some(0)));
+        assert_eq!(cache_name(p, 320, None), cache_name(p, 320, None));
+    }
+
+    #[test]
+    fn concurrent_writers_do_not_clash() {
+        let dir = std::env::temp_dir().join(format!("sc-thumb-test-{}", std::process::id()));
+        let out = dir.join("x.png");
+        let rgb = vec![200u8; 8 * 8 * 3];
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let (o, r) = (out.clone(), rgb.clone());
+                std::thread::spawn(move || write_png(&o, 8, 8, &r))
+            })
+            .collect();
+        for h in handles {
+            assert!(h.join().unwrap().is_ok());
+        }
+        assert!(out.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

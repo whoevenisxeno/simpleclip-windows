@@ -105,6 +105,12 @@ impl ScApp {
         if let Some(s) = &shot {
             // ...and its own clips folder, so review never touches yours.
             cfg.save.directory = Some(s.dir.join("clips"));
+            // Show the defaults rather than this PC's particular devices.
+            cfg.capture.monitor_id.clear();
+            cfg.audio.desktop_device.clear();
+            cfg.audio.mic_device = None;
+            cfg.hotkeys = Default::default();
+            cfg.audio.mic_enabled = true;
             cfg.general.setup_complete = true;
         }
         // Show the wizard only until it has been completed once.
@@ -413,13 +419,19 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("clips", true),
     ("clips-bookmarks", true),
     ("clips-folders", true),
+    ("clips-trimmed", true),
     ("details", true),
     ("bookmarks", true),
     ("newfolder", true),
-    ("settings", true),
     ("trim", true),
+    ("wizard1", true),
+    ("wizard2", true),
+    ("wizard3", true),
+    ("settings", true),
+    ("home", false),
+    ("clips", false),
     ("details", false),
-    ("clips-bookmarks", false),
+    ("trim", false),
 ];
 
 impl Shot {
@@ -446,7 +458,12 @@ impl ScApp {
         let clutch = self.library.add_bookmark("Clutch", colors[3]);
         let funny = self.library.add_bookmark("Funny", colors[2]);
         let fail = self.library.add_bookmark("Fail", colors[0]);
-        let paths = self.gallery.all_paths();
+        let paths: Vec<_> = self
+            .gallery
+            .all_paths()
+            .into_iter()
+            .filter(|p| !self.library.is_trimmed(p))
+            .collect();
         if let Some(p) = paths.first() {
             self.library.toggle_bookmark(p, clutch);
             self.library.toggle_bookmark(p, funny);
@@ -495,6 +512,14 @@ impl ScApp {
             shot.requested = false;
         }
         if shot.step >= SHOT_PLAN.len() {
+            let (ready, failed, loading) = self.thumbs.stats();
+            let _ = std::fs::write(
+                shot.dir.join("stats.txt"),
+                format!(
+                    "previews ready={ready} failed={failed} loading={loading}
+"
+                ),
+            );
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -516,10 +541,11 @@ impl ScApp {
             };
             self.shot_demo_data();
             self.sheet = Default::default();
+            self.gallery.reset_view();
             self.screen = match name {
                 "home" => Screen::Dashboard,
-                "clips" | "clips-bookmarks" | "clips-folders" | "details" | "bookmarks"
-                | "newfolder" => Screen::Gallery,
+                "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed" | "details"
+                | "bookmarks" | "newfolder" => Screen::Gallery,
                 "settings" => Screen::Settings,
                 "trim" => {
                     let first = self.gallery.first_video();
@@ -529,9 +555,15 @@ impl ScApp {
             };
             match name {
                 "clips-bookmarks" => self.gallery.show_by(false),
+                "clips-trimmed" => self.gallery.show_trimmed(),
                 "clips-folders" => self.gallery.show_by(true),
                 "details" => {
-                    if let Some(p) = self.gallery.all_paths().into_iter().next() {
+                    let first = self
+                        .gallery
+                        .all_paths()
+                        .into_iter()
+                        .find(|p| !self.library.is_trimmed(p));
+                    if let Some(p) = first {
                         self.sheet.open_clip(p);
                     }
                 }
@@ -546,9 +578,13 @@ impl ScApp {
             }
         }
         shot.waited += 1;
+        if shot.step == 0 && shot.waited == 1 {
+            // A taller window so long pages (trim, settings) fit in one picture.
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(1080.0, 900.0)));
+        }
         // Wait for previews to settle (including retries) before capturing.
         let settled = !self.thumbs.pending() || shot.waited > 1500;
-        if shot.waited >= 45 && settled && !shot.requested {
+        if shot.waited >= (if name == "trim" { 220 } else { 45 }) && settled && !shot.requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             shot.requested = true;
         }

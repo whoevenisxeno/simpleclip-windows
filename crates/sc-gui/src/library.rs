@@ -34,11 +34,21 @@ pub struct ClipMeta {
     pub bookmarks: Vec<u32>,
     #[serde(default)]
     pub note: String,
+    /// This clip is the result of a trim (so it can be listed apart from originals).
+    #[serde(default)]
+    pub trimmed: bool,
+    /// The game a clip came from, remembered when it is renamed (a custom name no
+    /// longer says which game it was).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
 }
 
 impl ClipMeta {
     fn is_empty(&self) -> bool {
-        self.bookmarks.is_empty() && self.note.trim().is_empty()
+        self.bookmarks.is_empty()
+            && self.note.trim().is_empty()
+            && !self.trimmed
+            && self.game.is_none()
     }
 }
 
@@ -204,6 +214,33 @@ impl Library {
         self.prune(path);
     }
 
+    /// Is this clip a trimmed one? Remembered when the app made the trim; clips
+    /// made by `sc trim` (or renamed outside) are recognised by their `-trim` name.
+    pub fn is_trimmed(&self, path: &Path) -> bool {
+        self.meta(path).is_some_and(|m| m.trimmed) || has_trim_suffix(path)
+    }
+
+    /// The game remembered for this clip, if any.
+    pub fn game(&self, path: &Path) -> Option<&str> {
+        self.meta(path).and_then(|m| m.game.as_deref())
+    }
+
+    /// Remember the game, unless one is already remembered.
+    pub fn set_game_if_unset(&mut self, path: &Path, game: &str) {
+        if self.game(path).is_some() || game.is_empty() {
+            return;
+        }
+        self.meta_mut(path).game = Some(game.to_string());
+    }
+
+    pub fn set_trimmed(&mut self, path: &Path, trimmed: bool) {
+        if self.meta(path).is_some_and(|m| m.trimmed) == trimmed {
+            return;
+        }
+        self.meta_mut(path).trimmed = trimmed;
+        self.prune(path);
+    }
+
     pub fn set_note(&mut self, path: &Path, note: &str) {
         if self.note(path) == note {
             return;
@@ -227,6 +264,14 @@ impl Library {
         }
     }
 
+    /// After replacing `old` with `new`: if the file now lives under a different
+    /// name, carry the data across; if it kept the name, there's nothing to do.
+    pub fn rekey_if_missing(&mut self, old: &Path, new: &Path) {
+        if old != new {
+            self.rekey(old, new);
+        }
+    }
+
     /// A clip was deleted: forget its data.
     pub fn forget(&mut self, path: &Path) {
         if self.clips.remove(&key(path)).is_some() {
@@ -236,6 +281,17 @@ impl Library {
 }
 
 // ------------------------------------------------------------- file actions --
+
+/// `name-trim` or `name-trim2`: the names a trim produces.
+fn has_trim_suffix(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Some(i) = stem.rfind("-trim") else {
+        return false;
+    };
+    stem[i + 5..].chars().all(|c| c.is_ascii_digit())
+}
 
 /// Make a user-typed name safe as a Windows file name (without the extension).
 pub fn clean_name(raw: &str) -> String {
@@ -365,6 +421,25 @@ mod tests {
         lib.set_note(p, "hi");
         lib.set_note(p, "");
         assert!(lib.meta(p).is_none());
+    }
+
+    #[test]
+    fn trimmed_clips_are_flagged_and_recognised_by_name() {
+        let mut lib = Library::default();
+        let a = Path::new("V/a.mp4");
+        assert!(!lib.is_trimmed(a));
+        lib.set_trimmed(a, true);
+        assert!(lib.is_trimmed(a));
+        // Survives a rename inside the app.
+        let b = Path::new("V/renamed.mp4");
+        lib.rekey(a, b);
+        assert!(lib.is_trimmed(b));
+        // Clips made by `sc trim` are spotted by name.
+        assert!(lib.is_trimmed(Path::new("V/sc-game-20261019-trim.mp4")));
+        assert!(lib.is_trimmed(Path::new("V/sc-game-20261019-trim2.mp4")));
+        assert!(!lib.is_trimmed(Path::new("V/trimmer-time.mp4")));
+        lib.set_trimmed(b, false);
+        assert!(lib.meta(b).is_none());
     }
 
     #[test]

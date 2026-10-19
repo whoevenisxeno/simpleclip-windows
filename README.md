@@ -1,103 +1,261 @@
-# SimpleClip
+# SimpleClip for Windows
 
-Instant replay for Linux and Windows. SimpleClip always keeps the last N seconds of your
-screen buffered in RAM. When something worth keeping happens, you hit a hotkey
-and it writes those seconds to a file. There is no record button, and the buffer
-never stops.
+SimpleClip keeps the last 30 seconds (or 15 s, 1 min, 2 min, 5 min) of your screen in memory. When
+something good happens you press a hotkey and those seconds are written to an MP4. There is no
+record button and nothing to start before you play.
 
-Think ShadowPlay / Medal instant replay, but a small daemon and a hotkey instead
-of a launcher and an account.
+I started this as a Linux tool and then wanted the same thing on my own Windows PC, so this repo is
+the Windows version: a background service, a small app for browsing and trimming clips, and an
+installer. I'm not trying to replace ShadowPlay or Medal. I wanted something small that does one
+job and does not need an account.
 
-## Status
+![Home screen](docs/screenshots/home-dark.png)
 
-Usable on Linux and Windows. The core loop works today: the daemon buffers
-continuously and a hotkey saves the last N seconds to a valid, shareable MP4.
-Rough edges remain (see Roadmap).
+## What it does
 
-**Windows:** Windows Graphics Capture for video, WASAPI loopback for desktop
-audio, NVENC / AMF / QuickSync hardware encode (Media Foundation software
-fallback), microphone capture (mixed or on its own track), lossless trim, a system tray
-icon, global hotkeys (Alt+F10 save, Alt+F9 screenshot), toast notifications, and a
-proper installer (Start Menu, Apps & features, optional start-at-sign-in). See
-[packaging/windows](packaging/windows/README.md) to install or build.
+- **Always-on replay buffer.** Windows Graphics Capture for video, WASAPI for sound, encoded on the
+  GPU the whole time and kept in RAM.
+- **Hotkeys.** `Alt+F10` saves a clip, `Alt+F9` saves a screenshot. Both can be changed in Settings.
+- **Hardware encoding.** It tries NVENC (NVIDIA), AMF (AMD), QuickSync (Intel), then software x264,
+  then Media Foundation, and uses the first one that works.
+- **Audio.** Game and app sound, plus an optional microphone. The mic can be mixed into one track
+  or kept on its own track so you can edit your voice separately.
+- **Save popup.** A small card in the corner tells you the clip was saved, with its size,
+  resolution, frame rate and encoder.
+- **Clip gallery.** Previews, search, and grouping by game, date, folder or bookmark.
+- **Rename, folders, bookmarks, notes.** All inside the app. Bookmarks are labels you create and
+  colour yourself. Nothing is ever bookmarked automatically.
+- **Trim.** Pick a start and end with live frame previews, play the result before you commit, then
+  either keep the original and make a trimmed copy, or replace the original (it goes to the Recycle
+  Bin, not deleted for good). Trimming copies the stream without re-encoding, so it is instant and
+  lossless, but cuts land on keyframes.
+- **Trimmed clips stay separate.** They get their own view and a small badge, and they are left out
+  of the normal clip list and the Recent row on Home. You can also send them to a folder of your
+  choice.
+- **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
 
-- Rolling replay buffer, hardware encoded
-- Hotkey to save the last N seconds (set from the app, no root, no manual config)
-- GUI: setup wizard, live dashboard, clip gallery, and a lot of settings
-- Desktop notification and sound on save
-- Everything runs unprivileged
+## Screenshots
 
-## Requirements
+These screenshots come from the app's own test mode, using a throwaway library of sample footage
+that I renamed to look like different games. The footage is from one game, the names are made up.
 
-**Windows:** Windows 10 2004+ or Windows 11 (11 hides the capture border), and a
-GPU with H.264 encode (NVIDIA, AMD or Intel). Without one it falls back to a
-software encoder.
+### Clips
 
-**Linux:**
+Grouped by game (the default):
 
-- A modern Linux desktop on Wayland with PipeWire and `xdg-desktop-portal`
-- A GPU with VA-API H.264 encode (AMD or Intel)
-- Hyprland for the fully automatic hotkey setup. Other compositors work too, you
-  just bind the key to `sc save` yourself.
+![Clips grouped by game](docs/screenshots/clips-dark.png)
+
+Grouped by bookmark. The bookmark chip is small on purpose:
+
+![Clips grouped by bookmark](docs/screenshots/clips-bookmarks-dark.png)
+
+Grouped by folder:
+
+![Clips grouped by folder](docs/screenshots/clips-folders-dark.png)
+
+Trimmed clips only:
+
+![Trimmed clips view](docs/screenshots/clips-trimmed-dark.png)
+
+### Clip details
+
+Rename, move to a folder, add bookmarks, write a note:
+
+![Clip details](docs/screenshots/details-dark.png)
+
+Create and recolour bookmarks:
+
+![Bookmark manager](docs/screenshots/bookmarks-dark.png)
+
+### Trim
+
+![Trim screen](docs/screenshots/trim-dark.png)
+
+### Settings
+
+![Settings](docs/screenshots/settings-dark.png)
+
+### Save popup
+
+![Save popup](docs/screenshots/save-popup.png)
+
+Text on the card from a real save on my PC:
+
+```
+Clip saved
+sc-rainbowsix-20261019-182103.mp4
+rainbowsix • 12s • 13.9 MB
+1920x1080 @ 60 fps • AMD AMF • 9.8 Mbps
+Saved in 0.1s • \rainbowsix
+```
+
+### First run
+
+A short setup guide appears the first time you open the app.
+
+![Setup guide](docs/screenshots/wizard1-dark.png)
+
+There is also a light theme. It follows your Windows setting.
+
+![Home, light theme](docs/screenshots/home-light.png)
 
 ## Install
 
-**Windows:** run `SimpleClip-<version>-Setup.exe` (per-user, no admin), or build
-it yourself with `.\packaging\windows\build.ps1 -InstallDeps`.
+Download `SimpleClip-<version>-Setup.exe` from the Releases page and run it. It installs for your
+user only, so it does not ask for administrator rights. The installer offers two optional tasks:
 
-**Linux:**
+- start SimpleClip when you sign in to Windows
+- add the `sc` command to your PATH
 
-```
-git clone https://github.com/whoevenisxeno/SimpleClip
-cd SimpleClip
-./packaging/install.sh
-```
+Uninstalling is done from Windows Settings, Apps. Your clips are never touched by the uninstaller.
 
-This builds release binaries and installs `scd`, `sc`, and `sc-gui` to
-`~/.local/bin` with a desktop launcher. On Hyprland, the daemon manages its own
-hotkey config, so once it runs there is nothing else to set up.
+There is also a plain zip if you would rather not install anything: unpack it and run `scd.exe`
+(the background service), then `sc-gui.exe` (the app).
 
-## Usage
+Clips go to `Videos\SimpleClip`, in a folder per game and then per day by default. Settings are in
+`%APPDATA%\SimpleClip\config\config.toml`, the clip library (bookmarks, notes) is in
+`%APPDATA%\SimpleClip\data\library.json`, and logs are in `%LOCALAPPDATA%\SimpleClip\data\logs`.
 
-- The daemon `scd` runs in the background and buffers continuously.
-- Press the save hotkey (default SUPER+F10, ALT+F10 on Windows) to write the last N seconds.
-- Run `sc-gui` for the wizard, live dashboard, gallery, and settings.
-- Or drive it from the CLI:
+## The command line
+
+The `sc` command talks to the running service. These are real outputs from my machine.
 
 ```
-sc save --last 30   # save the last 30 seconds
-sc status           # capture state, buffer fill, encoder
-sc pause / sc resume
-sc screenshot       # save the current frame as a PNG
-sc trim clip.mp4 --start 5 --end 20   # lossless cut, no re-encode
+> sc status
+state:     Active
+recording: false
+buffer:    30s (98% full)
+monitor:   captured display (1920x1080)
+encoder:   Amf
+drift:     0.0 ms
+daemon:    v4.0.0
+
+> sc save
+saved C:\Users\xeno\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019-182103.mp4 (11.9s)
+
+> sc screenshot
+saved C:\Users\xeno\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019.png (0.0s)
+
+> sc trim <clip> --start 2 --end 6
+saved ...\sc-rainbowsix-20261019-182103-trim.mp4 (4.0s)
 ```
 
-## How it works
+Other commands: `pause`, `resume`, `quit`, `monitors`, `audio-devices`, `thumbnail`.
 
-A long-lived daemon (`scd`) owns capture and the buffer; `sc` and `sc-gui` are
-thin clients that talk to it over a local socket. Only the daemon has to stay
-alive, so the GUI or a hotkey can crash without losing the buffer.
+## Default config
 
-Capture goes through `xdg-desktop-portal` and PipeWire. Frames are converted and
-encoded on the GPU (VA-API H.264) into a rolling ring buffer of encoded packets.
-Saving snapshots the buffer and muxes a keyframe-aligned faststart MP4 without
-ever stalling capture.
+This is what a fresh install writes (printed by the code itself, not typed by hand):
 
-## Configuration
+```toml
+[capture]
+monitor-id = ""
+show-cursor = true
+target-fps = 60
 
-Settings live in `~/.config/simpleclip/config.toml` (`%APPDATA%\SimpleClip\config\config.toml`
-on Windows; hand-editable, hot-reloaded)
-and are also exposed in the GUI: buffer length, RAM cap, bitrate, codec, capture
-FPS, cursor, save location and naming, notifications, and the hotkey.
+[audio]
+desktop-enabled = true
+desktop-device = ""
+mic-enabled = true
+tracks = "mixed"
 
-## Roadmap
+[buffer]
+replay-duration-secs = 30
+ram-cap-mb = 2048
 
-- Audio (desktop + mic) in the clips
-- Linux microphone capture, screenshots and tray; frame-accurate trim and in-app preview
-- Restore token so the screen-share prompt only appears once
-- NVIDIA (NVENC) encode path
-- Packaging: AUR, AppImage
+[encode]
+codec = "h264"
+bitrate-kbps = 8000
+gop-frames = 120
+gpu-convert = false
 
-## License
+[save]
+filename-template = "sc-{app}-{date}"
+folder-policy = "per-day"
+container = "mp4"
+warn-at-gb = 50
 
-MIT OR Apache-2.0.
+[hotkeys]
+save = "ALT+F10"
+screenshot = "ALT+F9"
+
+[general]
+autostart = true
+setup-complete = false
+```
+
+## How it holds up
+
+I have only tested this on one machine, so treat these as one data point, not a benchmark.
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 5 5600X |
+| GPU | AMD Radeon RX 6650 XT (AMF encoder) |
+| RAM | 16 GB |
+| OS | Windows 11 Pro |
+| Capture | 1920x1080 at 60 fps, 8 Mbps video |
+
+A 30 second buffer fills in 30 seconds, a save takes about a tenth of a second, and the file is
+about 60 MB per minute of video at the default quality. I have not measured CPU or GPU overhead
+in a rigorous way, so I won't put a number on it.
+
+## Things that are not finished
+
+Being straight about this so you don't hit it by surprise:
+
+- **Only H.264 in MP4.** The config has `container` and `codec` fields, but MKV, HEVC and AV1 are
+  not implemented yet.
+- **`warn-at-gb` and `post_save_hook` are in the config but do nothing.**
+- **`ram-cap-mb` is only used to estimate and validate the buffer size**, it is not a hard limit.
+- **Trim cuts on keyframes.** That is the price of not re-encoding. With the default 2 second
+  keyframe spacing at 60 fps, cuts can land up to about 2 seconds off.
+- **Exclusive-fullscreen games** can capture as black with Windows Graphics Capture. Borderless
+  or windowed fullscreen works. This is a Windows limitation, not something I can fix here.
+- **Tested on one PC and one GPU vendor.** The NVENC and QuickSync paths are written but I have
+  only run AMF.
+- **No code signing**, so Windows SmartScreen may warn you the first time you run the installer.
+
+## Build from source
+
+You need Rust (stable), the Visual Studio Build Tools with the C++ workload, LLVM (for bindgen),
+and a shared FFmpeg 8.1 development build (`bin`, `lib`, `include`). The build script can fetch
+what is missing:
+
+```powershell
+git clone https://github.com/whoevenisxeno/simpleclip-windows
+cd simpleclip-windows
+.\packaging\windows\build.ps1 -InstallDeps
+```
+
+That produces `dist\SimpleClip` (portable folder), a zip, and `Setup.exe` if Inno Setup is
+installed. The default build links an LGPL FFmpeg. If you already have FFmpeg, set `FFMPEG_DIR` to
+it. More detail is in [packaging/windows](packaging/windows/README.md).
+
+Checks:
+
+```powershell
+cargo clippy --workspace --all-targets
+cargo test --workspace
+```
+
+## How it is put together
+
+```
+sc-core     config, the IPC messages, the ring buffer
+sc-capture  Windows Graphics Capture video and WASAPI audio
+sc-ffmpeg   encoders, muxing, trim, thumbnails (FFmpeg through ffmpeg-next)
+scd         the background service: pipeline, tray, hotkeys, popup, IPC server
+sc          the command line client
+sc-gui      the app (egui)
+```
+
+The service and the clients talk over a named pipe, `simpleclip.sock`, using one JSON message per
+line. The app asks the service for previews and trims, because the service is the one that owns
+FFmpeg. Design notes and the reasoning behind choices are in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Origin and licence
+
+This began as a fork of my own Linux-first SimpleClip. The Linux code paths are still in the tree
+but I have not tested them as part of this work. Licensed under the MIT licence, see
+[LICENSE](LICENSE). FFmpeg is a separate project under its own licence, and the installer ships
+its licence text next to the binaries.

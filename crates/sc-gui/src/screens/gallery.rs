@@ -18,6 +18,15 @@ pub struct Clip {
     pub game: String,
 }
 
+/// Which clips to list: your originals, the trimmed copies, or everything.
+#[derive(Default, Clone, Copy, PartialEq)]
+enum ViewKind {
+    #[default]
+    Originals,
+    Trimmed,
+    All,
+}
+
 #[derive(Default, Clone, Copy, PartialEq)]
 enum GroupBy {
     #[default]
@@ -35,6 +44,7 @@ pub struct Cache {
     dirs: Vec<PathBuf>,
     scanned: Option<Instant>,
     search: String,
+    kind: ViewKind,
     group: GroupBy,
     /// Show only this category (a game, folder or bookmark name), if set.
     only: Option<String>,
@@ -46,6 +56,20 @@ impl Cache {
     /// Force a rescan on the next frame.
     pub fn rescan(&mut self) {
         self.scanned = None;
+    }
+
+    /// Back to the default view (used by the design-review harness).
+    pub fn reset_view(&mut self) {
+        self.kind = ViewKind::Originals;
+        self.group = GroupBy::Game;
+        self.only = None;
+        self.search.clear();
+    }
+
+    /// Switch the list to the trimmed clips.
+    pub fn show_trimmed(&mut self) {
+        self.kind = ViewKind::Trimmed;
+        self.only = None;
     }
 
     /// The clip at `path`, if it is in the current listing.
@@ -82,11 +106,17 @@ impl Cache {
             .map(|c| c.path.clone())
     }
 
-    fn refresh(&mut self, dirs: &[PathBuf]) {
+    fn refresh(&mut self, dirs: &[PathBuf], lib: &crate::library::Library) {
         let stale = self.dirs != dirs || self.scanned.is_none_or(|t| t.elapsed() > RESCAN_EVERY);
         if stale {
             let mut clips: Vec<Clip> = dirs.iter().flat_map(|d| scan(d)).collect();
             clips.sort_by_key(|c| std::cmp::Reverse(c.modified));
+            // Games remembered at rename time win over what the file name says.
+            for c in &mut clips {
+                if let Some(g) = lib.game(&c.path) {
+                    c.game = g.to_string();
+                }
+            }
             self.clips = clips;
             self.folders = dirs.first().map(|d| list_folders(d)).unwrap_or_default();
             self.dirs = dirs.to_vec();
@@ -112,39 +142,28 @@ const RESCAN_EVERY: Duration = Duration::from_secs(3);
 /// The newest `n` items, scanning first if the cache is stale.
 pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
     let dirs = library_dirs(app);
-    app.gallery.refresh(&dirs);
-    app.gallery.clips.iter().take(n).cloned().collect()
+    app.gallery.refresh(&dirs, &app.library);
+    // Trimmed copies have their own list; "recent" means fresh recordings.
+    app.gallery
+        .clips
+        .iter()
+        .filter(|c| !app.library.is_trimmed(&c.path))
+        .take(n)
+        .cloned()
+        .collect()
 }
 
 // ---------------------------------------------------------------- scanning --
 
-/// `2026-10-19`-style day folder names, which say nothing about the game.
-fn is_day_folder(name: &str) -> bool {
-    let b = name.as_bytes();
-    b.len() == 10
-        && b.iter().enumerate().all(|(i, c)| {
-            if i == 4 || i == 7 {
-                *c == b'-'
-            } else {
-                c.is_ascii_digit()
-            }
-        })
-}
-
-/// Work out which game a clip belongs to: the per-app folder it sits in, else
-/// the `{app}` part of the default `sc-{app}-{date}` file name.
-fn game_of(path: &Path, root: &Path) -> String {
-    if let Some(folder) = path
-        .parent()
-        .filter(|p| *p != root)
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-    {
-        if !is_day_folder(folder) {
-            return pretty(folder);
-        }
-    }
+/// Work out which game a clip belongs to from the `{app}` part of the default
+/// `sc-{app}-{date}` file name. A clip you've named yourself has no game in its
+/// name, so it is "Other" unless the app recorded its game when you renamed it
+/// (see `Library::game`). Folders you make are for organising, not for games.
+fn game_of(path: &Path, _root: &Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if !(stem == "sc" || stem.starts_with("sc-")) {
+        return "Other".to_string();
+    }
     let mut parts: Vec<&str> = stem.split('-').collect();
     if parts.first() == Some(&"sc") {
         parts.remove(0);
@@ -464,15 +483,36 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     let dir = app.cfg.save.resolve_dir();
     let dirs = library_dirs(app);
-    app.gallery.refresh(&dirs);
+    app.gallery.refresh(&dirs, &app.library);
 
-    let total: u64 = app.gallery.clips.iter().map(|c| c.bytes).sum();
-    let count = app.gallery.clips.len();
+    // Split the listing by kind so trimmed copies aren't mixed in with originals.
+    let trimmed_count = app
+        .gallery
+        .clips
+        .iter()
+        .filter(|c| app.library.is_trimmed(&c.path))
+        .count();
+    let originals_count = app.gallery.clips.len() - trimmed_count;
+    let kind = app.gallery.kind;
+    let in_kind: Vec<Clip> = app
+        .gallery
+        .clips
+        .iter()
+        .filter(|c| match kind {
+            ViewKind::All => true,
+            ViewKind::Trimmed => app.library.is_trimmed(&c.path),
+            ViewKind::Originals => !app.library.is_trimmed(&c.path),
+        })
+        .cloned()
+        .collect();
+
+    let total: u64 = in_kind.iter().map(|c| c.bytes).sum();
+    let count = in_kind.len();
     widgets::page_title(
         ui,
         "Clips",
         Some(&if count == 0 {
-            "Nothing saved yet".to_string()
+            "Nothing here yet".to_string()
         } else {
             format!(
                 "{count} {} \u{2022} {}",
@@ -482,7 +522,21 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         }),
     );
 
-    if count == 0 && app.gallery.folders.is_empty() {
+    // Clips / Trimmed / All.
+    ui.horizontal(|ui| {
+        widgets::segmented(
+            ui,
+            &mut app.gallery.kind,
+            &[
+                (ViewKind::Originals, &format!("Clips  {originals_count}")),
+                (ViewKind::Trimmed, &format!("Trimmed  {trimmed_count}")),
+                (ViewKind::All, "All"),
+            ],
+        );
+    });
+    ui.add_space(10.0);
+
+    if app.gallery.clips.is_empty() && app.gallery.folders.is_empty() {
         widgets::card(ui, |ui| {
             ui.add_space(22.0);
             ui.vertical_centered(|ui| {
@@ -510,15 +564,27 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         return;
     }
 
-    toolbar(app, ui, &dir);
+    if in_kind.is_empty() {
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            widgets::secondary(
+                ui,
+                if kind == ViewKind::Trimmed {
+                    "No trimmed clips yet. Open a clip and choose Trim."
+                } else {
+                    "Nothing here yet."
+                },
+            )
+        });
+        return;
+    }
+    toolbar(app, ui, &dir, &in_kind);
     ui.add_space(8.0);
 
     let by = app.gallery.group;
     let needle = app.gallery.search.trim().to_lowercase();
     let only = app.gallery.only.clone();
-    let visible: Vec<Clip> = app
-        .gallery
-        .clips
+    let visible: Vec<Clip> = in_kind
         .iter()
         .filter(|c| {
             let in_category = only.as_ref().is_none_or(|o| {
@@ -540,15 +606,22 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         .cloned()
         .collect();
 
+    // Only folders with nothing in them at all count as empty; a folder whose
+    // clips are just hidden by the Clips/Trimmed switch is not empty.
     let show_empty = needle.is_empty() && only.is_none();
-    let groups = build_groups(
-        &visible,
-        by,
-        &dir,
-        &app.library,
-        &app.gallery.folders.clone(),
-        show_empty,
-    );
+    let empty_folders: Vec<PathBuf> = app
+        .gallery
+        .folders
+        .iter()
+        .filter(|f| {
+            !app.gallery
+                .clips
+                .iter()
+                .any(|c| c.path.parent() == Some(f.as_path()))
+        })
+        .cloned()
+        .collect();
+    let groups = build_groups(&visible, by, &dir, &app.library, &empty_folders, show_empty);
     if groups.is_empty() {
         ui.add_space(30.0);
         ui.vertical_centered(|ui| widgets::secondary(ui, "Nothing matches."));
@@ -558,7 +631,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
 }
 
 /// Search, grouping, actions, and the category chips.
-fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path) {
+fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path, clips: &[Clip]) {
     let p = pal_ui(ui);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
@@ -626,20 +699,13 @@ fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path) {
     if by == GroupBy::Date {
         return;
     }
-    let all = build_groups(
-        &app.gallery.clips,
-        by,
-        dir,
-        &app.library,
-        &app.gallery.folders,
-        false,
-    );
+    let all = build_groups(clips, by, dir, &app.library, &app.gallery.folders, false);
     if all.len() > 1 {
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             let none = app.gallery.only.is_none();
-            if chip(ui, &format!("All  {}", app.gallery.clips.len()), none, None) {
+            if chip(ui, &format!("All  {}", clips.len()), none, None) {
                 app.gallery.only = None;
             }
             let mut sorted: Vec<&Group> = all.iter().collect();
@@ -758,12 +824,17 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
         let avail = ui.available_width();
         let cols = (((avail + gap) / (240.0 + gap)).floor() as usize).max(1);
         let w = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).floor();
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(gap, 16.0);
-            for clip in &g.items {
-                card(app, ui, clip, w, by);
-            }
-        });
+        // One explicit row per `cols` cards. (A wrapping layout doesn't wrap
+        // containers like these cards, so the extra ones ran off the edge.)
+        for row in g.items.chunks(cols) {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for clip in row {
+                    card(app, ui, clip, w, by);
+                }
+            });
+            ui.add_space(16.0);
+        }
     }
 }
 
@@ -799,6 +870,20 @@ pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> e
     }
 }
 
+/// What to call a clip in a short list: its game if the app named it, else the
+/// name you gave it.
+pub fn recent_title(c: &Clip) -> String {
+    if is_default_name(&c.path) {
+        c.game.clone()
+    } else {
+        c.path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&c.name)
+            .to_string()
+    }
+}
+
 /// Clips named by the app ("sc-game-date") show their time as the title; clips
 /// you've named yourself show that name instead.
 fn is_default_name(path: &Path) -> bool {
@@ -819,6 +904,26 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
         let hovered = ui.rect_contains_pointer(rect);
         if resp.clicked() {
             open_path(&clip.path);
+        }
+
+        // A small corner label marks clips that came from a trim.
+        if app.library.is_trimmed(&clip.path) {
+            let galley = ui.painter().layout_no_wrap(
+                "Trimmed".to_string(),
+                FontId::new(11.0, theme::semibold()),
+                Color32::WHITE,
+            );
+            let tag = Rect::from_min_size(
+                rect.left_top() + vec2(8.0, 8.0),
+                galley.size() + vec2(14.0, 6.0),
+            );
+            ui.painter().rect_filled(
+                tag,
+                Rounding::same(tag.height() / 2.0),
+                Color32::from_black_alpha(150),
+            );
+            ui.painter()
+                .galley(tag.center() - galley.size() / 2.0, galley, Color32::WHITE);
         }
 
         if hovered {
@@ -989,15 +1094,10 @@ mod tests {
     }
 
     #[test]
-    fn per_app_folder_wins() {
-        assert_eq!(g("V/valorant/sc-valorant-20261019.mp4"), "Valorant");
-        assert_eq!(g("V/valorant/anything.mp4"), "Valorant");
-    }
-
-    #[test]
-    fn day_folders_are_not_games() {
-        assert!(is_day_folder("2026-10-19"));
-        assert!(!is_day_folder("valorant"));
+    fn game_comes_from_the_name_not_the_folder() {
+        // Folders are for organising, so a folder you made is never a "game".
+        assert_eq!(g("V/Best of/sc-valorant-20261019.mp4"), "Valorant");
+        assert_eq!(g("V/Best of/Triple kill.mp4"), "Other");
     }
 
     #[test]

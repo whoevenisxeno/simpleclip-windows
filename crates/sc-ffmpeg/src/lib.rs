@@ -17,7 +17,7 @@ pub use convert::Bgra2Nv12;
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
 pub use recorder::Recorder;
-pub use thumb::thumbnail;
+pub use thumb::{frame_at, thumbnail};
 pub use trim::{probe_duration, trim_copy};
 
 use ffmpeg_next as ff;

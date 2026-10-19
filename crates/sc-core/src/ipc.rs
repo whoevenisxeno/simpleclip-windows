@@ -40,12 +40,33 @@ pub enum Request {
     Probe {
         path: PathBuf,
     },
-    /// Lossless trim of a saved clip into a new file next to it.
+    /// The frame of a clip at a given time (for the trim view's scrubbing).
+    Frame {
+        path: PathBuf,
+        secs: f64,
+        width: u32,
+    },
+    /// Lossless trim of a saved clip into a new file.
     Trim {
         path: PathBuf,
         start_secs: f64,
         end_secs: f64,
+        #[serde(default)]
+        dest: TrimDest,
     },
+}
+
+/// Where a trimmed copy is written.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrimDest {
+    /// The configured trim folder, or beside the original when none is set.
+    #[default]
+    Default,
+    /// Always beside the original (used when replacing it).
+    Beside,
+    /// A scratch folder, for previewing; cleaned up automatically.
+    Temp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

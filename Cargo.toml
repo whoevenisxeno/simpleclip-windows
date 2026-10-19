@@ -1,4 +1,4 @@
-[workspace]
+﻿[workspace]
 resolver = "2"
 members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg", "crates/sc-capture"]
 
@@ -6,7 +6,7 @@ members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates
 version = "4.0.0"
 edition = "2021"
 rust-version = "1.95"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/whoevenisxeno/SimpleClip"
 authors = ["SimpleClip contributors"]
 

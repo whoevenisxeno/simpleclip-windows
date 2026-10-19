@@ -369,9 +369,6 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
                         );
                     },
                 );
-                s.row("Check for updates", None, |ui| {
-                    widgets::toggle(ui, &mut app.cfg.general.update_check);
-                });
             });
         });
 }

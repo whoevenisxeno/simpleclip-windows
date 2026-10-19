@@ -90,14 +90,22 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             Ok(duration_secs) => Response::Probed { duration_secs },
             Err(message) => Response::Error { message },
         },
+        Request::Frame { path, secs, width } => {
+            match crate::thumbs::cached_frame(&path, secs, width) {
+                Ok(path) => Response::Thumbnail { path },
+                Err(message) => Response::Error { message },
+            }
+        }
         Request::Trim {
             path,
             start_secs,
             end_secs,
+            dest,
         } => match trim(
             &path,
             start_secs,
             end_secs,
+            dest,
             daemon.config.read().unwrap().save.trim_directory.clone(),
         ) {
             Ok((path, duration_secs)) => Response::Saved {
@@ -152,26 +160,34 @@ fn media_duration(_: &std::path::Path) -> Result<f64, String> {
     Err("not supported on this platform".into())
 }
 
-/// Trim `path` to `[start, end]` seconds into `<name>-trim.mp4`, in `dest_dir`
-/// when one is configured, otherwise beside the original.
+/// Trim `path` to `[start, end]` seconds into `<name>-trim.mp4`. Where it goes
+/// depends on `dest`: the configured trim folder (else beside the original), always
+/// beside the original, or a scratch folder for previews.
 #[cfg(any(target_os = "linux", windows))]
 fn trim(
     path: &std::path::Path,
     start: f64,
     end: f64,
-    dest_dir: Option<std::path::PathBuf>,
+    dest: sc_core::ipc::TrimDest,
+    trim_dir: Option<std::path::PathBuf>,
 ) -> Result<(std::path::PathBuf, f64), String> {
+    use sc_core::ipc::TrimDest;
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or("bad file name")?;
-    let dir = match dest_dir {
-        Some(d) => {
-            std::fs::create_dir_all(&d)
-                .map_err(|e| format!("can't create trim folder {}: {e}", d.display()))?;
-            d
-        }
-        None => path.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
+    let beside = || path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let dir = match dest {
+        TrimDest::Beside => beside(),
+        TrimDest::Temp => preview_dir()?,
+        TrimDest::Default => match trim_dir {
+            Some(d) => {
+                std::fs::create_dir_all(&d)
+                    .map_err(|e| format!("can't create trim folder {}: {e}", d.display()))?;
+                d
+            }
+            None => beside(),
+        },
     };
     let mut out = dir.join(format!("{stem}-trim.mp4"));
     let mut n = 2;
@@ -183,11 +199,34 @@ fn trim(
     Ok((out, secs))
 }
 
+/// A scratch folder for trim previews; files older than a day are removed.
+#[cfg(any(target_os = "linux", windows))]
+fn preview_dir() -> Result<std::path::PathBuf, String> {
+    let dir = std::env::temp_dir().join("SimpleClip-previews");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("can't create preview folder: {e}"))?;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let day = std::time::Duration::from_secs(24 * 3600);
+        for e in entries.flatten() {
+            let old = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > day);
+            if old {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    Ok(dir)
+}
+
 #[cfg(not(any(target_os = "linux", windows)))]
 fn trim(
     _: &std::path::Path,
     _: f64,
     _: f64,
+    _: sc_core::ipc::TrimDest,
     _: Option<std::path::PathBuf>,
 ) -> Result<(std::path::PathBuf, f64), String> {
     Err("not supported on this platform".into())

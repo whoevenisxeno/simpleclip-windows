@@ -293,7 +293,7 @@ fn recent(app: &mut ScApp, ui: &mut Ui) {
                 }
                 ui.add(
                     egui::Label::new(
-                        RichText::new(&clip.game)
+                        RichText::new(crate::screens::gallery::recent_title(&clip))
                             .font(FontId::new(13.0, theme::semibold()))
                             .color(p.text),
                     )

@@ -40,6 +40,9 @@ enum Command {
         path: std::path::PathBuf,
         #[arg(long, default_value_t = 480)]
         width: u32,
+        /// Show the frame at this time (seconds) instead of a representative one.
+        #[arg(long)]
+        at: Option<f64>,
     },
     /// Cut a saved clip without re-encoding (starts at the keyframe at or before --start).
     Trim {
@@ -68,19 +71,21 @@ fn main() -> Result<()> {
         Command::Pause => (Request::Pause, false),
         Command::Resume => (Request::Resume, false),
         Command::Quit => (Request::Shutdown, false),
-        Command::Thumbnail { path, width } => (
-            Request::Thumbnail {
-                path: std::path::absolute(&path).unwrap_or(path),
-                width,
-            },
-            false,
-        ),
+        Command::Thumbnail { path, width, at } => {
+            let path = std::path::absolute(&path).unwrap_or(path);
+            let req = match at {
+                Some(secs) => Request::Frame { path, secs, width },
+                None => Request::Thumbnail { path, width },
+            };
+            (req, false)
+        }
         Command::Trim { path, start, end } => (
             Request::Trim {
                 // The daemon resolves paths from its own working directory.
                 path: std::path::absolute(&path).unwrap_or(path),
                 start_secs: start,
                 end_secs: end,
+                dest: Default::default(),
             },
             false,
         ),
