@@ -109,7 +109,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     if let Some(bytes) = load("segoeui.ttf") {
         fonts
             .font_data
-            .insert("ui".into(), egui::FontData::from_owned(bytes).into());
+            .insert("ui".into(), egui::FontData::from_owned(bytes));
         fonts
             .families
             .entry(FontFamily::Proportional)
@@ -120,7 +120,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     if let Some((name, bytes)) = semi {
         fonts
             .font_data
-            .insert(name.into(), egui::FontData::from_owned(bytes).into());
+            .insert(name.into(), egui::FontData::from_owned(bytes));
         let mut family = vec![name.to_string()];
         family.extend(fonts.families[&FontFamily::Proportional].clone());
         fonts.families.insert(semibold(), family);
@@ -133,7 +133,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     if let Some(bytes) = icon_bytes {
         fonts
             .font_data
-            .insert("icons".into(), egui::FontData::from_owned(bytes).into());
+            .insert("icons".into(), egui::FontData::from_owned(bytes));
         fonts.families.insert(icons(), vec!["icons".into()]);
     } else {
         fonts.families.insert(icons(), vec![]);
