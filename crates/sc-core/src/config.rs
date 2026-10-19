@@ -58,6 +58,9 @@ pub struct EncodeSettings {
     pub codec: Codec,
     pub bitrate_kbps: u32,
     pub gop_frames: u32,
+    /// Let the GPU encoder do the BGRA to YUV colour conversion instead of the CPU
+    /// (Windows, NVENC/AMF/QuickSync). Lowers CPU use; falls back automatically.
+    pub gpu_convert: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,6 +147,7 @@ impl Default for EncodeSettings {
             codec: Codec::H264,
             bitrate_kbps: 8_000,
             gop_frames: 120,
+            gpu_convert: false,
         }
     }
 }

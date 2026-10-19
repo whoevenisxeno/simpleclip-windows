@@ -114,6 +114,16 @@ fn quality(app: &mut ScApp, ui: &mut egui::Ui) {
             ui.selectable_value(&mut app.cfg.encode.codec, Codec::Hevc, "HEVC");
             ui.selectable_value(&mut app.cfg.encode.codec, Codec::Av1, "AV1");
         });
+        if cfg!(windows) {
+            ui.checkbox(
+                &mut app.cfg.encode.gpu_convert,
+                "Convert colours on the GPU (lower CPU use)",
+            )
+            .on_hover_text(
+                "Hands raw frames to the GPU encoder instead of converting on the CPU first. \
+                 Falls back automatically if your encoder doesn't support it.",
+            );
+        }
         if app.cfg.encode.codec != Codec::H264 {
             ui.colored_label(theme::WARN, "HEVC/AV1 may not upload or play everywhere.");
         }

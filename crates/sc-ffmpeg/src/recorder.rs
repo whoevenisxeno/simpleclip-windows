@@ -19,7 +19,7 @@ impl Recorder {
         bitrate_kbps: u32,
         gop_frames: u32,
     ) -> Result<Self> {
-        let enc = Encoder::new(width, height, fps, bitrate_kbps, gop_frames)?;
+        let enc = Encoder::new(width, height, fps, bitrate_kbps, gop_frames, false)?;
         let mux = Mp4Muxer::new(path, &enc)?;
         Ok(Self {
             enc,

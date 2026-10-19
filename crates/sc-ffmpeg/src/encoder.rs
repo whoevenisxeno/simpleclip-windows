@@ -31,6 +31,9 @@ pub struct Encoder {
     name: &'static str,
     gop: i64,
     sent: i64,
+    /// Frames go in as BGRA and the encoder converts to YUV on the GPU, skipping
+    /// the CPU swscale step (cheaper CPU, hardware encoders only).
+    bgra: bool,
 }
 
 // Owned by, and used from, a single encode thread; moving it there is sound.
@@ -43,6 +46,7 @@ impl Encoder {
         fps: u32,
         bitrate_kbps: u32,
         gop_frames: u32,
+        gpu_convert: bool,
     ) -> Result<Self> {
         crate::init()?;
         let (w, h) = (width as i32, height as i32);
@@ -54,27 +58,37 @@ impl Encoder {
             if forced.as_deref().is_some_and(|f| f != name) {
                 continue;
             }
-            let mut enc = Self {
-                ctx: ptr::null_mut(),
-                device: ptr::null_mut(),
-                frames: ptr::null_mut(),
-                width: w,
-                height: h,
-                base_ns: None,
-                kind,
-                name,
-                gop: gop_frames.max(1) as i64,
-                sent: 0,
+            // With GPU conversion requested, try BGRA input first on the encoders
+            // that take it, then fall back to NV12 on the same encoder.
+            let modes: &[bool] = if gpu_convert && bgra_capable(kind) {
+                &[true, false]
+            } else {
+                &[false]
             };
-            match unsafe { enc.try_open(fps as i32, bitrate_kbps as i64, gop_frames as i32) } {
-                Ok(()) => {
-                    tracing::info!(encoder = name, "video encoder opened");
-                    return Ok(enc);
-                }
-                Err(e) => {
-                    tracing::debug!(encoder = name, error = %e, "encoder unavailable");
-                    enc.cleanup();
-                    last_err = e;
+            for &bgra in modes {
+                let mut enc = Self {
+                    ctx: ptr::null_mut(),
+                    device: ptr::null_mut(),
+                    frames: ptr::null_mut(),
+                    width: w,
+                    height: h,
+                    base_ns: None,
+                    kind,
+                    name,
+                    gop: gop_frames.max(1) as i64,
+                    sent: 0,
+                    bgra,
+                };
+                match unsafe { enc.try_open(fps as i32, bitrate_kbps as i64, gop_frames as i32) } {
+                    Ok(()) => {
+                        tracing::info!(encoder = name, bgra, "video encoder opened");
+                        return Ok(enc);
+                    }
+                    Err(e) => {
+                        tracing::debug!(encoder = name, bgra, error = %e, "encoder unavailable");
+                        enc.cleanup();
+                        last_err = e;
+                    }
                 }
             }
         }
@@ -89,6 +103,12 @@ impl Encoder {
     /// FFmpeg codec name of the opened encoder (e.g. `h264_nvenc`).
     pub fn name(&self) -> &'static str {
         self.name
+    }
+
+    /// Whether frames must be pushed with `push_bgra` (GPU colour conversion)
+    /// rather than `push_nv12`.
+    pub fn takes_bgra(&self) -> bool {
+        self.bgra
     }
 }
 
@@ -126,7 +146,9 @@ impl Encoder {
             den: TIMEBASE_HZ as i32,
         };
         c.framerate = ffi::AVRational { num: fps, den: 1 };
-        c.pix_fmt = if self.frames.is_null() {
+        c.pix_fmt = if self.bgra {
+            bgra_format(self.kind)
+        } else if self.frames.is_null() {
             ffi::AVPixelFormat::AV_PIX_FMT_NV12
         } else {
             ffi::AVPixelFormat::AV_PIX_FMT_VAAPI
@@ -168,6 +190,23 @@ impl Encoder {
     }
 }
 
+/// Encoders that can take BGRA frames and convert on the GPU.
+fn bgra_capable(kind: EncoderKind) -> bool {
+    cfg!(windows)
+        && matches!(
+            kind,
+            EncoderKind::Amf | EncoderKind::Nvenc | EncoderKind::Qsv
+        )
+}
+
+fn bgra_format(kind: EncoderKind) -> ffi::AVPixelFormat {
+    match kind {
+        // NVENC wants the padded-alpha variant; AMF and QSV take straight BGRA.
+        EncoderKind::Nvenc => ffi::AVPixelFormat::AV_PIX_FMT_BGR0,
+        _ => ffi::AVPixelFormat::AV_PIX_FMT_BGRA,
+    }
+}
+
 /// Low-latency, constant-ish-rate settings per encoder. Replay capture wants the
 /// encoder to keep up in real time and never stall the pipeline.
 fn encoder_options(kind: EncoderKind, name: &str) -> &'static [(&'static str, &'static str)] {
@@ -201,6 +240,57 @@ impl Encoder {
         let base = *self.base_ns.get_or_insert(pts_nanos);
         let pts_us = (pts_nanos - base) / (1_000_000_000 / TIMEBASE_HZ);
         unsafe { self.upload(nv12, pts_us) }
+    }
+
+    /// Encode one BGRA frame (rows `stride` bytes apart) when the encoder was
+    /// opened for GPU colour conversion.
+    pub fn push_bgra(
+        &mut self,
+        bgra: &[u8],
+        stride: usize,
+        pts_nanos: i64,
+    ) -> Result<Vec<EncodedPacket>> {
+        let base = *self.base_ns.get_or_insert(pts_nanos);
+        let pts = (pts_nanos - base) / (1_000_000_000 / TIMEBASE_HZ);
+        let (w, h) = (self.width as usize, self.height as usize);
+        if !self.bgra || bgra.len() < stride * h || stride < w * 4 {
+            return Err(Error::Ffmpeg("bad BGRA frame".into()));
+        }
+        unsafe {
+            let mut frame = ffi::av_frame_alloc();
+            (*frame).format = bgra_format(self.kind) as i32;
+            (*frame).width = self.width;
+            (*frame).height = self.height;
+            if ffi::av_frame_get_buffer(frame, 0) < 0 {
+                ffi::av_frame_free(&mut frame);
+                return Err(Error::Av {
+                    code: -1,
+                    ctx: "av_frame_get_buffer",
+                });
+            }
+            let dst_stride = (*frame).linesize[0] as usize;
+            for row in 0..h {
+                ptr::copy_nonoverlapping(
+                    bgra[row * stride..].as_ptr(),
+                    (*frame).data[0].add(row * dst_stride),
+                    w * 4,
+                );
+            }
+            if self.sent % self.gop == 0 {
+                (*frame).pict_type = ffi::AVPictureType::AV_PICTURE_TYPE_I;
+            }
+            self.sent += 1;
+            (*frame).pts = pts;
+            let rc = ffi::avcodec_send_frame(self.ctx, frame);
+            ffi::av_frame_free(&mut frame);
+            if rc < 0 {
+                return Err(Error::Av {
+                    code: rc,
+                    ctx: "avcodec_send_frame",
+                });
+            }
+            self.drain()
+        }
     }
 
     unsafe fn upload(&mut self, nv12: &[u8], pts: i64) -> Result<Vec<EncodedPacket>> {

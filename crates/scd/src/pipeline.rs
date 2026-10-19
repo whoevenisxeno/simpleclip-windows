@@ -111,15 +111,23 @@ impl Pipeline {
             fps,
             cfg.encode.bitrate_kbps,
             cfg.encode.gop_frames,
+            cfg.encode.gpu_convert,
         )
         .context("opening video encoder")?;
         let encoder_kind = venc.kind();
+        // GPU colour conversion: frames go to the encoder as BGRA and the CPU
+        // swscale step is skipped entirely.
+        let gpu_convert = venc.takes_bgra();
         let video_params = Arc::new(venc.codec_params().context("video params")?);
         let video_ring = Arc::new(Mutex::new(PacketRing::new(ring_bytes(
             cfg.encode.bitrate_kbps as u64,
             secs,
         ))));
-        let mut conv = Bgra2Nv12::new(width, height).context("converter")?;
+        let mut conv = if gpu_convert {
+            None
+        } else {
+            Some(Bgra2Nv12::new(width, height).context("converter")?)
+        };
         let vring = video_ring.clone();
         let vpaused = paused.clone();
 
@@ -127,7 +135,9 @@ impl Pipeline {
         // CPU and the hardware encode each get a full frame interval to themselves,
         // instead of sharing one thread's 16 ms at 60 fps. Backpressure flows
         // upstream; the capture pacer drops frames if both stages fall behind.
-        let (ntx, nrx) = crossbeam_channel::bounded::<(Vec<u8>, i64)>(4);
+        // Items are (pixels, timestamp_ns, stride); stride 0 means packed NV12,
+        // otherwise raw BGRA rows for GPU conversion.
+        let (ntx, nrx) = crossbeam_channel::bounded::<(Vec<u8>, i64, usize)>(4);
         let video_convert = std::thread::Builder::new()
             .name("sc-vconv".into())
             .spawn(move || {
@@ -135,13 +145,19 @@ impl Pipeline {
                     if vpaused.load(Ordering::Relaxed) {
                         continue;
                     }
-                    match conv.convert(&frame.data, frame.stride as usize) {
-                        Ok(nv12) => {
-                            if ntx.send((nv12, frame.timestamp.as_nanos())).is_err() {
-                                break;
+                    let ts = frame.timestamp.as_nanos();
+                    let item = match conv.as_mut() {
+                        Some(c) => match c.convert(&frame.data, frame.stride as usize) {
+                            Ok(nv12) => (nv12, ts, 0),
+                            Err(e) => {
+                                tracing::debug!(error = %e, "frame convert failed");
+                                continue;
                             }
-                        }
-                        Err(e) => tracing::debug!(error = %e, "frame convert failed"),
+                        },
+                        None => (frame.data, ts, frame.stride as usize),
+                    };
+                    if ntx.send(item).is_err() {
+                        break;
                     }
                 }
             })
@@ -152,10 +168,15 @@ impl Pipeline {
                 let (mut frames_in, mut packets_out, mut errors) = (0u32, 0u32, 0u32);
                 let mut spent = std::time::Duration::ZERO;
                 let mut report = std::time::Instant::now();
-                for (nv12, ts) in nrx.iter() {
+                for (pixels, ts, stride) in nrx.iter() {
                     let t = std::time::Instant::now();
                     frames_in += 1;
-                    match venc.push_nv12(&nv12, ts) {
+                    let pushed = if stride == 0 {
+                        venc.push_nv12(&pixels, ts)
+                    } else {
+                        venc.push_bgra(&pixels, stride, ts)
+                    };
+                    match pushed {
                         Ok(pkts) => {
                             packets_out += pkts.len() as u32;
                             let mut r = vring.lock().unwrap();

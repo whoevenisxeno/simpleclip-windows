@@ -91,3 +91,10 @@ on save" in Settings.
 Clips show a preview frame and are grouped by game (or by date), with a search box and
 a chip per game to filter. The game is read from the file name / per-app folder.
 Deleting sends a clip to the Recycle Bin.
+
+## Lower CPU use
+
+Settings > Quality > "Convert colours on the GPU" hands raw frames to the GPU encoder
+(AMF, NVENC, QuickSync) instead of converting them on the CPU first. On an RX 6650 XT
+at 1080p60 it dropped the daemon from about 6.5% to 5% of total CPU. It falls back to
+the normal path automatically if the encoder doesn't accept it. Off by default.
