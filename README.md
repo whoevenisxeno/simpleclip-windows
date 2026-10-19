@@ -138,10 +138,10 @@ drift:     0.0 ms
 daemon:    v4.0.0
 
 > sc save
-saved C:\Users\xeno\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019-182103.mp4 (11.9s)
+saved C:\Users\you\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019-182103.mp4 (11.9s)
 
 > sc screenshot
-saved C:\Users\xeno\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019.png (0.0s)
+saved C:\Users\you\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019.png (0.0s)
 
 > sc trim <clip> --start 2 --end 6
 saved ...\sc-rainbowsix-20261019-182103-trim.mp4 (4.0s)
