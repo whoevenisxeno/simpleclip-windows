@@ -86,6 +86,9 @@ pub struct GeneralSettings {
     pub save_sound: bool,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
+    /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
+    /// OS startup entry in step with this.
+    pub autostart: bool,
     /// Set once the first-launch wizard finishes, so it never runs again.
     pub setup_complete: bool,
 }
@@ -118,7 +121,9 @@ impl Default for AudioSettings {
             desktop_enabled: true,
             desktop_device: String::new(),
             mic_device: None,
-            mic_enabled: false,
+            // On by default on Windows, where mic capture is implemented; the
+            // wizard and Settings let you turn it off.
+            mic_enabled: cfg!(windows),
             tracks: AudioTracks::Mixed,
         }
     }
@@ -196,6 +201,7 @@ impl Default for GeneralSettings {
             save_sound: true,
             notify: true,
             post_save_hook: None,
+            autostart: true,
             setup_complete: false,
         }
     }

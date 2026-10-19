@@ -10,9 +10,12 @@ mod naming;
 mod notify;
 #[cfg(any(target_os = "linux", windows))]
 mod pipeline;
+#[cfg(windows)]
+mod popup;
 mod reload;
 mod server;
 mod state;
+mod thumbs;
 #[cfg(windows)]
 mod win;
 
@@ -43,6 +46,8 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let _log_guard = init_logging(args.verbose, args.foreground);
 
+    #[cfg(windows)]
+    win::init_dpi();
     #[cfg(windows)]
     if !win::acquire_single_instance() {
         tracing::warn!("scd is already running; exiting");
@@ -86,6 +91,9 @@ fn main() -> Result<()> {
 
     #[cfg(windows)]
     {
+        // Keep the Windows startup entry in step with the setting (on by default),
+        // so the replay buffer is always running in the background after sign-in.
+        win::set_autostart(daemon.config.read().unwrap().general.autostart);
         win::spawn_hotkey(daemon.clone());
         let server_daemon = daemon.clone();
         std::thread::Builder::new()

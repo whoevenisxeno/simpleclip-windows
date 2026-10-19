@@ -23,6 +23,7 @@ pub struct ScApp {
     pub devices: Devices,
     pub gallery: screens::gallery::Cache,
     pub trim: screens::trim::TrimState,
+    pub thumbs: crate::thumbs::Thumbs,
 }
 
 #[derive(Default)]
@@ -72,6 +73,7 @@ impl ScApp {
             devices: Devices::default(),
             gallery: Default::default(),
             trim: Default::default(),
+            thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
         }
     }
 

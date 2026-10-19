@@ -82,6 +82,10 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             });
             Response::Ok
         }
+        Request::Thumbnail { path, width } => match crate::thumbs::cached_thumbnail(&path, width) {
+            Ok(path) => Response::Thumbnail { path },
+            Err(message) => Response::Error { message },
+        },
         Request::Probe { path } => match media_duration(&path) {
             Ok(duration_secs) => Response::Probed { duration_secs },
             Err(message) => Response::Error { message },

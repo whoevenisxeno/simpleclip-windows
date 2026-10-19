@@ -35,6 +35,12 @@ enum Command {
     Resume,
     /// Stop the daemon.
     Quit,
+    /// Make (or fetch the cached) preview image of a clip and print its path.
+    Thumbnail {
+        path: std::path::PathBuf,
+        #[arg(long, default_value_t = 480)]
+        width: u32,
+    },
     /// Cut a saved clip without re-encoding (starts at the keyframe at or before --start).
     Trim {
         path: std::path::PathBuf,
@@ -62,6 +68,13 @@ fn main() -> Result<()> {
         Command::Pause => (Request::Pause, false),
         Command::Resume => (Request::Resume, false),
         Command::Quit => (Request::Shutdown, false),
+        Command::Thumbnail { path, width } => (
+            Request::Thumbnail {
+                path: std::path::absolute(&path).unwrap_or(path),
+                width,
+            },
+            false,
+        ),
         Command::Trim { path, start, end } => (
             Request::Trim {
                 // The daemon resolves paths from its own working directory.
@@ -103,6 +116,7 @@ fn main() -> Result<()> {
             }
         }
         Response::Probed { duration_secs } => println!("{duration_secs:.2}s"),
+        Response::Thumbnail { path } => println!("{}", path.display()),
         Response::Ok | Response::Pong => println!("ok"),
         Response::Error { message } => {
             eprintln!("error: {message}");

@@ -5,6 +5,7 @@ mod config_io;
 mod daemon;
 mod screens;
 mod theme;
+mod thumbs;
 mod widgets;
 
 use app::ScApp;

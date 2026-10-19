@@ -269,6 +269,12 @@ fn hotkey(app: &mut ScApp, ui: &mut egui::Ui) {
 
 fn feedback(app: &mut ScApp, ui: &mut egui::Ui) {
     widgets::card(ui, "Feedback and updates", |ui| {
+        if cfg!(windows) {
+            ui.checkbox(
+                &mut app.cfg.general.autostart,
+                "Start SimpleClip when I sign in (runs in the background)",
+            );
+        }
         ui.checkbox(&mut app.cfg.general.notify, "Show a notification on save");
         ui.checkbox(&mut app.cfg.general.save_sound, "Play a sound on save");
         ui.checkbox(&mut app.cfg.general.update_check, "Check for updates");

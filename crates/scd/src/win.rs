@@ -4,7 +4,6 @@
 
 use crate::state::Daemon;
 use sc_core::capture::CaptureState;
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -26,9 +25,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, MSG, PM_REMOVE, WM_HOTKEY,
 };
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const AUMID: &str = "SimpleClip";
+const AUMID: &str = "SimpleClip"; // also the Run-key value name
 
 /// Route console output to the parent terminal when started with `--foreground`.
 /// The release binary is a GUI-subsystem app (no console flash at login), so a
@@ -253,40 +251,24 @@ fn screenshot_from_hotkey(daemon: &Daemon) {
 
 // --------------------------------------------------------- notifications --
 
-fn register_aumid() {
-    use winreg::enums::HKEY_CURRENT_USER;
-    use winreg::RegKey;
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if let Ok((k, _)) = hkcu.create_subkey(format!(r"Software\Classes\AppUserModelId\{AUMID}")) {
-        let _ = k.set_value("DisplayName", &"SimpleClip");
-        let _ = k.set_value("ShowInSettings", &0u32);
-    }
+/// Show a one-line popup in the top-right corner (errors, hotkey problems).
+pub fn notify(title: &str, body: &str) {
+    crate::popup::show(crate::popup::Popup::simple(
+        !title.to_ascii_lowercase().contains("couldn"),
+        title,
+        body,
+    ));
 }
 
-/// Show a toast. Detached so a slow PowerShell start never blocks the daemon.
-pub fn notify(title: &str, body: &str) {
-    const SCRIPT: &str = "$ErrorActionPreference='Stop';\
-        [void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime];\
-        [void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime];\
-        $t=[Security.SecurityElement]::Escape($env:SC_TITLE);$b=[Security.SecurityElement]::Escape($env:SC_BODY);\
-        $x=New-Object Windows.Data.Xml.Dom.XmlDocument;\
-        $x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>'+$t+'</text><text>'+$b+'</text></binding></visual><audio silent=\"true\"/></toast>');\
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('SimpleClip').Show([Windows.UI.Notifications.ToastNotification]::new($x))";
-    let mut cmd = Command::new("powershell.exe");
-    cmd.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-WindowStyle",
-        "Hidden",
-        "-Command",
-        SCRIPT,
-    ])
-    .env("SC_TITLE", title)
-    .env("SC_BODY", body)
-    .creation_flags(CREATE_NO_WINDOW);
-    std::thread::spawn(move || {
-        let _ = cmd.status();
-    });
+/// Opt the process into per-monitor DPI awareness so the popup is crisp on
+/// scaled displays. Must run before any window is created.
+pub fn init_dpi() {
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
 }
 
 /// Short system sound on save (async; returns immediately).
@@ -381,8 +363,6 @@ pub fn run_tray(daemon: Daemon) {
     use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{TrayIconBuilder, TrayIconEvent};
 
-    register_aumid();
-
     let save = MenuItem::new("Save clip now", true, None);
     let shot = MenuItem::new("Take screenshot", true, None);
     let open_gui_item = MenuItem::new("Open SimpleClip", true, None);
@@ -441,7 +421,16 @@ pub fn run_tray(daemon: Daemon) {
                 let paused = d.capture_state() != CaptureState::Paused;
                 d.set_paused(paused);
             } else if id == auto_id {
-                set_autostart(!autostart_enabled());
+                // Persist through the config so the setting survives restarts
+                // (the daemon re-applies it from there).
+                let on = !autostart_enabled();
+                set_autostart(on);
+                if let Ok(path) = sc_core::config::Config::default_path() {
+                    if let Ok(mut cfg) = sc_core::config::Config::load(&path) {
+                        cfg.general.autostart = on;
+                        let _ = cfg.save(&path);
+                    }
+                }
             } else if id == quit_id {
                 unsafe { PostQuitMessage(0) };
             }

@@ -77,3 +77,17 @@ and allow desktop apps.
 Gallery > Trim, or `sc trim clip.mp4 --start 5 --end 20`. The cut is lossless (no
 re-encode), so it starts at the keyframe at or before the start you pick; with the
 default 2-second keyframe interval that can be up to 2 s early.
+
+## Save notification
+
+When a clip or screenshot is saved, a small card drops down in the top-right corner
+(it never takes focus, so it won't interrupt a game) showing the file name, game,
+length, size, resolution, fps, encoder, average bitrate and how long the save took.
+A failed save shows a red card with the reason. Turn it off with "Show a notification
+on save" in Settings.
+
+## Gallery
+
+Clips show a preview frame and are grouped by game (or by date), with a search box and
+a chip per game to filter. The game is read from the file name / per-app folder.
+Deleting sends a clip to the Recycle Bin.

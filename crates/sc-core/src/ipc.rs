@@ -31,6 +31,11 @@ pub enum Request {
     ListAudioDevices,
     /// Ask the daemon to exit (used by `sc quit` and the installer).
     Shutdown,
+    /// A small preview image of a saved clip, for the gallery.
+    Thumbnail {
+        path: PathBuf,
+        width: u32,
+    },
     /// Length of a saved clip, for the trim view.
     Probe {
         path: PathBuf,
@@ -60,12 +65,27 @@ pub struct StatusReport {
 pub enum Response {
     Pong,
     Status(StatusReport),
-    Saved { path: PathBuf, duration_secs: f64 },
-    Probed { duration_secs: f64 },
-    Monitors { monitors: Vec<MonitorInfo> },
-    AudioDevices { devices: Vec<AudioDevice> },
+    Saved {
+        path: PathBuf,
+        duration_secs: f64,
+    },
+    Probed {
+        duration_secs: f64,
+    },
+    /// Path of a cached preview PNG.
+    Thumbnail {
+        path: PathBuf,
+    },
+    Monitors {
+        monitors: Vec<MonitorInfo>,
+    },
+    AudioDevices {
+        devices: Vec<AudioDevice>,
+    },
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
