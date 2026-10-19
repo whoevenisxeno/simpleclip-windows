@@ -3,6 +3,7 @@
 // terminal with --foreground).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod audio_mix;
 #[cfg(target_os = "linux")]
 mod hypr;
 mod naming;

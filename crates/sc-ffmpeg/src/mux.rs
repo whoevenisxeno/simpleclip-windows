@@ -19,7 +19,8 @@ const IN_TB: ffi::AVRational = ffi::AVRational {
 pub struct Mp4Muxer {
     oc: *mut ffi::AVFormatContext,
     video_tb: ffi::AVRational,
-    audio: Option<(i32, ffi::AVRational)>,
+    /// Output stream index and timebase of each audio track, in track order.
+    audio: Vec<(i32, ffi::AVRational)>,
     base_ns: Option<i64>,
     finished: bool,
 }
@@ -30,7 +31,7 @@ impl Mp4Muxer {
     }
 
     pub fn from_params(path: &std::path::Path, video: &CodecParams) -> Result<Self> {
-        Self::open_all(path, video, None)
+        Self::open_all(path, video, &[])
     }
 
     /// Video plus an AAC audio stream at `audio_rate` Hz.
@@ -40,7 +41,18 @@ impl Mp4Muxer {
         audio: &CodecParams,
         audio_rate: i32,
     ) -> Result<Self> {
-        Self::open_all(path, video, Some((audio, audio_rate)))
+        Self::open_all(path, video, &[(audio, audio_rate)])
+    }
+
+    /// Video plus any number of AAC tracks (e.g. desktop and microphone as
+    /// separate tracks), each `(params, sample_rate)`. Write track `i` with
+    /// `write_audio_track(i, ..)`.
+    pub fn with_audio_tracks(
+        path: &std::path::Path,
+        video: &CodecParams,
+        tracks: &[(&CodecParams, i32)],
+    ) -> Result<Self> {
+        Self::open_all(path, video, tracks)
     }
 }
 
@@ -48,7 +60,7 @@ impl Mp4Muxer {
     fn open_all(
         path: &std::path::Path,
         video: &CodecParams,
-        audio: Option<(&CodecParams, i32)>,
+        audio: &[(&CodecParams, i32)],
     ) -> Result<Self> {
         let path_c = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| Error::Ffmpeg("path has interior NUL".into()))?;
@@ -56,7 +68,7 @@ impl Mp4Muxer {
             let mut m = Self {
                 oc: ptr::null_mut(),
                 video_tb: IN_TB,
-                audio: None,
+                audio: Vec::new(),
                 base_ns: None,
                 finished: false,
             };
@@ -96,7 +108,7 @@ impl Mp4Muxer {
         &mut self,
         path_c: &CString,
         video: &CodecParams,
-        audio: Option<(&CodecParams, i32)>,
+        audio: &[(&CodecParams, i32)],
     ) -> Result<()> {
         let mp4 = CString::new("mp4").unwrap();
         let rc = ffi::avformat_alloc_output_context2(
@@ -112,13 +124,10 @@ impl Mp4Muxer {
             });
         }
         let vidx = self.add_stream(video.as_ptr(), IN_TB)?;
-        let aidx = match audio {
-            Some((p, rate)) => Some((
-                self.add_stream(p.as_ptr(), ffi::AVRational { num: 1, den: rate })?,
-                rate,
-            )),
-            None => None,
-        };
+        let mut aidx = Vec::new();
+        for &(p, rate) in audio {
+            aidx.push(self.add_stream(p.as_ptr(), ffi::AVRational { num: 1, den: rate })?);
+        }
         if ffi::avio_open(&mut (*self.oc).pb, path_c.as_ptr(), ffi::AVIO_FLAG_WRITE) < 0 {
             return Err(Error::Av {
                 code: -1,
@@ -140,8 +149,8 @@ impl Mp4Muxer {
             });
         }
         self.video_tb = stream_tb(self.oc, vidx);
-        if let Some((ai, _)) = aidx {
-            self.audio = Some((ai, stream_tb(self.oc, ai)));
+        for ai in aidx {
+            self.audio.push((ai, stream_tb(self.oc, ai)));
         }
         Ok(())
     }
@@ -158,9 +167,14 @@ impl Mp4Muxer {
         self.write_pkt(ep, 0, tb)
     }
 
-    /// Write an audio packet, if this muxer has an audio stream.
+    /// Write an audio packet to the first audio track, if there is one.
     pub fn write_audio(&mut self, ep: &EncodedPacket) -> Result<()> {
-        if let Some((idx, tb)) = self.audio {
+        self.write_audio_track(0, ep)
+    }
+
+    /// Write an audio packet to track `track` (in the order given to `with_audio_tracks`).
+    pub fn write_audio_track(&mut self, track: usize, ep: &EncodedPacket) -> Result<()> {
+        if let Some(&(idx, tb)) = self.audio.get(track) {
             return self.write_pkt(ep, idx, tb);
         }
         Ok(())

@@ -78,7 +78,7 @@ pub struct CaptureHandle {
     slot: Arc<Mutex<Slot>>,
     control: Option<Control>,
     pacer: Option<JoinHandle<()>>,
-    audio: Option<JoinHandle<()>>,
+    audio: Vec<JoinHandle<()>>,
 }
 
 impl CaptureHandle {
@@ -111,7 +111,7 @@ impl Drop for CaptureHandle {
         if let Some(t) = self.pacer.take() {
             let _ = t.join();
         }
-        if let Some(t) = self.audio.take() {
+        for t in self.audio.drain(..) {
             let _ = t.join();
         }
     }
@@ -199,18 +199,33 @@ pub fn start(
             .map_err(werr)?
     };
 
-    let audio = match audio {
-        Some(tx) => {
-            let (stop, dev) = (stop.clone(), opts.audio_device.clone());
-            Some(
-                std::thread::Builder::new()
-                    .name("sc-capture-audio".into())
-                    .spawn(move || loopback(tx, epoch, stop, dev))
-                    .map_err(werr)?,
-            )
+    // Desktop loopback and (optionally) the microphone each get a thread, both
+    // feeding the one audio channel; `AudioBuffer::role` tells them apart.
+    let mut audio_threads = Vec::new();
+    if let Some(tx) = audio {
+        let mut sources = Vec::new();
+        if opts.desktop_audio {
+            sources.push(Source {
+                role: AudioRole::Desktop,
+                device: opts.audio_device.clone(),
+            });
         }
-        None => None,
-    };
+        if opts.mic_enabled {
+            sources.push(Source {
+                role: AudioRole::Microphone,
+                device: opts.mic_device.clone(),
+            });
+        }
+        for src in sources {
+            let (tx, stop) = (tx.clone(), stop.clone());
+            audio_threads.push(
+                std::thread::Builder::new()
+                    .name(format!("sc-capture-{}", src.label().replace(' ', "-")))
+                    .spawn(move || capture_audio(tx, epoch, stop, src))
+                    .map_err(werr)?,
+            );
+        }
+    }
 
     Ok(CaptureHandle {
         width,
@@ -219,7 +234,7 @@ pub fn start(
         slot,
         control: Some(control),
         pacer: Some(pacer),
-        audio,
+        audio: audio_threads,
     })
 }
 
@@ -286,14 +301,37 @@ fn pace(
 const RATE: u32 = 48_000;
 const CHANNELS: u16 = 2;
 
-/// WASAPI loopback of the default (or chosen) output device. Loopback delivers
-/// nothing while the system is silent, which would slide audio earlier than
-/// video, so gaps are filled with silence against the wall clock.
-fn loopback(
+/// Which audio endpoint a capture thread reads.
+#[derive(Clone)]
+struct Source {
+    role: AudioRole,
+    /// Endpoint id; empty for the default device of the relevant kind.
+    device: String,
+}
+
+impl Source {
+    /// Desktop audio is a loopback tap on an output (render) device; the
+    /// microphone is an ordinary capture device.
+    fn is_loopback(&self) -> bool {
+        self.role == AudioRole::Desktop
+    }
+
+    fn label(&self) -> &'static str {
+        match self.role {
+            AudioRole::Desktop => "desktop audio",
+            AudioRole::Microphone => "microphone",
+        }
+    }
+}
+
+/// Continuously capture one source as 48 kHz stereo f32. WASAPI delivers nothing
+/// while a loopback is silent (and a mic can stall), which would slide audio
+/// earlier than video, so gaps are filled with silence against the wall clock.
+fn capture_audio(
     tx: crossbeam_channel::Sender<AudioBuffer>,
     epoch: Instant,
     stop: Arc<AtomicBool>,
-    device: String,
+    src: Source,
 ) {
     if let Err(e) = wasapi::initialize_mta().ok() {
         tracing::warn!(error = %e, "COM init for audio failed");
@@ -301,9 +339,14 @@ fn loopback(
     }
     let mut produced_frames: u64 = 0;
     let t0 = epoch.elapsed();
+    let mut failures = 0u32;
     while !stop.load(Ordering::Relaxed) {
-        if let Err(e) = loopback_session(&tx, epoch, t0, &stop, &device, &mut produced_frames) {
-            tracing::warn!(error = %e, "audio loopback interrupted; retrying");
+        if let Err(e) = audio_session(&tx, epoch, t0, &stop, &src, &mut produced_frames) {
+            failures += 1;
+            // Say it once, then quietly retry: a missing/blocked mic shouldn't spam the log.
+            if failures == 1 {
+                tracing::warn!(error = %e, source = src.label(), "audio capture interrupted; retrying");
+            }
             // Keep the timeline moving while the device is gone (e.g. headphones
             // unplugged and the default output changes).
             for _ in 0..10 {
@@ -312,7 +355,7 @@ fn loopback(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
-            pad_silence(&tx, epoch, t0, &mut produced_frames, 0);
+            pad_silence(&tx, src.role, epoch, t0, &mut produced_frames, 0);
         }
     }
 }
@@ -321,6 +364,7 @@ fn loopback(
 /// `incoming` frames about to be sent. Small deficits are jitter and are left alone.
 fn pad_silence(
     tx: &crossbeam_channel::Sender<AudioBuffer>,
+    role: AudioRole,
     epoch: Instant,
     t0: Duration,
     produced_frames: &mut u64,
@@ -333,6 +377,7 @@ fn pad_silence(
         let gap = expected - have;
         send(
             tx,
+            role,
             t0,
             produced_frames,
             vec![0.0; gap as usize * CHANNELS as usize],
@@ -342,6 +387,7 @@ fn pad_silence(
 
 fn send(
     tx: &crossbeam_channel::Sender<AudioBuffer>,
+    role: AudioRole,
     t0: Duration,
     produced_frames: &mut u64,
     samples: Vec<f32>,
@@ -351,7 +397,7 @@ fn send(
     *produced_frames += frames;
     // Audio is never dropped by the pipeline's unbounded queue.
     let _ = tx.send(AudioBuffer {
-        role: AudioRole::Desktop,
+        role,
         sample_rate: RATE,
         channels: CHANNELS,
         timestamp: Timestamp::from_nanos(ts),
@@ -359,21 +405,26 @@ fn send(
     });
 }
 
-fn loopback_session(
+fn audio_session(
     tx: &crossbeam_channel::Sender<AudioBuffer>,
     epoch: Instant,
     t0: Duration,
     stop: &AtomicBool,
-    device: &str,
+    src: &Source,
     produced_frames: &mut u64,
 ) -> std::result::Result<(), BoxErr> {
     use wasapi::{DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
 
     let enumerator = DeviceEnumerator::new()?;
-    let dev = if device.is_empty() {
-        enumerator.get_default_device(&Direction::Render)?
+    let kind = if src.is_loopback() {
+        Direction::Render
     } else {
-        enumerator.get_device(device)?
+        Direction::Capture
+    };
+    let dev = if src.device.is_empty() {
+        enumerator.get_default_device(&kind)?
+    } else {
+        enumerator.get_device(&src.device)?
     };
     let mut client = dev.get_iaudioclient()?;
     // Shared-mode autoconvert lets us ask for 48 kHz stereo f32 whatever the
@@ -387,6 +438,8 @@ fn loopback_session(
         None,
     );
     let (period, _min) = client.get_device_period()?;
+    // Direction::Capture on a render device means loopback; on a capture device
+    // it is a plain recording stream.
     client.initialize_client(
         &fmt,
         &Direction::Capture,
@@ -398,7 +451,7 @@ fn loopback_session(
     let cap = client.get_audiocaptureclient()?;
     let block = fmt.get_blockalign() as usize;
     client.start_stream()?;
-    tracing::info!(device = %dev.get_friendlyname().unwrap_or_default(), "audio loopback started");
+    tracing::info!(device = %dev.get_friendlyname().unwrap_or_default(), source = src.label(), "audio capture started");
 
     let mut buf = vec![0u8; block * RATE as usize / 2];
     while !stop.load(Ordering::Relaxed) {
@@ -418,9 +471,9 @@ fn loopback_session(
             );
         }
         let incoming = (samples.len() / CHANNELS as usize) as u64;
-        pad_silence(tx, epoch, t0, produced_frames, incoming);
+        pad_silence(tx, src.role, epoch, t0, produced_frames, incoming);
         if !samples.is_empty() {
-            send(tx, t0, produced_frames, samples);
+            send(tx, src.role, t0, produced_frames, samples);
         }
     }
     let _ = client.stop_stream();
@@ -447,20 +500,24 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>> {
         .collect()
 }
 
-/// Output devices that can be looped back; `id` is accepted by `Options::audio_device`.
+/// Audio endpoints: outputs that can be looped back (`is_monitor: true`, ids for
+/// `Options::audio_device`) and microphones (`is_monitor: false`, ids for
+/// `Options::mic_device`).
 pub fn list_audio_devices() -> Result<Vec<AudioDevice>> {
     use wasapi::{DeviceEnumerator, Direction};
     let _ = wasapi::initialize_mta();
     let en = DeviceEnumerator::new().map_err(werr)?;
-    let coll = en.get_device_collection(&Direction::Render).map_err(werr)?;
     let mut out = Vec::new();
-    for dev in &coll {
-        let dev = dev.map_err(werr)?;
-        out.push(AudioDevice {
-            id: dev.get_id().map_err(werr)?,
-            name: dev.get_friendlyname().unwrap_or_default(),
-            is_monitor: true,
-        });
+    for (dir, is_monitor) in [(Direction::Render, true), (Direction::Capture, false)] {
+        let coll = en.get_device_collection(&dir).map_err(werr)?;
+        for dev in &coll {
+            let dev = dev.map_err(werr)?;
+            out.push(AudioDevice {
+                id: dev.get_id().map_err(werr)?,
+                name: dev.get_friendlyname().unwrap_or_default(),
+                is_monitor,
+            });
+        }
     }
     Ok(out)
 }

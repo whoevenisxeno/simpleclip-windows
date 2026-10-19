@@ -35,6 +35,16 @@ enum Command {
     Resume,
     /// Stop the daemon.
     Quit,
+    /// Cut a saved clip without re-encoding (starts at the keyframe at or before --start).
+    Trim {
+        path: std::path::PathBuf,
+        /// Start, in seconds.
+        #[arg(long, default_value_t = 0.0)]
+        start: f64,
+        /// End, in seconds.
+        #[arg(long)]
+        end: f64,
+    },
     /// List displays that can be captured.
     Monitors,
     /// List audio output devices whose sound can be captured.
@@ -52,6 +62,15 @@ fn main() -> Result<()> {
         Command::Pause => (Request::Pause, false),
         Command::Resume => (Request::Resume, false),
         Command::Quit => (Request::Shutdown, false),
+        Command::Trim { path, start, end } => (
+            Request::Trim {
+                // The daemon resolves paths from its own working directory.
+                path: std::path::absolute(&path).unwrap_or(path),
+                start_secs: start,
+                end_secs: end,
+            },
+            false,
+        ),
         Command::Monitors => (Request::ListMonitors, false),
         Command::AudioDevices => (Request::ListAudioDevices, false),
     };
@@ -83,6 +102,7 @@ fn main() -> Result<()> {
                 println!("{}  {}", dev.id, dev.name);
             }
         }
+        Response::Probed { duration_secs } => println!("{duration_secs:.2}s"),
         Response::Ok | Response::Pong => println!("ok"),
         Response::Error { message } => {
             eprintln!("error: {message}");

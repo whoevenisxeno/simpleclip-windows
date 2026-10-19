@@ -16,8 +16,9 @@ Rough edges remain (see Roadmap).
 
 **Windows:** Windows Graphics Capture for video, WASAPI loopback for desktop
 audio, NVENC / AMF / QuickSync hardware encode (Media Foundation software
-fallback), a system tray icon, global hotkeys (Alt+F10 save, Alt+F9 screenshot),
-toast notifications, and a per-user installer. See
+fallback), microphone capture (mixed or on its own track), lossless trim, a system tray
+icon, global hotkeys (Alt+F10 save, Alt+F9 screenshot), toast notifications, and a
+proper installer (Start Menu, Apps & features, optional start-at-sign-in). See
 [packaging/windows](packaging/windows/README.md) to install or build.
 
 - Rolling replay buffer, hardware encoded
@@ -41,8 +42,8 @@ software encoder.
 
 ## Install
 
-**Windows:** unzip a release and run `.\install.ps1`, or build it yourself with
-`.\packaging\windows\build.ps1 -InstallDeps`.
+**Windows:** run `SimpleClip-<version>-Setup.exe` (per-user, no admin), or build
+it yourself with `.\packaging\windows\build.ps1 -InstallDeps`.
 
 **Linux:**
 
@@ -67,6 +68,8 @@ hotkey config, so once it runs there is nothing else to set up.
 sc save --last 30   # save the last 30 seconds
 sc status           # capture state, buffer fill, encoder
 sc pause / sc resume
+sc screenshot       # save the current frame as a PNG
+sc trim clip.mp4 --start 5 --end 20   # lossless cut, no re-encode
 ```
 
 ## How it works
@@ -82,7 +85,7 @@ ever stalling capture.
 
 ## Configuration
 
-Settings live in `~/.config/simpleclip/config.toml` (`%APPDATA%\SimpleClip\config.toml`
+Settings live in `~/.config/simpleclip/config.toml` (`%APPDATA%\SimpleClip\config\config.toml`
 on Windows; hand-editable, hot-reloaded)
 and are also exposed in the GUI: buffer length, RAM cap, bitrate, codec, capture
 FPS, cursor, save location and naming, notifications, and the hotkey.
@@ -90,7 +93,7 @@ FPS, cursor, save location and naming, notifications, and the hotkey.
 ## Roadmap
 
 - Audio (desktop + mic) in the clips
-- Microphone capture, trim export, Linux screenshots and tray
+- Linux microphone capture, screenshots and tray; frame-accurate trim and in-app preview
 - Restore token so the screen-share prompt only appears once
 - NVIDIA (NVENC) encode path
 - Packaging: AUR, AppImage

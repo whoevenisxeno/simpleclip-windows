@@ -31,6 +31,16 @@ pub enum Request {
     ListAudioDevices,
     /// Ask the daemon to exit (used by `sc quit` and the installer).
     Shutdown,
+    /// Length of a saved clip, for the trim view.
+    Probe {
+        path: PathBuf,
+    },
+    /// Lossless trim of a saved clip into a new file next to it.
+    Trim {
+        path: PathBuf,
+        start_secs: f64,
+        end_secs: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +61,7 @@ pub enum Response {
     Pong,
     Status(StatusReport),
     Saved { path: PathBuf, duration_secs: f64 },
+    Probed { duration_secs: f64 },
     Monitors { monitors: Vec<MonitorInfo> },
     AudioDevices { devices: Vec<AudioDevice> },
     Ok,

@@ -19,7 +19,10 @@ fn main() {
             monitor_id: String::new(),
             show_cursor: true,
             fps: 60,
+            desktop_audio: false,
             audio_device: String::new(),
+            mic_enabled: false,
+            mic_device: String::new(),
         },
     )
     .expect("start capture");

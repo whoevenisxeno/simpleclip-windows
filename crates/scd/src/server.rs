@@ -82,6 +82,21 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             });
             Response::Ok
         }
+        Request::Probe { path } => match media_duration(&path) {
+            Ok(duration_secs) => Response::Probed { duration_secs },
+            Err(message) => Response::Error { message },
+        },
+        Request::Trim {
+            path,
+            start_secs,
+            end_secs,
+        } => match trim(&path, start_secs, end_secs) {
+            Ok((path, duration_secs)) => Response::Saved {
+                path,
+                duration_secs,
+            },
+            Err(message) => Response::Error { message },
+        },
         Request::Pause => {
             daemon.set_paused(true);
             Response::Ok
@@ -116,4 +131,36 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             devices: Vec::new(),
         },
     }
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn media_duration(path: &std::path::Path) -> Result<f64, String> {
+    sc_ffmpeg::probe_duration(path).map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn media_duration(_: &std::path::Path) -> Result<f64, String> {
+    Err("not supported on this platform".into())
+}
+
+/// Trim `path` to `[start, end]` seconds into `<name>-trim.mp4` beside it.
+#[cfg(any(target_os = "linux", windows))]
+fn trim(path: &std::path::Path, start: f64, end: f64) -> Result<(std::path::PathBuf, f64), String> {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("bad file name")?;
+    let mut out = path.with_file_name(format!("{stem}-trim.mp4"));
+    let mut n = 2;
+    while out.exists() {
+        out = path.with_file_name(format!("{stem}-trim{n}.mp4"));
+        n += 1;
+    }
+    let secs = sc_ffmpeg::trim_copy(path, &out, start, end).map_err(|e| e.to_string())?;
+    Ok((out, secs))
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn trim(_: &std::path::Path, _: f64, _: f64) -> Result<(std::path::PathBuf, f64), String> {
+    Err("not supported on this platform".into())
 }

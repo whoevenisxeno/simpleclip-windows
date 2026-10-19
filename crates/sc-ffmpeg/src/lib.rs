@@ -9,12 +9,14 @@ mod encoder;
 mod hw;
 mod mux;
 mod recorder;
+mod trim;
 
 pub use audio_encoder::AacEncoder;
 pub use convert::Bgra2Nv12;
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
 pub use recorder::Recorder;
+pub use trim::{probe_duration, trim_copy};
 
 use ffmpeg_next as ff;
 use sc_core::encode::EncoderKind;

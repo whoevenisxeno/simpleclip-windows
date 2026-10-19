@@ -134,7 +134,7 @@ fn audio(app: &mut ScApp, ui: &mut egui::Ui) {
                 .devices
                 .audio
                 .iter()
-                .find(|d| d.id == current)
+                .find(|d| d.is_monitor && d.id == current)
                 .map(|d| d.name.clone())
                 .unwrap_or_else(|| "Default output device".to_string());
             ui.horizontal(|ui| {
@@ -147,7 +147,7 @@ fn audio(app: &mut ScApp, ui: &mut egui::Ui) {
                             String::new(),
                             "Default output device",
                         );
-                        for d in &app.devices.audio {
+                        for d in app.devices.audio.iter().filter(|d| d.is_monitor) {
                             ui.selectable_value(
                                 &mut app.cfg.audio.desktop_device,
                                 d.id.clone(),
@@ -158,6 +158,40 @@ fn audio(app: &mut ScApp, ui: &mut egui::Ui) {
             });
         }
         ui.checkbox(&mut app.cfg.audio.mic_enabled, "Capture microphone");
+        if cfg!(windows) && app.cfg.audio.mic_enabled {
+            ensure_devices(app);
+            let current = app.cfg.audio.mic_device.clone().unwrap_or_default();
+            let label = app
+                .devices
+                .audio
+                .iter()
+                .find(|d| !d.is_monitor && d.id == current)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| "Default microphone".to_string());
+            ui.horizontal(|ui| {
+                ui.label("Microphone:");
+                egui::ComboBox::from_id_salt("mic")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.cfg.audio.mic_device,
+                            None,
+                            "Default microphone",
+                        );
+                        for d in app.devices.audio.iter().filter(|d| !d.is_monitor) {
+                            ui.selectable_value(
+                                &mut app.cfg.audio.mic_device,
+                                Some(d.id.clone()),
+                                d.name.clone(),
+                            );
+                        }
+                    });
+            });
+            ui.colored_label(
+                theme::MUTED,
+                "If nothing is recorded, check Windows Settings > Privacy > Microphone.",
+            );
+        }
         if app.cfg.audio.mic_enabled {
             ui.horizontal(|ui| {
                 ui.label("Tracks:");

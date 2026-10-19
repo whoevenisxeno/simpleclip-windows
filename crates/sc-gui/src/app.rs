@@ -22,6 +22,7 @@ pub struct ScApp {
     /// Displays and audio outputs reported by the daemon (empty until fetched).
     pub devices: Devices,
     pub gallery: screens::gallery::Cache,
+    pub trim: screens::trim::TrimState,
 }
 
 #[derive(Default)]
@@ -70,6 +71,7 @@ impl ScApp {
             toast: None,
             devices: Devices::default(),
             gallery: Default::default(),
+            trim: Default::default(),
         }
     }
 

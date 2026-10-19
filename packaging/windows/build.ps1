@@ -25,7 +25,8 @@ param(
     [string]$FfmpegDir = $env:FFMPEG_DIR,
     [ValidateSet('gpl', 'lgpl')][string]$Variant = 'lgpl',
     [switch]$InstallDeps,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$NoInstaller
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
@@ -130,4 +131,26 @@ if (-not $NoZip) {
     Compress-Archive -Path $stage -DestinationPath $zipPath
     Step "Wrote $zipPath"
 }
-Write-Host "Done. Run dist\SimpleClip\install.ps1 to install, or start dist\SimpleClip\scd.exe directly." -ForegroundColor Green
+
+# --- Installer (Setup.exe) ---------------------------------------------------
+if (-not $NoInstaller) {
+    $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+    if (-not $iscc) {
+        $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $iscc -and $InstallDeps) {
+        Need 'Inno Setup' 'JRSoftware.InnoSetup'
+        $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    }
+    if ($iscc -and (Test-Path $iscc)) {
+        Step 'Building installer'
+        & $iscc /Q "/DAppVersion=$version" "/DSourceDir=$stage" "$PSScriptRoot\simpleclip.iss"
+        if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed ($LASTEXITCODE)" }
+        Step "Wrote $root\dist\SimpleClip-$version-Setup.exe"
+    }
+    else {
+        Write-Warning 'Inno Setup not found, skipping Setup.exe (winget install JRSoftware.InnoSetup, or pass -InstallDeps).'
+    }
+}
+Write-Host "Done. Run dist\SimpleClip-$version-Setup.exe to install, or start dist\SimpleClip\scd.exe directly." -ForegroundColor Green

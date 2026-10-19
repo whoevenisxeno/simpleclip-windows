@@ -6,3 +6,4 @@
 !docs/**/*.png
 .DS_Store
 /dist
+!assets/*.png

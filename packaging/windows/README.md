@@ -1,24 +1,20 @@
 # Windows packaging
 
-## Install (from a release zip)
+## Install
 
-Unzip, then in PowerShell:
-
-```
-.\install.ps1
-```
-
-This installs for the current user only (no admin prompt) to
-`%LOCALAPPDATA%\Programs\SimpleClip`, adds a Start Menu shortcut, puts `sc` on your
-PATH, starts the daemon at sign-in and launches it. Default save hotkey is
+Run **`SimpleClip-<version>-Setup.exe`**. It installs for the current user (no admin
+prompt) to `%LOCALAPPDATA%\Programs\SimpleClip`, adds a Start Menu entry and an
+Apps & features entry, and offers to start the daemon at sign-in, put `sc` on your
+PATH and add a desktop shortcut. Default save hotkey is
 **Alt+F10** (screenshot: **Alt+F9**); change both in Settings. Clips land in
 `Videos\SimpleClip`.
 
-`uninstall.ps1` removes everything but your clips (`-RemoveData` also removes
-settings and logs).
+Uninstall from Settings > Apps (your clips and settings are kept). Silent install
+for scripts: `Setup.exe /VERYSILENT /TASKS="autostart,addpath"`.
 
-If PowerShell refuses to run the script, use
-`powershell -ExecutionPolicy Bypass -File .\install.ps1`.
+The portable zip (`SimpleClip-<version>-win64.zip`) has the same files plus
+`install.ps1` / `uninstall.ps1`, a no-installer alternative that does the same job
+from PowerShell (`powershell -ExecutionPolicy Bypass -File .\install.ps1`).
 
 ## Build from source
 
@@ -30,8 +26,9 @@ cd simpleclip
 
 `-InstallDeps` installs whatever is missing (Rust, Visual Studio Build Tools with
 the C++ workload, LLVM) through winget and downloads a shared FFmpeg dev build.
-Without it the script tells you what is missing. The result is
-`dist\SimpleClip\` and `dist\SimpleClip-<version>-win64.zip`.
+Without it the script tells you what is missing. The result is `dist\SimpleClip\`,
+`dist\SimpleClip-<version>-win64.zip` and (with Inno Setup, which `-InstallDeps`
+also installs) `dist\SimpleClip-<version>-Setup.exe`. `-NoInstaller` skips the last.
 
 To build by hand instead:
 
@@ -58,10 +55,25 @@ DLLs are then GPL. See `docs/DECISIONS.md` (D-0002, D-0010).
   the system tray, and logs to `%LOCALAPPDATA%\SimpleClip\data\logs\scd.log`.
   `scd --foreground -v` prints logs to the terminal you start it from.
 - `sc.exe` is the CLI: `sc save`, `sc status`, `sc screenshot`, `sc pause`,
-  `sc monitors`, `sc audio-devices`, `sc quit`.
+  `sc trim`, `sc monitors`, `sc audio-devices`, `sc quit`.
 - `sc-gui.exe` is the window: dashboard, gallery, settings. It starts the daemon
   if it isn't running.
 
-Settings: `%APPDATA%\SimpleClip\config.toml` (hot-reloaded). Setting
+Settings: `%APPDATA%\SimpleClip\config\config.toml` (hot-reloaded; capture, audio,
+buffer and encoder changes restart the capture pipeline automatically). Setting
 `SC_ENCODER=h264_mf` (or another encoder name) in the daemon's environment pins the
 video encoder.
+
+## Microphone
+
+Turn on "Capture microphone" in Settings and pick a device. "Mixed" sums it into the
+desktop track; "Separate" saves desktop and microphone as two audio tracks (editors
+such as DaVinci Resolve and Premiere show both; many players only play the first).
+If the mic records silence, check Windows Settings > Privacy & security > Microphone
+and allow desktop apps.
+
+## Trim
+
+Gallery > Trim, or `sc trim clip.mp4 --start 5 --end 20`. The cut is lossless (no
+re-encode), so it starts at the keyframe at or before the start you pick; with the
+default 2-second keyframe interval that can be up to 2 s early.

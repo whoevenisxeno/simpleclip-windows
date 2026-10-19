@@ -46,8 +46,14 @@ pub struct Options {
     pub monitor_id: String,
     pub show_cursor: bool,
     pub fps: u32,
+    /// Capture desktop audio (loopback).
+    pub desktop_audio: bool,
     /// Output device for desktop-audio loopback; empty for the default device.
     pub audio_device: String,
+    /// Also capture a microphone (Windows).
+    pub mic_enabled: bool,
+    /// Microphone endpoint id; empty for the default input device.
+    pub mic_device: String,
 }
 
 /// A running capture (video, plus desktop audio if requested). Dropping the

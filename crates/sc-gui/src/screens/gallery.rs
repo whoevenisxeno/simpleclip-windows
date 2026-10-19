@@ -21,6 +21,13 @@ pub struct Cache {
     scanned: Option<Instant>,
 }
 
+impl Cache {
+    /// Force a rescan on the next frame.
+    pub fn rescan(&mut self) {
+        self.scanned = None;
+    }
+}
+
 const RESCAN_EVERY: Duration = Duration::from_secs(3);
 
 fn save_dir(app: &ScApp) -> PathBuf {
@@ -122,7 +129,7 @@ fn size_label(bytes: u64) -> String {
     }
 }
 
-fn open_path(path: &Path) {
+pub fn open_path(path: &Path) {
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
     #[cfg(target_os = "windows")]
