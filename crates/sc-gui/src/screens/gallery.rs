@@ -23,6 +23,8 @@ enum GroupBy {
     #[default]
     Game,
     Date,
+    Folder,
+    Bookmark,
 }
 
 /// Cached directory scan, so the gallery doesn't re-walk the disk on every
@@ -34,13 +36,42 @@ pub struct Cache {
     scanned: Option<Instant>,
     search: String,
     group: GroupBy,
-    only_game: Option<String>,
+    /// Show only this category (a game, folder or bookmark name), if set.
+    only: Option<String>,
+    /// Every sub-folder of the clips folder, including empty ones.
+    folders: Vec<PathBuf>,
 }
 
 impl Cache {
     /// Force a rescan on the next frame.
     pub fn rescan(&mut self) {
         self.scanned = None;
+    }
+
+    /// The clip at `path`, if it is in the current listing.
+    pub fn find(&self, path: &Path) -> Option<Clip> {
+        self.clips.iter().find(|c| c.path == path).cloned()
+    }
+
+    /// Folders a clip can be moved to: the main folder first, then each sub-folder.
+    pub fn folder_choices(&self, root: &Path) -> Vec<PathBuf> {
+        let mut v = vec![root.to_path_buf()];
+        v.extend(self.folders.iter().cloned());
+        v
+    }
+
+    /// Paths of everything listed, newest first.
+    pub fn all_paths(&self) -> Vec<PathBuf> {
+        self.clips.iter().map(|c| c.path.clone()).collect()
+    }
+
+    /// Switch the view (used by the design-review harness).
+    pub fn show_by(&mut self, folder: bool) {
+        self.group = if folder {
+            GroupBy::Folder
+        } else {
+            GroupBy::Bookmark
+        };
     }
 
     /// First video in the list (newest), for the design-review harness.
@@ -57,6 +88,7 @@ impl Cache {
             let mut clips: Vec<Clip> = dirs.iter().flat_map(|d| scan(d)).collect();
             clips.sort_by_key(|c| std::cmp::Reverse(c.modified));
             self.clips = clips;
+            self.folders = dirs.first().map(|d| list_folders(d)).unwrap_or_default();
             self.dirs = dirs.to_vec();
             self.scanned = Some(Instant::now());
         }
@@ -198,6 +230,47 @@ fn walkdir(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// All sub-folders under `root` (depth-limited), sorted, including empty ones.
+fn list_folders(root: &Path) -> Vec<PathBuf> {
+    fn go(dir: &Path, depth: u8, out: &mut Vec<PathBuf>) {
+        if depth > 3 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.push(path.clone());
+                go(&path, depth + 1, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    go(root, 0, &mut out);
+    out.sort();
+    out
+}
+
+/// "Main folder" for the clips folder itself, else the path inside it ("Best of / Aces").
+pub fn folder_label(dir: &Path, root: &Path) -> String {
+    if dir == root {
+        return "Main folder".to_string();
+    }
+    match dir.strip_prefix(root) {
+        Ok(rel) => rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" / "),
+        Err(_) => dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| dir.display().to_string()),
+    }
+}
+
 // -------------------------------------------------------------- formatting --
 
 fn local(t: SystemTime) -> time::OffsetDateTime {
@@ -208,7 +281,7 @@ fn local(t: SystemTime) -> time::OffsetDateTime {
 }
 
 /// "Today", "Yesterday", or "Mon 19 Oct" in the user's local time zone.
-fn day_label(t: SystemTime) -> String {
+pub fn day_label(t: SystemTime) -> String {
     const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -229,7 +302,7 @@ fn day_label(t: SystemTime) -> String {
     )
 }
 
-fn time_label(t: SystemTime) -> String {
+pub fn time_label(t: SystemTime) -> String {
     let l = local(t);
     format!("{:02}:{:02}", l.hour(), l.minute())
 }
@@ -247,7 +320,7 @@ pub fn ago(t: SystemTime) -> String {
     }
 }
 
-fn size_label(bytes: u64) -> String {
+pub fn size_label(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     if bytes as f64 >= 1024.0 * MB {
         format!("{:.1} GB", bytes as f64 / (1024.0 * MB))
@@ -266,7 +339,7 @@ pub fn open_path(path: &Path) {
 }
 
 /// Open the folder with the file selected.
-fn reveal(path: &Path) {
+pub fn reveal(path: &Path) {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -281,7 +354,7 @@ fn reveal(path: &Path) {
 }
 
 /// Send to the Recycle Bin where there is one, so a mis-click isn't permanent.
-fn delete(path: &Path) -> bool {
+pub fn delete(path: &Path) -> bool {
     #[cfg(windows)]
     if trash::delete(path).is_ok() {
         return true;
@@ -290,6 +363,102 @@ fn delete(path: &Path) -> bool {
 }
 
 // -------------------------------------------------------------------- view --
+
+/// One labelled section of the gallery.
+struct Group {
+    label: String,
+    color: Option<[u8; 3]>,
+    /// For a folder group: the folder on disk (so an empty one can be removed).
+    folder: Option<PathBuf>,
+    items: Vec<Clip>,
+}
+
+/// The categories a clip belongs to under a grouping (a clip can be in several
+/// bookmark groups at once).
+fn keys_of(
+    c: &Clip,
+    by: GroupBy,
+    root: &Path,
+    lib: &crate::library::Library,
+) -> Vec<(String, Option<[u8; 3]>)> {
+    match by {
+        GroupBy::Game => vec![(c.game.clone(), None)],
+        GroupBy::Date => vec![(day_label(c.modified), None)],
+        GroupBy::Folder => {
+            let dir = c.path.parent().unwrap_or(root);
+            vec![(folder_label(dir, root), None)]
+        }
+        GroupBy::Bookmark => {
+            let marks = lib.bookmarks_of(&c.path);
+            if marks.is_empty() {
+                vec![("No bookmark".to_string(), None)]
+            } else {
+                marks
+                    .iter()
+                    .map(|b| (b.name.clone(), Some(b.color)))
+                    .collect()
+            }
+        }
+    }
+}
+
+/// Split clips into groups. `clips` arrive newest-first, so first-seen order is
+/// already by recency. Folders are listed alphabetically (Main folder first) and
+/// bookmarks in your own order; empty folders appear when `with_empty` is set.
+fn build_groups(
+    clips: &[Clip],
+    by: GroupBy,
+    root: &Path,
+    lib: &crate::library::Library,
+    folders: &[PathBuf],
+    with_empty: bool,
+) -> Vec<Group> {
+    let mut groups: Vec<Group> = Vec::new();
+    for c in clips {
+        for (label, color) in keys_of(c, by, root, lib) {
+            match groups.iter_mut().find(|g| g.label == label) {
+                Some(g) => g.items.push(c.clone()),
+                None => groups.push(Group {
+                    label,
+                    color,
+                    folder: None,
+                    items: vec![c.clone()],
+                }),
+            }
+        }
+    }
+    match by {
+        GroupBy::Folder => {
+            for f in folders {
+                let label = folder_label(f, root);
+                match groups.iter_mut().find(|g| g.label == label) {
+                    Some(g) => g.folder = Some(f.clone()),
+                    None if with_empty => groups.push(Group {
+                        label,
+                        color: None,
+                        folder: Some(f.clone()),
+                        items: Vec::new(),
+                    }),
+                    None => {}
+                }
+            }
+            groups.sort_by(|a, b| {
+                (a.label != "Main folder", a.label.to_lowercase())
+                    .cmp(&(b.label != "Main folder", b.label.to_lowercase()))
+            });
+        }
+        GroupBy::Bookmark => {
+            groups.sort_by_key(|g| {
+                lib.bookmarks
+                    .iter()
+                    .position(|b| b.name == g.label)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        _ => {}
+    }
+    groups
+}
 
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
@@ -313,7 +482,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         }),
     );
 
-    if count == 0 {
+    if count == 0 && app.gallery.folders.is_empty() {
         widgets::card(ui, |ui| {
             ui.add_space(22.0);
             ui.vertical_centered(|ui| {
@@ -344,28 +513,51 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     toolbar(app, ui, &dir);
     ui.add_space(8.0);
 
+    let by = app.gallery.group;
     let needle = app.gallery.search.trim().to_lowercase();
+    let only = app.gallery.only.clone();
     let visible: Vec<Clip> = app
         .gallery
         .clips
         .iter()
         .filter(|c| {
-            app.gallery.only_game.as_ref().is_none_or(|g| *g == c.game)
-                && (needle.is_empty()
-                    || c.name.to_lowercase().contains(&needle)
-                    || c.game.to_lowercase().contains(&needle))
+            let in_category = only.as_ref().is_none_or(|o| {
+                keys_of(c, by, &dir, &app.library)
+                    .iter()
+                    .any(|(k, _)| k == o)
+            });
+            let matches_search = needle.is_empty()
+                || c.name.to_lowercase().contains(&needle)
+                || c.game.to_lowercase().contains(&needle)
+                || app.library.note(&c.path).to_lowercase().contains(&needle)
+                || app
+                    .library
+                    .bookmarks_of(&c.path)
+                    .iter()
+                    .any(|b| b.name.to_lowercase().contains(&needle));
+            in_category && matches_search
         })
         .cloned()
         .collect();
-    if visible.is_empty() {
+
+    let show_empty = needle.is_empty() && only.is_none();
+    let groups = build_groups(
+        &visible,
+        by,
+        &dir,
+        &app.library,
+        &app.gallery.folders.clone(),
+        show_empty,
+    );
+    if groups.is_empty() {
         ui.add_space(30.0);
-        ui.vertical_centered(|ui| widgets::secondary(ui, "Nothing matches your search."));
+        ui.vertical_centered(|ui| widgets::secondary(ui, "Nothing matches."));
         return;
     }
-    groups(app, ui, visible);
+    render_groups(app, ui, groups, by);
 }
 
-/// Search, grouping, and the per-game filter chips.
+/// Search, grouping, actions, and the category chips.
 fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path) {
     let p = pal_ui(ui);
     ui.horizontal(|ui| {
@@ -391,15 +583,23 @@ fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path) {
                         egui::TextEdit::singleline(&mut app.gallery.search)
                             .hint_text("Search")
                             .frame(false)
-                            .desired_width(170.0),
+                            .desired_width(120.0),
                     );
                 });
             });
-        widgets::segmented(
+        let changed = widgets::segmented(
             ui,
             &mut app.gallery.group,
-            &[(GroupBy::Game, "By game"), (GroupBy::Date, "By date")],
+            &[
+                (GroupBy::Game, "Game"),
+                (GroupBy::Date, "Date"),
+                (GroupBy::Folder, "Folder"),
+                (GroupBy::Bookmark, "Bookmark"),
+            ],
         );
+        if changed {
+            app.gallery.only = None;
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if widgets::icon_button(ui, icon::FOLDER, "Open", "Open clips folder", false).clicked()
             {
@@ -409,41 +609,60 @@ fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path) {
             if widgets::icon_button(ui, icon::REFRESH, "Refresh", "Refresh", false).clicked() {
                 app.gallery.scanned = None;
             }
+            if widgets::icon_button(ui, icon::TAG, "Tags", "Manage bookmarks", false).clicked() {
+                app.sheet.manage = true;
+            }
+            if widgets::icon_button(ui, icon::ADD, "Folder", "New folder", false).clicked() {
+                app.sheet.folder_dialog = Some(crate::screens::sheet::FolderDialog {
+                    name: String::new(),
+                    move_clip: None,
+                });
+            }
         });
     });
 
-    // One chip per game, most clips first.
-    let mut counts: Vec<(String, usize)> = Vec::new();
-    for c in &app.gallery.clips {
-        match counts.iter_mut().find(|(g, _)| *g == c.game) {
-            Some((_, n)) => *n += 1,
-            None => counts.push((c.game.clone(), 1)),
-        }
+    // One chip per category of the current grouping, most clips first.
+    let by = app.gallery.group;
+    if by == GroupBy::Date {
+        return;
     }
-    counts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-    if counts.len() > 1 {
+    let all = build_groups(
+        &app.gallery.clips,
+        by,
+        dir,
+        &app.library,
+        &app.gallery.folders,
+        false,
+    );
+    if all.len() > 1 {
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            let all = app.gallery.only_game.is_none();
-            if chip(ui, &format!("All  {}", app.gallery.clips.len()), all) {
-                app.gallery.only_game = None;
+            let none = app.gallery.only.is_none();
+            if chip(ui, &format!("All  {}", app.gallery.clips.len()), none, None) {
+                app.gallery.only = None;
             }
-            for (game, n) in counts {
-                let on = app.gallery.only_game.as_deref() == Some(game.as_str());
-                if chip(ui, &format!("{game}  {n}"), on) {
-                    app.gallery.only_game = if on { None } else { Some(game) };
+            let mut sorted: Vec<&Group> = all.iter().collect();
+            if by == GroupBy::Game {
+                sorted.sort_by_key(|g| std::cmp::Reverse(g.items.len()));
+            }
+            for g in sorted {
+                let on = app.gallery.only.as_deref() == Some(g.label.as_str());
+                if chip(ui, &format!("{}  {}", g.label, g.items.len()), on, g.color) {
+                    app.gallery.only = if on { None } else { Some(g.label.clone()) };
                 }
             }
         });
     }
 }
 
-fn chip(ui: &mut Ui, label: &str, on: bool) -> bool {
+/// A category chip; bookmark chips carry their colour as a dot.
+fn chip(ui: &mut Ui, label: &str, on: bool, dot: Option<[u8; 3]>) -> bool {
     let p = pal_ui(ui);
     let font = FontId::new(13.0, egui::FontFamily::Proportional);
     let galley = ui.painter().layout_no_wrap(label.to_string(), font, p.text);
-    let size = galley.size() + vec2(24.0, 12.0);
+    let lead = if dot.is_some() { 16.0 } else { 0.0 };
+    let size = galley.size() + vec2(24.0 + lead, 12.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let (bg, fg) = if on {
         (p.accent, Color32::WHITE)
@@ -454,58 +673,85 @@ fn chip(ui: &mut Ui, label: &str, on: bool) -> bool {
     };
     ui.painter()
         .rect_filled(rect, Rounding::same(size.y / 2.0), bg);
-    ui.painter()
-        .galley_with_override_text_color(rect.center() - galley.size() / 2.0, galley, fg);
+    if let Some(c) = dot {
+        ui.painter().circle_filled(
+            pos2(rect.left() + 14.0, rect.center().y),
+            4.5,
+            Color32::from_rgb(c[0], c[1], c[2]),
+        );
+    }
+    ui.painter().galley_with_override_text_color(
+        pos2(
+            rect.left() + 12.0 + lead,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        fg,
+    );
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp.clicked()
 }
 
-/// Clips split into labelled groups: newest group first, newest clip first.
-fn grouped(clips: Vec<Clip>, by: GroupBy) -> Vec<(String, Vec<Clip>)> {
-    let mut groups: Vec<(String, Vec<Clip>)> = Vec::new();
-    for c in clips {
-        let key = match by {
-            GroupBy::Game => c.game.clone(),
-            GroupBy::Date => day_label(c.modified),
-        };
-        match groups.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, v)) => v.push(c),
-            None => groups.push((key, vec![c])),
-        }
-    }
-    // `clips` arrive newest-first, so first-seen order is already by recency.
-    groups
-}
-
-fn groups(app: &mut ScApp, ui: &mut Ui, clips: Vec<Clip>) {
+fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) {
     let p = pal_ui(ui);
-    let by = app.gallery.group;
-    for (label, items) in grouped(clips, by) {
-        let total: u64 = items.iter().map(|c| c.bytes).sum();
+    for g in groups {
+        let total: u64 = g.items.iter().map(|c| c.bytes).sum();
         ui.add_space(14.0);
         ui.horizontal(|ui| {
+            if let Some(c) = g.color {
+                let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                ui.painter()
+                    .circle_filled(rect.center(), 6.0, Color32::from_rgb(c[0], c[1], c[2]));
+            }
             ui.label(
-                RichText::new(&label)
+                RichText::new(&g.label)
                     .font(FontId::new(19.0, theme::semibold()))
                     .color(p.text),
             );
-            ui.label(
-                RichText::new(format!(
-                    "{} \u{2022} {}",
-                    if items.len() == 1 {
-                        "1 item".to_string()
-                    } else {
-                        format!("{} items", items.len())
-                    },
-                    size_label(total)
-                ))
-                .size(13.0)
-                .color(p.text_2),
-            );
+            if !g.items.is_empty() {
+                ui.label(
+                    RichText::new(format!(
+                        "{} \u{2022} {}",
+                        if g.items.len() == 1 {
+                            "1 item".to_string()
+                        } else {
+                            format!("{} items", g.items.len())
+                        },
+                        size_label(total)
+                    ))
+                    .size(13.0)
+                    .color(p.text_2),
+                );
+            }
         });
         ui.add_space(6.0);
+
+        if g.items.is_empty() {
+            // An empty folder: say so, and let it be removed.
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Empty. Move clips here from a clip's details.")
+                        .size(13.0)
+                        .color(p.text_2),
+                );
+                if let Some(f) = &g.folder {
+                    if widgets::quiet_button(ui, None, "Remove folder").clicked() {
+                        match std::fs::remove_dir(f) {
+                            Ok(()) => {
+                                app.gallery.rescan();
+                                app.toast("Folder removed", ToastKind::Ok);
+                            }
+                            Err(e) => {
+                                app.toast(format!("Couldn't remove it: {e}"), ToastKind::Error)
+                            }
+                        }
+                    }
+                }
+            });
+            continue;
+        }
 
         // Responsive grid: as many ~240px cards as fit.
         let gap = 14.0;
@@ -514,7 +760,7 @@ fn groups(app: &mut ScApp, ui: &mut Ui, clips: Vec<Clip>) {
         let w = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).floor();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(gap, 16.0);
-            for clip in &items {
+            for clip in &g.items {
                 card(app, ui, clip, w, by);
             }
         });
@@ -553,13 +799,21 @@ pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> e
     }
 }
 
-/// A clip card: preview with hover actions, then a caption.
+/// Clips named by the app ("sc-game-date") show their time as the title; clips
+/// you've named yourself show that name instead.
+fn is_default_name(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s == "sc" || s.starts_with("sc-"))
+}
+
+/// A clip card: preview with hover actions, then a caption, bookmarks and note.
 fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
     let p = pal_ui(ui);
     let h = (w * 9.0 / 16.0).round();
     ui.vertical(|ui| {
         ui.set_width(w);
-        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.spacing_mut().item_spacing.y = 5.0;
         let resp = preview(app, ui, clip, vec2(w, h));
         let rect = resp.rect;
         let hovered = ui.rect_contains_pointer(rect);
@@ -594,10 +848,22 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar), |ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
+                    if widgets::icon_button(
+                        ui,
+                        icon::MORE,
+                        "More",
+                        "Details, rename, bookmarks, notes",
+                        false,
+                    )
+                    .clicked()
+                    {
+                        app.sheet.open_clip(clip.path.clone());
+                    }
                     if widgets::icon_button(ui, icon::DELETE, "Delete", "Move to Recycle Bin", true)
                         .clicked()
                     {
                         if delete(&clip.path) {
+                            app.library.forget(&clip.path);
                             app.toast("Moved to the Recycle Bin", ToastKind::Ok);
                         } else {
                             app.toast("Couldn't delete that file", ToastKind::Error);
@@ -620,30 +886,82 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
             ui.ctx().request_repaint();
         }
 
-        // Caption.
-        let (line1, line2) = match by {
-            GroupBy::Game => (
-                format!("{} {}", day_label(clip.modified), time_label(clip.modified)),
-                size_label(clip.bytes),
+        // Caption: the clip's own name if you gave it one, else when it happened.
+        let when = format!("{} {}", day_label(clip.modified), time_label(clip.modified));
+        let stem = clip
+            .path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&clip.name)
+            .to_string();
+        let custom = !is_default_name(&clip.path);
+        let size = size_label(clip.bytes);
+        let (line1, line2) = match (custom, by) {
+            (true, GroupBy::Game) => (stem, format!("{when}  \u{2022}  {size}")),
+            (true, _) => (
+                stem,
+                format!("{}  \u{2022}  {when}  \u{2022}  {size}", clip.game),
             ),
-            GroupBy::Date => (
+            (false, GroupBy::Date) => (
                 clip.game.clone(),
-                format!(
-                    "{}  \u{2022}  {}",
-                    time_label(clip.modified),
-                    size_label(clip.bytes)
-                ),
+                format!("{}  \u{2022}  {size}", time_label(clip.modified)),
             ),
+            (false, _) => (when, size),
         };
-        ui.add(
+        let title = ui.add(
             egui::Label::new(
                 RichText::new(line1)
                     .font(FontId::new(13.5, theme::semibold()))
                     .color(p.text),
             )
-            .truncate(),
+            .truncate()
+            .sense(Sense::click()),
         );
+        if title
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            app.sheet.open_clip(clip.path.clone());
+        }
         ui.add(egui::Label::new(RichText::new(line2).size(12.0).color(p.text_2)).truncate());
+
+        // Bookmarks (click one to browse by it) and the start of the note.
+        let marks: Vec<(String, [u8; 3])> = app
+            .library
+            .bookmarks_of(&clip.path)
+            .iter()
+            .map(|b| (b.name.clone(), b.color))
+            .collect();
+        if !marks.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                for (name, color) in marks.iter().take(3) {
+                    if widgets::bookmark_pill(ui, name, *color, true, true).clicked() {
+                        app.gallery.group = GroupBy::Bookmark;
+                        app.gallery.only = Some(name.clone());
+                    }
+                }
+                if marks.len() > 3 {
+                    ui.label(
+                        RichText::new(format!("+{}", marks.len() - 3))
+                            .size(11.5)
+                            .color(p.text_2),
+                    );
+                }
+            });
+        }
+        let note = app.library.note(&clip.path);
+        if let Some(first) = note.lines().find(|l| !l.trim().is_empty()) {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(first.trim())
+                        .size(12.0)
+                        .italics()
+                        .color(p.text_3),
+                )
+                .truncate(),
+            );
+        }
     });
 }
 
@@ -680,5 +998,22 @@ mod tests {
     fn day_folders_are_not_games() {
         assert!(is_day_folder("2026-10-19"));
         assert!(!is_day_folder("valorant"));
+    }
+
+    #[test]
+    fn folder_labels_are_relative() {
+        let root = Path::new("V");
+        assert_eq!(folder_label(root, root), "Main folder");
+        assert_eq!(folder_label(&root.join("Best of"), root), "Best of");
+        assert_eq!(
+            folder_label(&root.join("Best of").join("Aces"), root),
+            "Best of / Aces"
+        );
+    }
+
+    #[test]
+    fn default_names_are_recognised() {
+        assert!(is_default_name(Path::new("V/sc-apex-20261019.mp4")));
+        assert!(!is_default_name(Path::new("V/my insane ace.mp4")));
     }
 }

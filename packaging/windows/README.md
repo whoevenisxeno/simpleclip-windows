@@ -103,3 +103,18 @@ the normal path automatically if the encoder doesn't accept it. Off by default.
 
 Settings > Saving > Trimmed clips picks one folder for every trimmed copy (it also shows up in Clips). Leave it unset to save each next to its original.
 
+
+## Organising clips
+
+Hover a clip and press the ... button, or click its title, to open its details:
+rename it, give it **bookmarks**, move it to a **folder**, and write a **note**.
+
+- **Bookmarks** are tags you name and colour yourself (Clips > the tag button).
+  Nothing is tagged automatically. Browse by them with the "Bookmark" view, or click
+  one on a clip to filter to it.
+- **Folders** are real folders inside your clips folder. Make one with the + button
+  in Clips, or from "New folder..." in a clip's Folder menu, which also moves the
+  clip into it. The "Folder" view lists them, including empty ones.
+- Bookmarks and notes are stored in `%APPDATA%\SimpleClip\data\library.json`. Renaming
+  or moving a clip in the app keeps its bookmarks and note; the video files themselves
+  are never changed.

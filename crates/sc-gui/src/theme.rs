@@ -97,6 +97,9 @@ pub mod icon {
     pub const SEARCH: &str = "\u{E721}";
     pub const REFRESH: &str = "\u{E72C}";
     pub const BACK: &str = "\u{E72B}";
+    pub const TAG: &str = "\u{E8EC}";
+    pub const ADD: &str = "\u{E710}";
+    pub const MORE: &str = "\u{E712}";
 }
 
 /// Load the system UI font, a semibold weight and the icon font. Anything that

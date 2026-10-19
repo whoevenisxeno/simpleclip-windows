@@ -52,6 +52,10 @@ pub struct ScApp {
     pub gallery: screens::gallery::Cache,
     pub trim: screens::trim::TrimState,
     pub thumbs: crate::thumbs::Thumbs,
+    /// Bookmarks and notes for your clips.
+    pub library: crate::library::Library,
+    /// The open details / bookmark / new-folder sheet, if any.
+    pub sheet: screens::sheet::SheetState,
     shot: Option<Shot>,
 }
 
@@ -92,7 +96,17 @@ impl ScApp {
         // Bring the daemon up if it isn't already (it outlives this window).
         std::thread::spawn(daemon::ensure_running);
         daemon::spawn_status_poller(cc.egui_ctx.clone(), tx);
-        let cfg = config_io::load();
+        let shot = Shot::from_env();
+        if let Some(s) = &shot {
+            // The design-review run uses its own throwaway library.
+            std::env::set_var("SC_LIBRARY", s.dir.join("library.json"));
+        }
+        let mut cfg = config_io::load();
+        if let Some(s) = &shot {
+            // ...and its own clips folder, so review never touches yours.
+            cfg.save.directory = Some(s.dir.join("clips"));
+            cfg.general.setup_complete = true;
+        }
         // Show the wizard only until it has been completed once.
         let screen = if cfg.general.setup_complete {
             Screen::Dashboard
@@ -112,7 +126,9 @@ impl ScApp {
             gallery: Default::default(),
             trim: Default::default(),
             thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
-            shot: Shot::from_env(),
+            library: crate::library::Library::load(),
+            sheet: Default::default(),
+            shot,
         }
     }
 
@@ -217,8 +233,19 @@ impl eframe::App for ScApp {
                         });
                 });
         }
+        screens::sheet::show(self, ctx);
+        // Bookmarks and notes save a moment after the last edit.
+        self.library.flush_if_due();
+        if self.library.is_dirty() {
+            ctx.request_repaint_after(Duration::from_millis(600));
+        }
         self.show_toast(ctx);
         self.drive_shot(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let _ = self.library.save();
+        self.flush_config();
     }
 }
 
@@ -384,15 +411,15 @@ struct Shot {
 const SHOT_PLAN: &[(&str, bool)] = &[
     ("home", true),
     ("clips", true),
+    ("clips-bookmarks", true),
+    ("clips-folders", true),
+    ("details", true),
+    ("bookmarks", true),
+    ("newfolder", true),
     ("settings", true),
     ("trim", true),
-    ("wizard1", true),
-    ("wizard2", true),
-    ("wizard3", true),
-    ("home", false),
-    ("clips", false),
-    ("settings", false),
-    ("wizard2", false),
+    ("details", false),
+    ("clips-bookmarks", false),
 ];
 
 impl Shot {
@@ -409,6 +436,32 @@ impl Shot {
 }
 
 impl ScApp {
+    /// Sample bookmarks and notes (in the throwaway review library) so those
+    /// screens have something to show.
+    fn shot_demo_data(&mut self) {
+        if !self.library.bookmarks.is_empty() {
+            return;
+        }
+        let colors = crate::library::COLORS;
+        let clutch = self.library.add_bookmark("Clutch", colors[3]);
+        let funny = self.library.add_bookmark("Funny", colors[2]);
+        let fail = self.library.add_bookmark("Fail", colors[0]);
+        let paths = self.gallery.all_paths();
+        if let Some(p) = paths.first() {
+            self.library.toggle_bookmark(p, clutch);
+            self.library.toggle_bookmark(p, funny);
+            self.library
+                .set_note(p, "1v3 on B site. Send this one to the group chat.");
+        }
+        if let Some(p) = paths.get(1) {
+            self.library.toggle_bookmark(p, fail);
+        }
+        if let Some(p) = paths.get(2) {
+            self.library.toggle_bookmark(p, funny);
+            self.library.set_note(p, "Lag spike right before the flick");
+        }
+    }
+
     fn drive_shot(&mut self, ctx: &egui::Context) {
         let Some(mut shot) = self.shot.take() else {
             return;
@@ -461,9 +514,12 @@ impl ScApp {
                 "wizard3" => 2,
                 _ => self.wizard.step,
             };
+            self.shot_demo_data();
+            self.sheet = Default::default();
             self.screen = match name {
                 "home" => Screen::Dashboard,
-                "clips" => Screen::Gallery,
+                "clips" | "clips-bookmarks" | "clips-folders" | "details" | "bookmarks"
+                | "newfolder" => Screen::Gallery,
                 "settings" => Screen::Settings,
                 "trim" => {
                     let first = self.gallery.first_video();
@@ -471,6 +527,23 @@ impl ScApp {
                 }
                 _ => Screen::Wizard,
             };
+            match name {
+                "clips-bookmarks" => self.gallery.show_by(false),
+                "clips-folders" => self.gallery.show_by(true),
+                "details" => {
+                    if let Some(p) = self.gallery.all_paths().into_iter().next() {
+                        self.sheet.open_clip(p);
+                    }
+                }
+                "bookmarks" => self.sheet.manage = true,
+                "newfolder" => {
+                    self.sheet.folder_dialog = Some(screens::sheet::FolderDialog {
+                        name: "Best of".into(),
+                        move_clip: None,
+                    })
+                }
+                _ => {}
+            }
         }
         shot.waited += 1;
         // Wait for previews to settle (including retries) before capturing.

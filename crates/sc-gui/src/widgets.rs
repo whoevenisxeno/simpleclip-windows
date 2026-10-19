@@ -562,3 +562,78 @@ pub fn range_slider(ui: &mut Ui, start: &mut f64, end: &mut f64, max: f64, min_g
     }
     changed
 }
+
+/// A named, coloured bookmark tag. `filled` shows it as applied (solid colour);
+/// otherwise it is an outlined, quieter chip. `small` is the compact card size.
+pub fn bookmark_pill(ui: &mut Ui, name: &str, rgb: [u8; 3], filled: bool, small: bool) -> Response {
+    let p = pal_ui(ui);
+    let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+    // Quiet by design: on cards just a small dot and the name in grey with no
+    // background; in the sheet a faint tint when applied.
+    let size = if small { 11.5 } else { 13.0 };
+    let font = FontId::new(size, egui::FontFamily::Proportional);
+    let galley = ui.painter().layout_no_wrap(name.to_string(), font, p.text);
+    let pad = if small {
+        vec2(2.0, 2.0)
+    } else {
+        vec2(12.0, 7.0)
+    };
+    let dot = if small { 6.0 } else { 8.0 };
+    let w = galley.size().x + pad.x * 2.0 + dot + 6.0;
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(w, galley.size().y + pad.y * 2.0), Sense::click());
+    let r = Rounding::same(rect.height() / 2.0);
+    let (bg, fg, dot_col) = if small {
+        (Color32::TRANSPARENT, p.text_2, color)
+    } else if filled {
+        (color.linear_multiply(0.10), p.text, color)
+    } else if resp.hovered() {
+        (mix(p.card_hi, p.text, 0.06), p.text_2, color)
+    } else {
+        (p.card_hi, p.text_2, color.linear_multiply(0.6))
+    };
+    ui.painter().rect_filled(rect, r, bg);
+    ui.painter().circle_filled(
+        pos2(rect.left() + pad.x + dot / 2.0, rect.center().y),
+        dot / 2.0,
+        dot_col,
+    );
+    ui.painter().galley_with_override_text_color(
+        pos2(
+            rect.left() + pad.x + dot + 6.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        fg,
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// A row of colour swatches; returns the chosen colour index when one is clicked.
+pub fn swatches(ui: &mut Ui, colors: &[[u8; 3]], selected: Option<[u8; 3]>) -> Option<usize> {
+    let p = pal_ui(ui);
+    let mut picked = None;
+    ui.spacing_mut().item_spacing.x = 7.0;
+    for (i, c) in colors.iter().enumerate() {
+        let col = Color32::from_rgb(c[0], c[1], c[2]);
+        let (rect, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
+        ui.painter().circle_filled(rect.center(), 8.5, col);
+        if selected == Some(*c) {
+            ui.painter()
+                .circle_stroke(rect.center(), 11.0, Stroke::new(2.0_f32, p.text));
+        } else if resp.hovered() {
+            ui.painter()
+                .circle_stroke(rect.center(), 11.0, Stroke::new(1.5_f32, p.text_3));
+        }
+        if resp.clicked() {
+            picked = Some(i);
+        }
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+    }
+    picked
+}
