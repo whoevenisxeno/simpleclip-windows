@@ -98,3 +98,8 @@ Settings > Quality > "Convert colours on the GPU" hands raw frames to the GPU en
 (AMF, NVENC, QuickSync) instead of converting them on the CPU first. On an RX 6650 XT
 at 1080p60 it dropped the daemon from about 6.5% to 5% of total CPU. It falls back to
 the normal path automatically if the encoder doesn't accept it. Off by default.
+
+## Trimmed clips folder
+
+Settings > Saving > Trimmed clips picks one folder for every trimmed copy (it also shows up in Clips). Leave it unset to save each next to its original.
+

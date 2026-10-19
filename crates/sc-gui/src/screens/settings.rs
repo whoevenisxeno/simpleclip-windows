@@ -233,11 +233,18 @@ fn quality_hint(kbps: u32) -> String {
 
 fn saving(app: &mut ScApp, ui: &mut Ui) {
     section(ui, Some("Saving"), |s| {
-        s.row("Folder", None, |ui| {
+        s.row("Clips folder", Some("Where saved clips go"), |ui| {
             let dir = app.cfg.save.resolve_dir();
             if widgets::quiet_button(ui, Some(theme::icon::FOLDER), "Open").clicked() {
                 let _ = std::fs::create_dir_all(&dir);
                 crate::screens::gallery::open_path(&dir);
+            }
+            if crate::dialogs::available()
+                && widgets::quiet_button(ui, None, "Choose\u{2026}").clicked()
+            {
+                if let Some(d) = crate::dialogs::pick_folder(&dir) {
+                    app.cfg.save.directory = Some(d);
+                }
             }
             let p = pal_ui(ui);
             ui.add(
@@ -249,6 +256,32 @@ fn saving(app: &mut ScApp, ui: &mut Ui) {
                 .truncate(),
             );
         });
+        s.row(
+            "Trimmed clips",
+            Some("Where trimmed copies are saved"),
+            |ui| {
+                let set = app.cfg.save.trim_directory.clone();
+                if set.is_some() && widgets::quiet_button(ui, None, "Reset").clicked() {
+                    app.cfg.save.trim_directory = None;
+                }
+                if crate::dialogs::available()
+                    && widgets::quiet_button(ui, None, "Choose\u{2026}").clicked()
+                {
+                    let start = set.clone().unwrap_or_else(|| app.cfg.save.resolve_dir());
+                    if let Some(d) = crate::dialogs::pick_folder(&start) {
+                        app.cfg.save.trim_directory = Some(d);
+                    }
+                }
+                let p = pal_ui(ui);
+                let label = match &set {
+                    Some(d) => d.display().to_string(),
+                    None => "Next to the original".to_string(),
+                };
+                ui.add(
+                    egui::Label::new(RichText::new(label).size(13.0).color(p.text_2)).truncate(),
+                );
+            },
+        );
         s.row("Organize into folders", None, |ui| {
             widgets::segmented(
                 ui,

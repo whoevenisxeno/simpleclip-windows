@@ -473,7 +473,9 @@ impl ScApp {
             };
         }
         shot.waited += 1;
-        if shot.waited == 45 && !shot.requested {
+        // Wait for previews to settle (including retries) before capturing.
+        let settled = !self.thumbs.pending() || shot.waited > 1500;
+        if shot.waited >= 45 && settled && !shot.requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             shot.requested = true;
         }

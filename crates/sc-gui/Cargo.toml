@@ -24,6 +24,7 @@ time = { version = "0.3.55", features = ["local-offset"] }
 png = "0.18.1"
 
 [target."cfg(windows)".dependencies]
+rfd = "0.17.2"
 trash = "5.2.9"
 
 [target."cfg(windows)".build-dependencies]

@@ -3,6 +3,7 @@
 mod app;
 mod config_io;
 mod daemon;
+mod dialogs;
 mod screens;
 mod theme;
 mod thumbs;

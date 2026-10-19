@@ -30,7 +30,7 @@ enum GroupBy {
 #[derive(Default)]
 pub struct Cache {
     clips: Vec<Clip>,
-    dir: PathBuf,
+    dirs: Vec<PathBuf>,
     scanned: Option<Instant>,
     search: String,
     group: GroupBy,
@@ -51,22 +51,36 @@ impl Cache {
             .map(|c| c.path.clone())
     }
 
-    fn refresh(&mut self, dir: &Path) {
-        let stale = self.dir != dir || self.scanned.is_none_or(|t| t.elapsed() > RESCAN_EVERY);
+    fn refresh(&mut self, dirs: &[PathBuf]) {
+        let stale = self.dirs != dirs || self.scanned.is_none_or(|t| t.elapsed() > RESCAN_EVERY);
         if stale {
-            self.clips = scan(dir);
-            self.dir = dir.to_path_buf();
+            let mut clips: Vec<Clip> = dirs.iter().flat_map(|d| scan(d)).collect();
+            clips.sort_by_key(|c| std::cmp::Reverse(c.modified));
+            self.clips = clips;
+            self.dirs = dirs.to_vec();
             self.scanned = Some(Instant::now());
         }
     }
+}
+
+/// Folders to list: the clips folder, plus the trim folder when it lives elsewhere.
+fn library_dirs(app: &ScApp) -> Vec<PathBuf> {
+    let main = app.cfg.save.resolve_dir();
+    let mut dirs = vec![main.clone()];
+    if let Some(t) = &app.cfg.save.trim_directory {
+        if !t.starts_with(&main) && !main.starts_with(t) {
+            dirs.push(t.clone());
+        }
+    }
+    dirs
 }
 
 const RESCAN_EVERY: Duration = Duration::from_secs(3);
 
 /// The newest `n` items, scanning first if the cache is stale.
 pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
-    let dir = app.cfg.save.resolve_dir();
-    app.gallery.refresh(&dir);
+    let dirs = library_dirs(app);
+    app.gallery.refresh(&dirs);
     app.gallery.clips.iter().take(n).cloned().collect()
 }
 
@@ -280,7 +294,8 @@ fn delete(path: &Path) -> bool {
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     let dir = app.cfg.save.resolve_dir();
-    app.gallery.refresh(&dir);
+    let dirs = library_dirs(app);
+    app.gallery.refresh(&dirs);
 
     let total: u64 = app.gallery.clips.iter().map(|c| c.bytes).sum();
     let count = app.gallery.clips.len();
@@ -523,7 +538,13 @@ pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> e
             ui.painter().text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                if clip.is_image { "Image" } else { "Loading" },
+                if app.thumbs.gave_up(&clip.path) {
+                    "Preview unavailable"
+                } else if clip.is_image {
+                    "Image"
+                } else {
+                    "Loading"
+                },
                 FontId::new(12.0, egui::FontFamily::Proportional),
                 p.text_3,
             );

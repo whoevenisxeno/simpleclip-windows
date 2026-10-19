@@ -67,6 +67,8 @@ pub struct EncodeSettings {
 #[serde(default, rename_all = "kebab-case")]
 pub struct SaveSettings {
     pub directory: Option<PathBuf>,
+    /// Where trimmed copies go. `None` puts each next to its original.
+    pub trim_directory: Option<PathBuf>,
     pub filename_template: String,
     pub folder_policy: FolderPolicy,
     pub container: Container,
@@ -156,6 +158,7 @@ impl Default for SaveSettings {
     fn default() -> Self {
         Self {
             directory: None,
+            trim_directory: None,
             filename_template: "sc-{app}-{date}".to_string(),
             folder_policy: FolderPolicy::PerDay,
             container: Container::Mp4,

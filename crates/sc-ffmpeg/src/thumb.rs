@@ -13,6 +13,15 @@ fn err(e: ff::Error) -> Error {
 /// neither the loading frame nor the tail) and scale it to at most `max_width`
 /// pixels wide. Returns `(width, height, rgb24 bytes)`, tightly packed.
 pub fn thumbnail(path: &Path, max_width: u32) -> Result<(u32, u32, Vec<u8>)> {
+    // Seeking can fail or land somewhere undecodable on unusual files; fall back
+    // to simply decoding the first frame.
+    match decode(path, max_width, true) {
+        Ok(t) => Ok(t),
+        Err(_) => decode(path, max_width, false),
+    }
+}
+
+fn decode(path: &Path, max_width: u32, seek: bool) -> Result<(u32, u32, Vec<u8>)> {
     crate::init()?;
     let mut ictx = ff::format::input(&path).map_err(err)?;
     let (index, params) = {
@@ -30,7 +39,7 @@ pub fn thumbnail(path: &Path, max_width: u32) -> Result<(u32, u32, Vec<u8>)> {
 
     // Seek lands on the keyframe at or before the target.
     let target = ictx.duration() / 4;
-    if target > 0 {
+    if seek && target > 0 {
         let _ = ictx.seek(target, ..target);
     }
 

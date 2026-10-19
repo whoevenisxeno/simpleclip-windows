@@ -147,6 +147,14 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
     ui.add_space(8.0);
     widgets::secondary(
         ui,
+        match &app.cfg.save.trim_directory {
+            Some(d) => format!("Trimmed copies are saved to {}.", d.display()),
+            None => "Trimmed copies are saved next to the original. Pick a folder in Settings."
+                .to_string(),
+        },
+    );
+    widgets::secondary(
+        ui,
         "Cuts start on the nearest earlier keyframe (up to about 2 s early) to stay lossless.",
     );
     let _ = Rounding::ZERO;

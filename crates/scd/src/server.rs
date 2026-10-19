@@ -94,7 +94,12 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             path,
             start_secs,
             end_secs,
-        } => match trim(&path, start_secs, end_secs) {
+        } => match trim(
+            &path,
+            start_secs,
+            end_secs,
+            daemon.config.read().unwrap().save.trim_directory.clone(),
+        ) {
             Ok((path, duration_secs)) => Response::Saved {
                 path,
                 duration_secs,
@@ -147,17 +152,31 @@ fn media_duration(_: &std::path::Path) -> Result<f64, String> {
     Err("not supported on this platform".into())
 }
 
-/// Trim `path` to `[start, end]` seconds into `<name>-trim.mp4` beside it.
+/// Trim `path` to `[start, end]` seconds into `<name>-trim.mp4`, in `dest_dir`
+/// when one is configured, otherwise beside the original.
 #[cfg(any(target_os = "linux", windows))]
-fn trim(path: &std::path::Path, start: f64, end: f64) -> Result<(std::path::PathBuf, f64), String> {
+fn trim(
+    path: &std::path::Path,
+    start: f64,
+    end: f64,
+    dest_dir: Option<std::path::PathBuf>,
+) -> Result<(std::path::PathBuf, f64), String> {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or("bad file name")?;
-    let mut out = path.with_file_name(format!("{stem}-trim.mp4"));
+    let dir = match dest_dir {
+        Some(d) => {
+            std::fs::create_dir_all(&d)
+                .map_err(|e| format!("can't create trim folder {}: {e}", d.display()))?;
+            d
+        }
+        None => path.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
+    };
+    let mut out = dir.join(format!("{stem}-trim.mp4"));
     let mut n = 2;
     while out.exists() {
-        out = path.with_file_name(format!("{stem}-trim{n}.mp4"));
+        out = dir.join(format!("{stem}-trim{n}.mp4"));
         n += 1;
     }
     let secs = sc_ffmpeg::trim_copy(path, &out, start, end).map_err(|e| e.to_string())?;
@@ -165,6 +184,11 @@ fn trim(path: &std::path::Path, start: f64, end: f64) -> Result<(std::path::Path
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn trim(_: &std::path::Path, _: f64, _: f64) -> Result<(std::path::PathBuf, f64), String> {
+fn trim(
+    _: &std::path::Path,
+    _: f64,
+    _: f64,
+    _: Option<std::path::PathBuf>,
+) -> Result<(std::path::PathBuf, f64), String> {
     Err("not supported on this platform".into())
 }
