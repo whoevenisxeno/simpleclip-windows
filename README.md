@@ -4,7 +4,7 @@ SimpleClip keeps the last 30 seconds (or 15 s, 1 min, 2 min, 5 min) of your scre
 something good happens you press a hotkey and those seconds are written to an MP4. There is no
 record button and nothing to start before you play.
 
-I started this as a Linux tool and then wanted the same thing on my own Windows PC, so this repo is
+I started this as a Linux tool and then wanted the same thing on Windows, so this repo is
 the Windows version: a background service, a small app for browsing and trimming clips, and an
 installer. I'm not trying to replace ShadowPlay or Medal. I wanted something small that does one
 job and does not need an account.
@@ -83,7 +83,7 @@ Create and recolour bookmarks:
 
 ![Save popup](docs/screenshots/save-popup.png)
 
-Text on the card from a real save on my PC:
+Text on the card from a real save:
 
 ```
 Clip saved
@@ -125,7 +125,7 @@ Clips go to `Videos\SimpleClip`, in a folder per game and then per day by defaul
 
 ## The command line
 
-The `sc` command talks to the running service. These are real outputs from my machine.
+The `sc` command talks to the running service. Example output:
 
 ```
 > sc status
@@ -190,21 +190,9 @@ autostart = true
 setup-complete = false
 ```
 
-## How it holds up
+## Typical numbers
 
-I have only tested this on one machine, so treat these as one data point, not a benchmark.
-
-| | |
-|---|---|
-| CPU | AMD Ryzen 5 5600X |
-| GPU | AMD Radeon RX 6650 XT (AMF encoder) |
-| RAM | 16 GB |
-| OS | Windows 11 Pro |
-| Capture | 1920x1080 at 60 fps, 8 Mbps video |
-
-A 30 second buffer fills in 30 seconds, a save takes about a tenth of a second, and the file is
-about 60 MB per minute of video at the default quality. I have not measured CPU or GPU overhead
-in a rigorous way, so I won't put a number on it.
+At the defaults (1920x1080, 60 fps, 8 Mbps H.264) a 30 second buffer fills in 30 seconds, a save takes about a tenth of a second, and a clip is about 60 MB per minute of video. I have not benchmarked CPU or GPU overhead, so I won't put a number on it.
 
 ## Things that are not finished
 
@@ -218,8 +206,8 @@ Being straight about this so you don't hit it by surprise:
   keyframe spacing at 60 fps, cuts can land up to about 2 seconds off.
 - **Exclusive-fullscreen games** can capture as black with Windows Graphics Capture. Borderless
   or windowed fullscreen works. This is a Windows limitation, not something I can fix here.
-- **Tested on one PC and one GPU vendor.** The NVENC and QuickSync paths are written but I have
-  only run AMF.
+- **Only the AMD (AMF) encoder path has been tested.** The NVENC and QuickSync paths are written
+  but have not been run on real hardware.
 - **No code signing**, so Windows SmartScreen may warn you the first time you run the installer.
 
 ## Build from source

@@ -51,7 +51,7 @@ system's FFmpeg 8.1 (libavcodec 62) - its major version tracks FFmpeg's, which
 sidesteps the usual "binding lags the system lib" trap. It finds `h264_vaapi` /
 `hevc_vaapi` and re-exports raw FFI (`ffmpeg_next::ffi`) for the hardware-context
 work the safe API doesn't cover. VA-API `av_hwdevice_ctx_create` opened cleanly on
-the AMD RX 6650 XT. Linux links the distro FFmpeg (LGPL); Windows bundling is
+an AMD GPU. Linux links the distro FFmpeg (LGPL); Windows bundling is
 decided at Phase 4. Note: system FFmpeg ships `libx264` but not `libopenh264`,
 which feeds the Q3 software-fallback choice - irrelevant where hardware works.
 
@@ -94,7 +94,7 @@ single-binary distribution. Layout: `sc-core` (contracts), `scd` (daemon),
 `sc` (CLI), `sc-gui` (egui client). MSRV = latest stable - 2.
 
 ## D-0000 · Bootstrap Linux-first
-Phase 0. The maintainer's daily driver is Hyprland/Wayland on an AMD RX 6650 XT
+Phase 0. The original development setup was Hyprland/Wayland with an AMD GPU
 (VA-API), so Linux gives the fastest dogfooding loop. The platform abstraction is
 designed up front so Windows slots in at Phase 4 without rework. This sequences the
 work; it does not demote Windows.
@@ -103,5 +103,5 @@ work; it does not demote Windows.
 
 ### Dev-machine facts (reference implementation target)
 - Compositor: Hyprland (Wayland), priority tier-1 target
-- GPU: AMD Radeon RX 6650 XT → VA-API encode (H.264 High/Main + HEVC confirmed via `vainfo`)
+- GPU: AMD → VA-API encode (H.264 High/Main + HEVC confirmed via `vainfo`)
 - PipeWire 1.6.8, FFmpeg n8.1.2 (libavcodec 62), Rust 1.97.1

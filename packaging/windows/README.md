@@ -19,8 +19,8 @@ from PowerShell (`powershell -ExecutionPolicy Bypass -File .\install.ps1`).
 ## Build from source
 
 ```
-git clone https://github.com/whoevenisxeno/simpleclip
-cd simpleclip
+git clone https://github.com/whoevenisxeno/simpleclip-windows
+cd simpleclip-windows
 .\packaging\windows\build.ps1 -InstallDeps
 ```
 
@@ -95,8 +95,7 @@ Deleting sends a clip to the Recycle Bin.
 ## Lower CPU use
 
 Settings > Quality > "Convert colours on the GPU" hands raw frames to the GPU encoder
-(AMF, NVENC, QuickSync) instead of converting them on the CPU first. On an RX 6650 XT
-at 1080p60 it dropped the daemon from about 6.5% to 5% of total CPU. It falls back to
+(AMF, NVENC, QuickSync) instead of converting them on the CPU first. In testing at 1080p60 it lowered the daemon's CPU use a little. It falls back to
 the normal path automatically if the encoder doesn't accept it. Off by default.
 
 ## Trimmed clips folder

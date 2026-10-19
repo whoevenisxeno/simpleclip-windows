@@ -1,6 +1,6 @@
 [Unit]
 Description=SimpleClip instant-replay daemon
-Documentation=https://github.com/whoevenisxeno/SimpleClip
+Documentation=https://github.com/whoevenisxeno/simpleclip-windows
 PartOf=graphical-session.target
 After=graphical-session.target
 
