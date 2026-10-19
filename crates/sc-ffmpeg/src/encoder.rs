@@ -1,24 +1,36 @@
+#[cfg(target_os = "linux")]
 use crate::hw;
 use crate::{Error, Result};
 use ffmpeg_next::ffi;
-use sc_core::encode::EncodedPacket;
+use sc_core::encode::{EncodedPacket, EncoderKind};
 use sc_core::time::Timestamp;
+use std::ffi::CString;
 use std::ptr;
 
 const TIMEBASE_HZ: i64 = 1_000_000; // microsecond encoder timebase for variable-rate capture
 
-/// VA-API H.264 encoder that emits encoded packets (it does not mux). Feed it
-/// NV12 frames with a monotonic nanosecond timestamp; it uploads to a GPU surface
-/// and returns packets carrying real PTS, so variable-rate screen capture plays
-/// back at the right speed. Global headers are always on so an MP4 muxer built
-/// from this encoder gets SPS/PPS in the container header.
+/// H.264 encoder that emits encoded packets (it does not mux). Feed it NV12
+/// frames with a monotonic nanosecond timestamp and it returns packets carrying
+/// real PTS, so variable-rate screen capture plays back at the right speed.
+/// Global headers are always on so an MP4 muxer built from this encoder gets
+/// SPS/PPS in the container header.
+///
+/// On Linux frames are uploaded to a VA-API surface. On Windows the hardware
+/// encoders (NVENC, AMF, QSV) take system-memory NV12 directly, so no hardware
+/// frame pool is needed; `new` walks the candidate list and keeps the first that
+/// really opens, ending in libx264.
 pub struct Encoder {
     ctx: *mut ffi::AVCodecContext,
+    // Null on Windows, where frames are sent as plain NV12.
     device: *mut ffi::AVBufferRef,
     frames: *mut ffi::AVBufferRef,
     width: i32,
     height: i32,
     base_ns: Option<i64>,
+    kind: EncoderKind,
+    name: &'static str,
+    gop: i64,
+    sent: i64,
 }
 
 // Owned by, and used from, a single encode thread; moving it there is sound.
@@ -34,34 +46,70 @@ impl Encoder {
     ) -> Result<Self> {
         crate::init()?;
         let (w, h) = (width as i32, height as i32);
-        unsafe {
-            let device = hw::create_vaapi_device()?;
-            let frames = hw::create_hw_frames_ctx(device, w, h)?;
+        let mut last_err = Error::NoEncoder { codec: "h264" };
+        // `SC_ENCODER=h264_mf` (or any FFmpeg encoder name in the list) pins the
+        // choice, for testing fallbacks and for working around a driver bug.
+        let forced = std::env::var("SC_ENCODER").ok();
+        for &(kind, name) in crate::ENCODE_ORDER {
+            if forced.as_deref().is_some_and(|f| f != name) {
+                continue;
+            }
             let mut enc = Self {
                 ctx: ptr::null_mut(),
-                device,
-                frames,
+                device: ptr::null_mut(),
+                frames: ptr::null_mut(),
                 width: w,
                 height: h,
                 base_ns: None,
+                kind,
+                name,
+                gop: gop_frames.max(1) as i64,
+                sent: 0,
             };
-            if let Err(e) = enc.open(fps as i32, bitrate_kbps as i64, gop_frames as i32) {
-                enc.cleanup();
-                return Err(e);
+            match unsafe { enc.try_open(fps as i32, bitrate_kbps as i64, gop_frames as i32) } {
+                Ok(()) => {
+                    tracing::info!(encoder = name, "video encoder opened");
+                    return Ok(enc);
+                }
+                Err(e) => {
+                    tracing::debug!(encoder = name, error = %e, "encoder unavailable");
+                    enc.cleanup();
+                    last_err = e;
+                }
             }
-            Ok(enc)
         }
+        Err(last_err)
+    }
+
+    /// Which encoder backend actually opened.
+    pub fn kind(&self) -> EncoderKind {
+        self.kind
+    }
+
+    /// FFmpeg codec name of the opened encoder (e.g. `h264_nvenc`).
+    pub fn name(&self) -> &'static str {
+        self.name
     }
 }
 
 impl Encoder {
+    /// Platform-specific setup before the codec opens. On Linux that is the
+    /// VA-API device and surface pool; VA-API is only ever tried on Linux, and
+    /// other candidates there simply fail to open if the hardware is absent.
+    unsafe fn try_open(&mut self, fps: i32, bitrate: i64, gop: i32) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if self.kind == EncoderKind::Vaapi {
+            self.device = hw::create_vaapi_device()?;
+            self.frames = hw::create_hw_frames_ctx(self.device, self.width, self.height)?;
+        }
+        self.open(fps, bitrate, gop)
+    }
+
     unsafe fn open(&mut self, fps: i32, bitrate: i64, gop: i32) -> Result<()> {
-        let name = std::ffi::CString::new("h264_vaapi").unwrap();
-        let codec = ffi::avcodec_find_encoder_by_name(name.as_ptr());
+        let cname = CString::new(self.name).unwrap();
+        let codec = ffi::avcodec_find_encoder_by_name(cname.as_ptr());
         if codec.is_null() {
-            return Err(Error::NoEncoder {
-                codec: "h264_vaapi",
-            });
+            return Err(Error::NoEncoder { codec: self.name });
         }
         self.ctx = ffi::avcodec_alloc_context3(codec);
         if self.ctx.is_null() {
@@ -78,20 +126,71 @@ impl Encoder {
             den: TIMEBASE_HZ as i32,
         };
         c.framerate = ffi::AVRational { num: fps, den: 1 };
-        c.pix_fmt = ffi::AVPixelFormat::AV_PIX_FMT_VAAPI;
+        c.pix_fmt = if self.frames.is_null() {
+            ffi::AVPixelFormat::AV_PIX_FMT_NV12
+        } else {
+            ffi::AVPixelFormat::AV_PIX_FMT_VAAPI
+        };
         c.bit_rate = bitrate * 1000;
         c.gop_size = gop;
         c.max_b_frames = 0;
-        c.hw_frames_ctx = ffi::av_buffer_ref(self.frames);
+        if !self.frames.is_null() {
+            c.hw_frames_ctx = ffi::av_buffer_ref(self.frames);
+        }
         c.flags |= ffi::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-        let rc = ffi::avcodec_open2(self.ctx, codec, ptr::null_mut());
+        // Constrain the rate so the ring buffer's byte budget (sized from the
+        // configured bitrate) actually holds N seconds.
+        #[cfg(windows)]
+        {
+            c.rc_max_rate = bitrate * 1000;
+            c.rc_buffer_size = (bitrate * 1000) as i32;
+            // Tag the stream BT.709 / limited range to match the converter, so
+            // players don't guess (and shift colours).
+            c.colorspace = ffi::AVColorSpace::AVCOL_SPC_BT709;
+            c.color_primaries = ffi::AVColorPrimaries::AVCOL_PRI_BT709;
+            c.color_trc = ffi::AVColorTransferCharacteristic::AVCOL_TRC_BT709;
+            c.color_range = ffi::AVColorRange::AVCOL_RANGE_MPEG;
+        }
+        let mut opts = ptr::null_mut();
+        for (k, v) in encoder_options(self.kind, self.name) {
+            let (k, v) = (CString::new(*k).unwrap(), CString::new(*v).unwrap());
+            ffi::av_dict_set(&mut opts, k.as_ptr(), v.as_ptr(), 0);
+        }
+        let rc = ffi::avcodec_open2(self.ctx, codec, &mut opts);
+        ffi::av_dict_free(&mut opts);
         if rc < 0 {
             return Err(Error::Av {
                 code: rc,
-                ctx: "avcodec_open2(h264_vaapi)",
+                ctx: "avcodec_open2",
             });
         }
         Ok(())
+    }
+}
+
+/// Low-latency, constant-ish-rate settings per encoder. Replay capture wants the
+/// encoder to keep up in real time and never stall the pipeline.
+fn encoder_options(kind: EncoderKind, name: &str) -> &'static [(&'static str, &'static str)] {
+    match kind {
+        EncoderKind::Nvenc => &[
+            ("preset", "p4"),
+            ("tune", "ll"),
+            ("rc", "cbr"),
+            ("zerolatency", "1"),
+            ("forced-idr", "1"),
+        ],
+        EncoderKind::Amf => &[
+            ("usage", "lowlatency"),
+            ("quality", "balanced"),
+            ("rc", "cbr"),
+            ("forced_idr", "1"),
+        ],
+        EncoderKind::Qsv => &[("preset", "veryfast"), ("look_ahead", "0")],
+        EncoderKind::Software if name == "libx264" => {
+            &[("preset", "veryfast"), ("tune", "zerolatency")]
+        }
+        EncoderKind::Software => &[],
+        EncoderKind::Vaapi => &[],
     }
 }
 
@@ -158,6 +257,25 @@ impl Encoder {
             w,
             h / 2,
         );
+        if self.frames.is_null() {
+            // Software-memory path (Windows): the encoder takes NV12 directly.
+            // Several hardware encoders (AMF in particular) ignore gop_size, which
+            // would leave one endless GOP the ring buffer can never trim, so ask
+            // for an IDR explicitly every `gop` frames.
+            if self.sent % self.gop == 0 {
+                (*sw).pict_type = ffi::AVPictureType::AV_PICTURE_TYPE_I;
+            }
+            self.sent += 1;
+            (*sw).pts = pts;
+            let rc = ffi::avcodec_send_frame(self.ctx, sw);
+            if rc < 0 {
+                return Err(Error::Av {
+                    code: rc,
+                    ctx: "avcodec_send_frame",
+                });
+            }
+            return self.drain();
+        }
         if ffi::av_hwframe_get_buffer(self.frames, hw, 0) < 0 {
             return Err(Error::Av {
                 code: -1,

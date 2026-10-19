@@ -43,6 +43,16 @@ impl Bgra2Nv12 {
                 ctx: "sws_getContext(bgra->nv12)",
             });
         }
+        // swscale converts RGB->YUV with BT.601 coefficients by default, but HD
+        // players assume BT.709 for untagged video and the encoder is tagged
+        // BT.709 on Windows: convert with 709 or colours come out slightly off.
+        #[cfg(windows)]
+        unsafe {
+            // libswscale/swscale.h `#define SWS_CS_ITU709 1`
+            let coeffs = ffi::sws_getCoefficients(1);
+            // full-range RGB in, limited-range ("tv") YUV out
+            ffi::sws_setColorspaceDetails(sws, coeffs, 1, coeffs, 0, 0, 1 << 16, 1 << 16);
+        }
         Ok(Self {
             sws,
             width: w,

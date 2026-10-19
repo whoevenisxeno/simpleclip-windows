@@ -26,10 +26,10 @@ fn fetch_devices(w: &mut WizardState) {
     if w.fetched {
         return;
     }
-    if let Ok(Response::Monitors(m)) = daemon::request(Request::ListMonitors) {
+    if let Ok(Response::Monitors { monitors: m }) = daemon::request(Request::ListMonitors) {
         w.monitors = m;
     }
-    if let Ok(Response::AudioDevices(a)) = daemon::request(Request::ListAudioDevices) {
+    if let Ok(Response::AudioDevices { devices: a }) = daemon::request(Request::ListAudioDevices) {
         w.audio = a;
     }
     w.fetched = true;
@@ -278,11 +278,11 @@ fn step_hotkeys(app: &mut ScApp, ui: &mut egui::Ui) {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label("Save clip:");
-                ui.text_edit_singleline(&mut app.cfg.hotkeys.save);
+                widgets::hotkey_field(ui, &mut app.cfg.hotkeys.save, "wiz-hk-save");
             });
             ui.horizontal(|ui| {
                 ui.label("Screenshot:");
-                ui.text_edit_singleline(&mut app.cfg.hotkeys.screenshot);
+                widgets::hotkey_field(ui, &mut app.cfg.hotkeys.screenshot, "wiz-hk-shot");
             });
         }
     });

@@ -5,14 +5,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Resolve the full output path for a saved clip from config: base directory,
 /// folder policy (flat / per-day / per-app), and the filename template.
 pub fn clip_path(cfg: &Config, app: Option<&str>) -> PathBuf {
-    let base = cfg
-        .save
-        .directory
-        .clone()
-        .or_else(|| directories::UserDirs::new().and_then(|d| d.video_dir().map(PathBuf::from)))
-        .unwrap_or_else(|| PathBuf::from("."));
+    media_path(cfg, app, "mp4")
+}
 
-    let (y, mo, d, h, mi, s) = now_utc();
+/// Same naming/folder rules as clips, for a screenshot (`png`).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn screenshot_path(cfg: &Config, app: Option<&str>) -> PathBuf {
+    media_path(cfg, app, "png")
+}
+
+fn media_path(cfg: &Config, app: Option<&str>, ext: &str) -> PathBuf {
+    let base = cfg.save.resolve_dir();
+
+    let (y, mo, d, h, mi, s) = now();
     let dir = match cfg.save.folder_policy {
         FolderPolicy::Flat => base,
         FolderPolicy::PerDay => base.join(format!("{y:04}-{mo:02}-{d:02}")),
@@ -27,10 +32,10 @@ pub fn clip_path(cfg: &Config, app: Option<&str>) -> PathBuf {
         .replace("{time}", &time)
         .replace("{app}", app.unwrap_or(""));
     let name = clean(&name);
-    let path = dir.join(format!("{name}.mp4"));
+    let path = dir.join(format!("{name}.{ext}"));
     // Same-day clips without a time in the name would collide; add one if needed.
     if path.exists() {
-        return path.with_file_name(format!("{name}-{time}.mp4"));
+        return path.with_file_name(format!("{name}-{time}.{ext}"));
     }
     path
 }
@@ -59,7 +64,21 @@ fn clean(s: &str) -> String {
     out.trim_matches(&['-', '_'][..]).to_string()
 }
 
+/// Best-effort foreground app/game name for the {app} token.
+#[cfg(windows)]
+pub fn foreground_app() -> Option<String> {
+    let exe = crate::win::foreground_exe()?;
+    let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
+    // The desktop/shell and our own windows aren't a meaningful clip source.
+    if matches!(stem.as_str(), "explorer" | "scd" | "sc-gui" | "searchhost") {
+        return None;
+    }
+    let app = clean(&stem);
+    (!app.is_empty()).then_some(app)
+}
+
 /// Best-effort foreground app/game name for the {app} token (Hyprland).
+#[cfg(not(windows))]
 pub fn foreground_app() -> Option<String> {
     let out = std::process::Command::new("hyprctl")
         .args(["activewindow", "-j"])
@@ -77,6 +96,21 @@ pub fn foreground_app() -> Option<String> {
     (!app.is_empty()).then_some(app)
 }
 
+/// Local wall-clock time on Windows, so clip names match the user's clock.
+#[cfg(windows)]
+fn now() -> (i64, u32, u32, u32, u32, u32) {
+    let t = crate::win::local_time();
+    (
+        t.0 as i64, t.1 as u32, t.2 as u32, t.3 as u32, t.4 as u32, t.5 as u32,
+    )
+}
+
+#[cfg(not(windows))]
+fn now() -> (i64, u32, u32, u32, u32, u32) {
+    now_utc()
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 fn now_utc() -> (i64, u32, u32, u32, u32, u32) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -95,6 +129,7 @@ fn now_utc() -> (i64, u32, u32, u32, u32, u32) {
 }
 
 /// Howard Hinnant's days-to-civil-date algorithm (days since 1970-01-01 -> Y/M/D).
+#[cfg_attr(windows, allow(dead_code))]
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);

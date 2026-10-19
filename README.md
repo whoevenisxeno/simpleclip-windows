@@ -1,6 +1,6 @@
 # SimpleClip
 
-Instant replay for Linux. SimpleClip always keeps the last N seconds of your
+Instant replay for Linux and Windows. SimpleClip always keeps the last N seconds of your
 screen buffered in RAM. When something worth keeping happens, you hit a hotkey
 and it writes those seconds to a file. There is no record button, and the buffer
 never stops.
@@ -10,9 +10,15 @@ of a launcher and an account.
 
 ## Status
 
-Usable. The core loop works today: the daemon buffers continuously and a hotkey
-saves the last N seconds to a valid, shareable MP4. Rough edges remain (see
-Roadmap). Linux only for now.
+Usable on Linux and Windows. The core loop works today: the daemon buffers
+continuously and a hotkey saves the last N seconds to a valid, shareable MP4.
+Rough edges remain (see Roadmap).
+
+**Windows:** Windows Graphics Capture for video, WASAPI loopback for desktop
+audio, NVENC / AMF / QuickSync hardware encode (Media Foundation software
+fallback), a system tray icon, global hotkeys (Alt+F10 save, Alt+F9 screenshot),
+toast notifications, and a per-user installer. See
+[packaging/windows](packaging/windows/README.md) to install or build.
 
 - Rolling replay buffer, hardware encoded
 - Hotkey to save the last N seconds (set from the app, no root, no manual config)
@@ -22,12 +28,23 @@ Roadmap). Linux only for now.
 
 ## Requirements
 
+**Windows:** Windows 10 2004+ or Windows 11 (11 hides the capture border), and a
+GPU with H.264 encode (NVIDIA, AMD or Intel). Without one it falls back to a
+software encoder.
+
+**Linux:**
+
 - A modern Linux desktop on Wayland with PipeWire and `xdg-desktop-portal`
 - A GPU with VA-API H.264 encode (AMD or Intel)
 - Hyprland for the fully automatic hotkey setup. Other compositors work too, you
   just bind the key to `sc save` yourself.
 
 ## Install
+
+**Windows:** unzip a release and run `.\install.ps1`, or build it yourself with
+`.\packaging\windows\build.ps1 -InstallDeps`.
+
+**Linux:**
 
 ```
 git clone https://github.com/whoevenisxeno/SimpleClip
@@ -42,7 +59,7 @@ hotkey config, so once it runs there is nothing else to set up.
 ## Usage
 
 - The daemon `scd` runs in the background and buffers continuously.
-- Press the save hotkey (default SUPER+F10) to write the last N seconds.
+- Press the save hotkey (default SUPER+F10, ALT+F10 on Windows) to write the last N seconds.
 - Run `sc-gui` for the wizard, live dashboard, gallery, and settings.
 - Or drive it from the CLI:
 
@@ -65,15 +82,15 @@ ever stalling capture.
 
 ## Configuration
 
-Settings live in `~/.config/simpleclip/config.toml` (hand-editable, hot-reloaded)
+Settings live in `~/.config/simpleclip/config.toml` (`%APPDATA%\SimpleClip\config.toml`
+on Windows; hand-editable, hot-reloaded)
 and are also exposed in the GUI: buffer length, RAM cap, bitrate, codec, capture
 FPS, cursor, save location and naming, notifications, and the hotkey.
 
 ## Roadmap
 
 - Audio (desktop + mic) in the clips
-- Screenshot hotkey
-- System tray icon
+- Microphone capture, trim export, Linux screenshots and tray
 - Restore token so the screen-share prompt only appears once
 - NVIDIA (NVENC) encode path
 - Packaging: AUR, AppImage

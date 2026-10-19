@@ -20,3 +20,7 @@ crossbeam-channel.workspace = true
 directories.workspace = true
 eframe = { version = "0.29", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
 egui = "0.29"
+time = { version = "0.3.55", features = ["local-offset"] }
+
+[target."cfg(windows)".dependencies]
+trash = "5.2.9"

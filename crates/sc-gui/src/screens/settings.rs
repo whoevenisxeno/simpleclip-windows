@@ -33,9 +33,54 @@ pub fn view(app: &mut ScApp, ui: &mut egui::Ui) {
 
 fn capture(app: &mut ScApp, ui: &mut egui::Ui) {
     widgets::card(ui, "Capture", |ui| {
+        if cfg!(windows) {
+            ensure_devices(app);
+            let current = app.cfg.capture.monitor_id.clone();
+            let label = app
+                .devices
+                .monitors
+                .iter()
+                .find(|m| m.id == current)
+                .map(monitor_label)
+                .unwrap_or_else(|| "Primary display".to_string());
+            ui.horizontal(|ui| {
+                ui.label("Display:");
+                egui::ComboBox::from_id_salt("monitor")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.cfg.capture.monitor_id,
+                            String::new(),
+                            "Primary display",
+                        );
+                        for m in &app.devices.monitors {
+                            ui.selectable_value(
+                                &mut app.cfg.capture.monitor_id,
+                                m.id.clone(),
+                                monitor_label(m),
+                            );
+                        }
+                    });
+                if ui.small_button("Refresh").clicked() {
+                    app.devices.refresh();
+                }
+            });
+        }
         ui.add(egui::Slider::new(&mut app.cfg.capture.target_fps, 15..=240).text("target FPS"));
         ui.checkbox(&mut app.cfg.capture.show_cursor, "Capture the mouse cursor");
     });
+}
+
+fn monitor_label(m: &sc_core::capture::MonitorInfo) -> String {
+    let primary = if m.primary { ", primary" } else { "" };
+    format!("{} ({}x{}{primary})", m.name, m.width, m.height)
+}
+
+/// Fetch displays/audio outputs from the daemon the first time they're needed.
+fn ensure_devices(app: &mut ScApp) {
+    if !app.devices.loaded && matches!(app.link, crate::daemon::Link::Connected(_)) {
+        app.devices.refresh();
+    }
 }
 
 fn buffer(app: &mut ScApp, ui: &mut egui::Ui) {
@@ -82,6 +127,36 @@ fn quality(app: &mut ScApp, ui: &mut egui::Ui) {
 fn audio(app: &mut ScApp, ui: &mut egui::Ui) {
     widgets::card(ui, "Audio", |ui| {
         ui.checkbox(&mut app.cfg.audio.desktop_enabled, "Capture desktop audio");
+        if cfg!(windows) && app.cfg.audio.desktop_enabled {
+            ensure_devices(app);
+            let current = app.cfg.audio.desktop_device.clone();
+            let label = app
+                .devices
+                .audio
+                .iter()
+                .find(|d| d.id == current)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| "Default output device".to_string());
+            ui.horizontal(|ui| {
+                ui.label("Output device:");
+                egui::ComboBox::from_id_salt("audio-out")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.cfg.audio.desktop_device,
+                            String::new(),
+                            "Default output device",
+                        );
+                        for d in &app.devices.audio {
+                            ui.selectable_value(
+                                &mut app.cfg.audio.desktop_device,
+                                d.id.clone(),
+                                d.name.clone(),
+                            );
+                        }
+                    });
+            });
+        }
         ui.checkbox(&mut app.cfg.audio.mic_enabled, "Capture microphone");
         if app.cfg.audio.mic_enabled {
             ui.horizontal(|ui| {
@@ -140,17 +215,21 @@ fn save(app: &mut ScApp, ui: &mut egui::Ui) {
 
 fn hotkey(app: &mut ScApp, ui: &mut egui::Ui) {
     widgets::card(ui, "Hotkeys", |ui| {
-        ui.label("SimpleClip listens for these directly (needs input-group access on Linux):");
+        if cfg!(windows) {
+            ui.label("Global hotkeys, active while the SimpleClip daemon runs:");
+        } else {
+            ui.label("SimpleClip listens for these directly (needs input-group access on Linux):");
+        }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label("Save clip:");
-            ui.text_edit_singleline(&mut app.cfg.hotkeys.save);
+            widgets::hotkey_field(ui, &mut app.cfg.hotkeys.save, "hk-save");
         });
         ui.horizontal(|ui| {
             ui.label("Screenshot:");
-            ui.text_edit_singleline(&mut app.cfg.hotkeys.screenshot);
+            widgets::hotkey_field(ui, &mut app.cfg.hotkeys.screenshot, "hk-shot");
         });
-        ui.colored_label(theme::MUTED, "Format: MOD+KEY, e.g. SUPER+F10, CTRL+ALT+C");
+        ui.colored_label(theme::MUTED, "Format: MOD+KEY, e.g. ALT+F10, CTRL+SHIFT+C");
     });
 }
 

@@ -1,0 +1,133 @@
+<#
+.SYNOPSIS
+  Build SimpleClip for Windows and stage a ready-to-run folder (and zip) in dist\.
+
+.DESCRIPTION
+  Needs: Rust (MSVC toolchain), Visual Studio Build Tools (C++ workload), LLVM
+  (for bindgen), and a *shared* FFmpeg 8.x dev build. Pass -InstallDeps to have
+  the script install anything missing (winget + a BtbN FFmpeg download); without
+  it, missing pieces are reported with the command that fixes them.
+
+.PARAMETER FfmpegDir
+  Folder containing FFmpeg's bin\ lib\ include\. Defaults to $env:FFMPEG_DIR, then
+  to the copy this script downloads under %LOCALAPPDATA%\SimpleClip\build-deps.
+
+.PARAMETER Variant
+  lgpl (default) LGPL FFmpeg: hardware encoders plus Windows' built-in h264_mf as a
+                 software fallback. Easy to redistribute (see docs/DECISIONS.md D-0002).
+  gpl            adds libx264 as a better software fallback; the DLLs are then GPL.
+
+.EXAMPLE
+  .\packaging\windows\build.ps1 -InstallDeps
+#>
+[CmdletBinding()]
+param(
+    [string]$FfmpegDir = $env:FFMPEG_DIR,
+    [ValidateSet('gpl', 'lgpl')][string]$Variant = 'lgpl',
+    [switch]$InstallDeps,
+    [switch]$NoZip
+)
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path "$PSScriptRoot\..\..").Path
+$depsDir = Join-Path $env:LOCALAPPDATA 'SimpleClip\build-deps'
+
+function Have($name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }
+function Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
+
+function Need($what, $wingetId, $override) {
+    if (-not $InstallDeps) {
+        $cmd = "winget install --id $wingetId -e"
+        if ($override) { $cmd += " --override `"$override`"" }
+        throw "$what is missing. Install it with:`n  $cmd`nor re-run this script with -InstallDeps."
+    }
+    Step "Installing $what"
+    $wingetArgs = @('install', '--id', $wingetId, '-e', '--accept-package-agreements', '--accept-source-agreements')
+    if ($override) { $wingetArgs += @('--override', $override) }
+    & winget @wingetArgs
+}
+
+# --- Rust -----------------------------------------------------------------
+$cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+if (Test-Path $cargoBin) { $env:Path += ";$cargoBin" }
+if (-not (Have cargo)) {
+    Need 'Rust (rustup)' 'Rustlang.Rustup'
+    $env:Path += ";$cargoBin"
+}
+
+# --- MSVC linker ----------------------------------------------------------
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$haveMsvc = (Test-Path $vswhere) -and
+    (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+if (-not $haveMsvc) {
+    Need 'Visual Studio Build Tools (C++ workload)' 'Microsoft.VisualStudio.2022.BuildTools' `
+        '--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+}
+
+# --- LLVM (libclang for ffmpeg-sys-next's bindgen) -------------------------
+if (-not $env:LIBCLANG_PATH) {
+    $llvm = "$env:ProgramFiles\LLVM\bin"
+    if (-not (Test-Path "$llvm\libclang.dll")) {
+        Need 'LLVM' 'LLVM.LLVM'
+    }
+    $env:LIBCLANG_PATH = $llvm
+}
+
+# --- FFmpeg (shared dev build) ---------------------------------------------
+if (-not $FfmpegDir -or -not (Test-Path "$FfmpegDir\lib\avcodec.lib")) {
+    $FfmpegDir = Join-Path $depsDir "ffmpeg-$Variant"
+    if (-not (Test-Path "$FfmpegDir\lib\avcodec.lib")) {
+        if (-not $InstallDeps) {
+            throw "No FFmpeg dev build found. Set FFMPEG_DIR to one (bin, lib, include), or re-run with -InstallDeps to download it."
+        }
+        Step "Downloading FFmpeg 8.1 ($Variant, shared)"
+        New-Item -ItemType Directory -Force $depsDir | Out-Null
+        $zip = Join-Path $depsDir "ffmpeg-$Variant.zip"
+        $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-$Variant-shared-8.1.zip"
+        Invoke-WebRequest $url -OutFile $zip
+        $tmp = Join-Path $depsDir "extract-$Variant"
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive $zip $tmp -Force
+        Move-Item (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName $FfmpegDir
+        Remove-Item $tmp, $zip -Recurse -Force
+    }
+}
+$env:FFMPEG_DIR = $FfmpegDir
+Step "Using FFmpeg at $FfmpegDir"
+
+# --- Build -----------------------------------------------------------------
+Step 'Building release binaries'
+Push-Location $root
+try {
+    & cargo build --release --workspace
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
+}
+finally { Pop-Location }
+
+# --- Stage -----------------------------------------------------------------
+$version = (Select-String -Path "$root\Cargo.toml" -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+$stage = Join-Path $root "dist\SimpleClip"
+Step "Staging $stage"
+Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $stage | Out-Null
+foreach ($exe in 'scd.exe', 'sc.exe', 'sc-gui.exe') {
+    Copy-Item "$root\target\release\$exe" $stage
+}
+Copy-Item "$FfmpegDir\bin\*.dll" $stage
+Copy-Item "$root\LICENSE" $stage
+Copy-Item "$PSScriptRoot\install.ps1", "$PSScriptRoot\uninstall.ps1" $stage
+if ($Variant -eq 'gpl') {
+    Set-Content (Join-Path $stage 'FFMPEG-LICENSE.txt') `
+        "The bundled FFmpeg DLLs are a GPL build (BtbN/FFmpeg-Builds, includes libx264). See https://ffmpeg.org/legal.html."
+}
+else {
+    Set-Content (Join-Path $stage 'FFMPEG-LICENSE.txt') `
+        "The bundled FFmpeg DLLs are an LGPL build (BtbN/FFmpeg-Builds). See https://ffmpeg.org/legal.html."
+}
+
+if (-not $NoZip) {
+    $zipPath = Join-Path $root "dist\SimpleClip-$version-win64.zip"
+    Remove-Item $zipPath -ErrorAction SilentlyContinue
+    Compress-Archive -Path $stage -DestinationPath $zipPath
+    Step "Wrote $zipPath"
+}
+Write-Host "Done. Run dist\SimpleClip\install.ps1 to install, or start dist\SimpleClip\scd.exe directly." -ForegroundColor Green

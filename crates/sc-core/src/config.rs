@@ -157,9 +157,34 @@ impl Default for SaveSettings {
 
 impl Default for HotkeySettings {
     fn default() -> Self {
-        Self {
-            save: "SUPER+F10".to_string(),
-            screenshot: "SUPER+F9".to_string(),
+        // Windows reserves most Win+key combos for the shell, so default to Alt.
+        if cfg!(windows) {
+            Self {
+                save: "ALT+F10".to_string(),
+                screenshot: "ALT+F9".to_string(),
+            }
+        } else {
+            Self {
+                save: "SUPER+F10".to_string(),
+                screenshot: "SUPER+F9".to_string(),
+            }
+        }
+    }
+}
+
+impl SaveSettings {
+    /// Where clips are written: the configured directory, else the user's Videos
+    /// folder (in a `SimpleClip` subfolder on Windows, so clips don't mix with
+    /// everything else living in Videos).
+    pub fn resolve_dir(&self) -> PathBuf {
+        if let Some(dir) = &self.directory {
+            return dir.clone();
+        }
+        let videos = directories::UserDirs::new().and_then(|d| d.video_dir().map(PathBuf::from));
+        match videos {
+            Some(v) if cfg!(windows) => v.join("SimpleClip"),
+            Some(v) => v,
+            None => PathBuf::from("."),
         }
     }
 }

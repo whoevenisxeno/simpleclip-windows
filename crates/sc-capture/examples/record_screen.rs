@@ -12,7 +12,17 @@ fn main() {
     let secs: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(5);
 
     let (tx, rx) = crossbeam_channel::bounded(120);
-    let cap = sc_capture::start(tx, None).expect("start capture");
+    let cap = sc_capture::start(
+        tx,
+        None,
+        &sc_capture::Options {
+            monitor_id: String::new(),
+            show_cursor: true,
+            fps: 60,
+            audio_device: String::new(),
+        },
+    )
+    .expect("start capture");
     let (w, h) = (cap.width, cap.height);
     println!("capturing {w}x{h} for {secs}s -> {path}");
 

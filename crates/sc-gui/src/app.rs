@@ -19,12 +19,40 @@ pub struct ScApp {
     pub screen: Screen,
     pub wizard: screens::wizard::WizardState,
     pub toast: Option<(String, egui::Color32)>,
+    /// Displays and audio outputs reported by the daemon (empty until fetched).
+    pub devices: Devices,
+    pub gallery: screens::gallery::Cache,
+}
+
+#[derive(Default)]
+pub struct Devices {
+    pub monitors: Vec<sc_core::capture::MonitorInfo>,
+    pub audio: Vec<sc_core::audio::AudioDevice>,
+    pub loaded: bool,
+}
+
+impl Devices {
+    /// Ask the daemon for the current displays and audio outputs.
+    pub fn refresh(&mut self) {
+        use sc_core::ipc::{Request, Response};
+        if let Ok(Response::Monitors { monitors: m }) = daemon::request(Request::ListMonitors) {
+            self.monitors = m;
+        }
+        if let Ok(Response::AudioDevices { devices: a }) =
+            daemon::request(Request::ListAudioDevices)
+        {
+            self.audio = a;
+        }
+        self.loaded = true;
+    }
 }
 
 impl ScApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let (tx, rx) = crossbeam_channel::unbounded();
+        // Bring the daemon up if it isn't already (it outlives this window).
+        std::thread::spawn(daemon::ensure_running);
         daemon::spawn_status_poller(cc.egui_ctx.clone(), tx);
         let cfg = config_io::load();
         // Show the wizard only until it has been completed once.
@@ -40,6 +68,8 @@ impl ScApp {
             screen,
             wizard: Default::default(),
             toast: None,
+            devices: Devices::default(),
+            gallery: Default::default(),
         }
     }
 

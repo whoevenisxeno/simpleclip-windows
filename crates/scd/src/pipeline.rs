@@ -3,6 +3,7 @@ use sc_core::buffer::PacketRing;
 use sc_core::config::Config;
 use sc_ffmpeg::{AacEncoder, Bgra2Nv12, CodecParams, Encoder, Mp4Muxer};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -17,7 +18,10 @@ pub struct Pipeline {
     audio_meta: Arc<Mutex<Option<AudioMeta>>>,
     pub width: u32,
     pub height: u32,
+    pub encoder: sc_core::encode::EncoderKind,
+    paused: Arc<AtomicBool>,
     _capture: sc_capture::CaptureHandle,
+    _video_convert: JoinHandle<()>,
     _video_encode: JoinHandle<()>,
     _audio_encode: JoinHandle<()>,
 }
@@ -41,8 +45,15 @@ impl Pipeline {
         // Audio is tiny; never drop it (gaps cause audible artifacts), unlike video.
         let (atx, arx) = crossbeam_channel::unbounded();
         let audio_tx = cfg.audio.desktop_enabled.then_some(atx);
-        let cap = sc_capture::start(vtx, audio_tx).context("starting capture")?;
+        let opts = sc_capture::Options {
+            monitor_id: cfg.capture.monitor_id.clone(),
+            show_cursor: cfg.capture.show_cursor,
+            fps: cfg.capture.target_fps,
+            audio_device: cfg.audio.desktop_device.clone(),
+        };
+        let cap = sc_capture::start(vtx, audio_tx, &opts).context("starting capture")?;
         let (width, height) = (cap.width, cap.height);
+        let paused = Arc::new(AtomicBool::new(false));
         let fps = cfg.capture.target_fps.max(1);
         let secs = cfg.buffer.replay_duration_secs as u64;
 
@@ -54,6 +65,7 @@ impl Pipeline {
             cfg.encode.gop_frames,
         )
         .context("opening video encoder")?;
+        let encoder_kind = venc.kind();
         let video_params = Arc::new(venc.codec_params().context("video params")?);
         let video_ring = Arc::new(Mutex::new(PacketRing::new(ring_bytes(
             cfg.encode.bitrate_kbps as u64,
@@ -61,19 +73,64 @@ impl Pipeline {
         ))));
         let mut conv = Bgra2Nv12::new(width, height).context("converter")?;
         let vring = video_ring.clone();
+        let vpaused = paused.clone();
+
+        // Two stages so colour conversion and encoding overlap: BGRA->NV12 on the
+        // CPU and the hardware encode each get a full frame interval to themselves,
+        // instead of sharing one thread's 16 ms at 60 fps. Backpressure flows
+        // upstream; the capture pacer drops frames if both stages fall behind.
+        let (ntx, nrx) = crossbeam_channel::bounded::<(Vec<u8>, i64)>(4);
+        let video_convert = std::thread::Builder::new()
+            .name("sc-vconv".into())
+            .spawn(move || {
+                for frame in vrx.iter() {
+                    if vpaused.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                    match conv.convert(&frame.data, frame.stride as usize) {
+                        Ok(nv12) => {
+                            if ntx.send((nv12, frame.timestamp.as_nanos())).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => tracing::debug!(error = %e, "frame convert failed"),
+                    }
+                }
+            })
+            .context("video convert thread")?;
         let video_encode = std::thread::Builder::new()
             .name("sc-venc".into())
             .spawn(move || {
-                for frame in vrx.iter() {
-                    let nv12 = match conv.convert(&frame.data, frame.stride as usize) {
-                        Ok(n) => n,
-                        Err(_) => continue,
-                    };
-                    if let Ok(pkts) = venc.push_nv12(&nv12, frame.timestamp.as_nanos()) {
-                        let mut r = vring.lock().unwrap();
-                        for p in pkts {
-                            r.push(p);
+                let (mut frames_in, mut packets_out, mut errors) = (0u32, 0u32, 0u32);
+                let mut spent = std::time::Duration::ZERO;
+                let mut report = std::time::Instant::now();
+                for (nv12, ts) in nrx.iter() {
+                    let t = std::time::Instant::now();
+                    frames_in += 1;
+                    match venc.push_nv12(&nv12, ts) {
+                        Ok(pkts) => {
+                            packets_out += pkts.len() as u32;
+                            let mut r = vring.lock().unwrap();
+                            for p in pkts {
+                                r.push(p);
+                            }
                         }
+                        Err(e) => {
+                            errors += 1;
+                            tracing::debug!(error = %e, "video encode failed");
+                        }
+                    }
+                    spent += t.elapsed();
+                    if report.elapsed() >= std::time::Duration::from_secs(5) {
+                        tracing::debug!(
+                            frames_in,
+                            packets_out,
+                            errors,
+                            avg_ms = spent.as_secs_f64() * 1000.0 / frames_in.max(1) as f64,
+                            "video encode, last 5s"
+                        );
+                        (frames_in, packets_out, errors) = (0, 0, 0);
+                        (spent, report) = (std::time::Duration::ZERO, std::time::Instant::now());
                     }
                 }
             })
@@ -84,10 +141,10 @@ impl Pipeline {
             secs,
         ))));
         let audio_meta = Arc::new(Mutex::new(None));
-        let (aring, ameta) = (audio_ring.clone(), audio_meta.clone());
+        let (aring, ameta, apaused) = (audio_ring.clone(), audio_meta.clone(), paused.clone());
         let audio_encode = std::thread::Builder::new()
             .name("sc-aenc".into())
-            .spawn(move || audio_loop(arx, aring, ameta))
+            .spawn(move || audio_loop(arx, aring, ameta, apaused))
             .context("audio encode thread")?;
 
         tracing::info!(
@@ -103,7 +160,10 @@ impl Pipeline {
             audio_meta,
             width,
             height,
+            encoder: encoder_kind,
+            paused,
             _capture: cap,
+            _video_convert: video_convert,
             _video_encode: video_encode,
             _audio_encode: audio_encode,
         })
@@ -114,10 +174,11 @@ fn audio_loop(
     rx: crossbeam_channel::Receiver<sc_core::audio::AudioBuffer>,
     ring: Arc<Mutex<PacketRing>>,
     meta: Arc<Mutex<Option<AudioMeta>>>,
+    paused: Arc<AtomicBool>,
 ) {
     let mut enc: Option<AacEncoder> = None;
     for buf in rx.iter() {
-        if buf.sample_rate == 0 {
+        if buf.sample_rate == 0 || paused.load(Ordering::Relaxed) {
             continue;
         }
         if enc.is_none() {
@@ -195,6 +256,45 @@ impl Pipeline {
         merge_write(&video, &audio, &mut mux)?;
         mux.finish().context("finish mp4")?;
         Ok((last - first) as f64 / 1_000_000_000.0)
+    }
+
+    /// Stop feeding the ring buffer (capture keeps running, so resuming is instant).
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Write the most recent captured frame to `path` as a PNG.
+    #[cfg(windows)]
+    pub fn screenshot(&self, path: &Path) -> Result<()> {
+        let frame = self
+            ._capture
+            .latest_frame()
+            .context("no frame captured yet")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let (w, h, stride) = (
+            frame.width as usize,
+            frame.height as usize,
+            frame.stride as usize,
+        );
+        // BGRA with row padding -> tightly packed RGB (a screen has no alpha).
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for row in frame.data.chunks_exact(stride).take(h) {
+            for px in row[..w * 4].as_chunks::<4>().0 {
+                rgb.extend_from_slice(&[px[2], px[1], px[0]]);
+            }
+        }
+        let file = std::io::BufWriter::new(std::fs::File::create(path).context("create png")?);
+        let mut enc = png::Encoder::new(file, frame.width, frame.height);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_compression(png::Compression::Fast);
+        enc.write_header()
+            .context("png header")?
+            .write_image_data(&rgb)
+            .context("png data")?;
+        Ok(())
     }
 
     pub fn buffer_fill(&self) -> f32 {

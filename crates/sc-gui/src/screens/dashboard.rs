@@ -15,7 +15,11 @@ fn disconnected(ui: &mut egui::Ui) {
     widgets::card(ui, "Daemon not running", |ui| {
         ui.colored_label(theme::MUTED, "The SimpleClip daemon (scd) isn't reachable.");
         ui.add_space(6.0);
-        ui.label("Start it with:");
+        if ui.button("Start daemon").clicked() {
+            daemon::spawn_daemon();
+        }
+        ui.add_space(6.0);
+        ui.colored_label(theme::MUTED, "Or from a terminal:");
         ui.code("scd --foreground");
     });
 }

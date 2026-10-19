@@ -19,7 +19,9 @@ pub const DEFAULT_SOCKET_NAME: &str = "simpleclip.sock";
 pub enum Request {
     Ping,
     Status,
-    Save { last_secs: Option<u32> },
+    Save {
+        last_secs: Option<u32>,
+    },
     Screenshot,
     Record,
     Stop,
@@ -27,6 +29,8 @@ pub enum Request {
     Resume,
     ListMonitors,
     ListAudioDevices,
+    /// Ask the daemon to exit (used by `sc quit` and the installer).
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,8 +51,8 @@ pub enum Response {
     Pong,
     Status(StatusReport),
     Saved { path: PathBuf, duration_secs: f64 },
-    Monitors(Vec<MonitorInfo>),
-    AudioDevices(Vec<AudioDevice>),
+    Monitors { monitors: Vec<MonitorInfo> },
+    AudioDevices { devices: Vec<AudioDevice> },
     Ok,
     Error { message: String },
 }

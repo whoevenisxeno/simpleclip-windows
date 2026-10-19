@@ -25,6 +25,35 @@ pub fn request(req: Request) -> Result<Response> {
     Ok(env.payload)
 }
 
+/// Launch the daemon that ships next to this executable (falling back to `scd`
+/// on PATH). Detached, with no console window, so closing the GUI leaves the
+/// replay buffer running. Returns whether a process was started.
+pub fn spawn_daemon() -> bool {
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|p| {
+            p.parent()
+                .map(|d| d.join(format!("scd{}", std::env::consts::EXE_SUFFIX)))
+        })
+        .filter(|p| p.exists());
+    let mut cmd = std::process::Command::new(sibling.unwrap_or_else(|| "scd".into()));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+    }
+    cmd.spawn().is_ok()
+}
+
+/// Start the daemon if nothing answers on the socket. Cheap when it is up.
+pub fn ensure_running() {
+    if request(Request::Ping).is_err() {
+        spawn_daemon();
+    }
+}
+
 /// Live connection status the top bar renders.
 #[derive(Clone)]
 pub enum Link {

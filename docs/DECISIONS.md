@@ -3,6 +3,30 @@
 Lightweight ADRs. Each entry records a resolved choice and why, so we don't
 relitigate it. Newest first.
 
+## D-0010 · Windows backend: windows-capture + WASAPI loopback + FFmpeg hw encoders
+Phase 4. Resolves Q2.
+- **Video:** `windows-capture` (Windows Graphics Capture), BGRA CPU readback. WGC
+  only delivers on change, so a pacer thread re-emits the latest frame at the
+  target fps: constant frame rate, keyframes on a static desktop, and a cap on
+  high-refresh monitors. Frame size from the first frame is authoritative (DPI).
+- **Audio:** `wasapi` shared-mode loopback, 48 kHz stereo f32 with autoconvert.
+  Loopback sends nothing while the system is silent, so gaps are filled with
+  silence against the shared clock to keep A/V aligned.
+- **Encode:** the existing FFmpeg path. NVENC, AMF and QSV take system-memory NV12
+  (no hw frame pool), tried in that order, then libx264 (GPL builds only), then
+  Media Foundation `h264_mf`. Each candidate is probed by really opening it. AMF
+  ignores `gop_size`, which would leave one unbounded GOP the ring can't evict, so
+  an IDR is forced every `gop` frames via `pict_type`. BGRA->NV12 uses BT.709
+  coefficients and the stream is tagged BT.709/limited (swscale defaults to 601).
+- **Pipeline:** colour conversion and encoding run on separate threads so each
+  gets a full frame interval at 60 fps.
+- **Shell:** `RegisterHotKey` on its own thread (re-registers on config change),
+  `tray-icon`, toast via PowerShell/WinRT with its own AUMID, HKCU Run key for
+  autostart, a named mutex for single instance, a file log (the daemon is a
+  GUI-subsystem exe).
+- **Licensing:** packages ship an LGPL FFmpeg by default (D-0002). `-Variant gpl`
+  in `packaging/windows/build.ps1` opts into libx264.
+
 ## D-0009 · Linux capture: ashpd (portal ScreenCast) + pipewire-rs 0.10
 Phase 1. A spike proved the full path on Hyprland: `ashpd` drives the
 xdg-desktop-portal ScreenCast (create session, select monitor, start, open the

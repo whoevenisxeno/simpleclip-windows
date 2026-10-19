@@ -5,9 +5,9 @@ use sc_core::ipc::StatusReport;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 type PipelineSlot = Option<crate::pipeline::Pipeline>;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 type PipelineSlot = Option<()>;
 
 /// Shared daemon state. Config lives behind an RwLock so the hot-reload watcher
@@ -40,12 +40,35 @@ impl Daemon {
     pub fn set_config(&self, config: Config) {
         *self.config.write().unwrap() = config;
     }
+
+    /// Swap in a reloaded config. Settings the live pipeline was built from
+    /// (capture, audio, buffer, encode) need a pipeline restart to take effect;
+    /// everything else (hotkeys, naming, notifications) is read on use.
+    pub fn apply_config(&self, new: Config) {
+        let needs_restart = {
+            let old = self.config.read().unwrap();
+            old.capture != new.capture
+                || old.audio != new.audio
+                || old.buffer != new.buffer
+                || old.encode != new.encode
+        };
+        self.set_config(new);
+        if needs_restart && self.pipeline.lock().unwrap().is_some() {
+            tracing::info!("capture settings changed; restarting pipeline");
+            let d = self.clone();
+            std::thread::spawn(move || {
+                d.stop_capture();
+                d.start_capture();
+            });
+        }
+    }
 }
 
 impl Daemon {
     /// Start the capture pipeline (pops the portal consent dialog on Linux).
-    pub fn start_capture(&self) {
-        #[cfg(target_os = "linux")]
+    /// Returns whether capture is now running.
+    pub fn start_capture(&self) -> bool {
+        #[cfg(any(target_os = "linux", windows))]
         {
             let cfg = self.config.read().unwrap().clone();
             match crate::pipeline::Pipeline::start(&cfg) {
@@ -53,17 +76,30 @@ impl Daemon {
                     *self.pipeline.lock().unwrap() = Some(p);
                     self.set_state(CaptureState::Active);
                     tracing::info!("capture pipeline started");
+                    true
                 }
-                Err(e) => tracing::error!(error = %e, "capture failed to start"),
+                Err(e) => {
+                    tracing::error!(error = format!("{e:#}"), "capture failed to start");
+                    false
+                }
             }
         }
-        #[cfg(not(target_os = "linux"))]
-        tracing::warn!("capture backend not implemented on this platform yet");
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            tracing::warn!("capture backend not implemented on this platform yet");
+            false
+        }
+    }
+
+    /// Tear the pipeline down (drops capture + encoders and frees the buffer).
+    pub fn stop_capture(&self) {
+        *self.pipeline.lock().unwrap() = None;
+        self.set_state(CaptureState::Stopped);
     }
 
     /// Write the last N seconds from the ring buffer to a file.
     pub fn save_clip(&self, last_secs: Option<u32>) -> Result<(PathBuf, f64), String> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         {
             let guard = self.pipeline.lock().unwrap();
             let p = guard.as_ref().ok_or("capture is not running")?;
@@ -71,15 +107,62 @@ impl Daemon {
             let secs = last_secs.unwrap_or(cfg.buffer.replay_duration_secs);
             let app = crate::naming::foreground_app();
             let path = crate::naming::clip_path(&cfg, app.as_deref());
-            let dur = p.save(secs, &path).map_err(|e| e.to_string())?;
+            let dur = p.save(secs, &path).map_err(|e| format!("{e:#}"))?;
             crate::notify::clip_saved(&path, dur, &cfg);
             Ok((path, dur))
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             let _ = last_secs;
             Err("capture backend not implemented on this platform yet".into())
         }
+    }
+
+    /// Save the current frame as a PNG next to the clips.
+    pub fn screenshot(&self) -> Result<PathBuf, String> {
+        #[cfg(windows)]
+        {
+            let guard = self.pipeline.lock().unwrap();
+            let p = guard.as_ref().ok_or("capture is not running")?;
+            let cfg = self.config.read().unwrap();
+            let app = crate::naming::foreground_app();
+            let path = crate::naming::screenshot_path(&cfg, app.as_deref());
+            p.screenshot(&path).map_err(|e| format!("{e:#}"))?;
+            crate::notify::screenshot_saved(&path, &cfg);
+            Ok(path)
+        }
+        #[cfg(not(windows))]
+        Err("screenshots aren't supported on this platform yet".into())
+    }
+
+    /// Pause or resume feeding the replay buffer. Capture itself keeps running so
+    /// resuming is instant.
+    pub fn set_paused(&self, paused: bool) {
+        #[cfg(any(target_os = "linux", windows))]
+        {
+            // Take the pipeline lock and release it before touching `status`:
+            // status_report locks them in the opposite order.
+            let applied = match self.pipeline.lock().unwrap().as_ref() {
+                Some(p) => {
+                    p.set_paused(paused);
+                    true
+                }
+                None => false,
+            };
+            if applied {
+                self.set_state(if paused {
+                    CaptureState::Paused
+                } else {
+                    CaptureState::Active
+                });
+            }
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        let _ = paused;
+    }
+
+    pub fn capture_state(&self) -> CaptureState {
+        self.status.lock().unwrap().state
     }
 }
 
@@ -107,7 +190,7 @@ impl Daemon {
         Option<EncoderKind>,
         Option<sc_core::capture::MonitorInfo>,
     ) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         if let Some(p) = self.pipeline.lock().unwrap().as_ref() {
             let mon = sc_core::capture::MonitorInfo {
                 id: "captured".into(),
@@ -117,7 +200,7 @@ impl Daemon {
                 refresh_mhz: 0,
                 primary: true,
             };
-            return (p.buffer_fill(), Some(EncoderKind::Vaapi), Some(mon));
+            return (p.buffer_fill(), Some(p.encoder), Some(mon));
         }
         (0.0, None, None)
     }

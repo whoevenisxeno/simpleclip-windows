@@ -33,6 +33,12 @@ enum Command {
     Pause,
     /// Resume capture.
     Resume,
+    /// Stop the daemon.
+    Quit,
+    /// List displays that can be captured.
+    Monitors,
+    /// List audio output devices whose sound can be captured.
+    AudioDevices,
 }
 
 fn main() -> Result<()> {
@@ -45,6 +51,9 @@ fn main() -> Result<()> {
         Command::Status { json } => (Request::Status, json),
         Command::Pause => (Request::Pause, false),
         Command::Resume => (Request::Resume, false),
+        Command::Quit => (Request::Shutdown, false),
+        Command::Monitors => (Request::ListMonitors, false),
+        Command::AudioDevices => (Request::ListAudioDevices, false),
     };
 
     let resp = client::request(req)?;
@@ -57,8 +66,23 @@ fn main() -> Result<()> {
         } => {
             println!("saved {} ({:.1}s)", path.display(), duration_secs)
         }
-        Response::Monitors(m) => println!("{}", serde_json::to_string_pretty(&m)?),
-        Response::AudioDevices(d) => println!("{}", serde_json::to_string_pretty(&d)?),
+        Response::Monitors { monitors: m } => {
+            for mon in m {
+                println!(
+                    "{:<3} {} ({}x{}{})",
+                    mon.id,
+                    mon.name,
+                    mon.width,
+                    mon.height,
+                    if mon.primary { ", primary" } else { "" }
+                );
+            }
+        }
+        Response::AudioDevices { devices: d } => {
+            for dev in d {
+                println!("{}  {}", dev.id, dev.name);
+            }
+        }
         Response::Ok | Response::Pong => println!("ok"),
         Response::Error { message } => {
             eprintln!("error: {message}");

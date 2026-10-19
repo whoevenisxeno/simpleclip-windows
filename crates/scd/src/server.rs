@@ -56,8 +56,12 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             },
             Err(message) => Response::Error { message },
         },
-        Request::Screenshot => Response::Error {
-            message: "screenshot lands in Phase 3".into(),
+        Request::Screenshot => match daemon.screenshot() {
+            Ok(path) => Response::Saved {
+                path,
+                duration_secs: 0.0,
+            },
+            Err(message) => Response::Error { message },
         },
         Request::Record => {
             daemon.set_recording(true);
@@ -69,18 +73,47 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             daemon.set_state(CaptureState::Stopped);
             Response::Ok
         }
+        Request::Shutdown => {
+            tracing::info!("shutdown requested over IPC");
+            // Let the reply reach the client before the process goes away.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::process::exit(0);
+            });
+            Response::Ok
+        }
         Request::Pause => {
-            daemon.set_state(CaptureState::Paused);
+            daemon.set_paused(true);
             Response::Ok
         }
         Request::Resume => {
-            daemon.set_state(CaptureState::Active);
+            daemon.set_paused(false);
             Response::Ok
         }
-        // Enumeration is served by the capture/audio backends, which land in
-        // Phase 1. Until then the daemon reports nothing detected rather than
-        // faking devices; the wizard handles the empty case.
-        Request::ListMonitors => Response::Monitors(Vec::new()),
-        Request::ListAudioDevices => Response::AudioDevices(Vec::new()),
+        // Enumeration is served by the Windows capture backend; elsewhere the
+        // daemon reports nothing detected rather than faking devices, and the
+        // wizard handles the empty case.
+        #[cfg(windows)]
+        Request::ListMonitors => match sc_capture::list_monitors() {
+            Ok(monitors) => Response::Monitors { monitors },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
+        #[cfg(windows)]
+        Request::ListAudioDevices => match sc_capture::list_audio_devices() {
+            Ok(devices) => Response::AudioDevices { devices },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
+        #[cfg(not(windows))]
+        Request::ListMonitors => Response::Monitors {
+            monitors: Vec::new(),
+        },
+        #[cfg(not(windows))]
+        Request::ListAudioDevices => Response::AudioDevices {
+            devices: Vec::new(),
+        },
     }
 }

@@ -6,7 +6,7 @@ to `DECISIONS.md`. Status: 🔴 open · 🟡 spiking · 🟢 resolved (see ADR).
 | # | Question | Blocks | Status |
 |---|----------|--------|--------|
 | Q1 | Maintained FFmpeg/libav Rust binding exposing NVENC/VA-API/QSV/AMF on both OSes; system-link vs bundle per platform. | Phase 1 | 🟢 D-0008 |
-| Q2 | Windows capture crate (`windows-capture`?) frame format and lowest-copy path into libav. | Phase 4 | 🔴 |
+| Q2 | Windows capture crate (`windows-capture`?) frame format and lowest-copy path into libav. | Phase 4 | 🟢 D-0010 (CPU readback; zero-copy still open under Q7) |
 | Q3 | Software-encoder default: openh264 (BSD, patent nuance) vs x264 (GPL, feature-gated). Leaning openh264 default. | Phase 1 | 🔴 |
 | Q4 | Confirm newline-JSON IPC isn't a bottleneck under real load. | - | 🟢 D-0007 (revisit if profiled) |
 | Q5 | egui video-playback for gallery/trim: embed frames vs delegate to system player. | Phase 6 | 🔴 |
