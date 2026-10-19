@@ -9,7 +9,6 @@ the Windows version: a background service, a small app for browsing and trimming
 installer. I'm not trying to replace ShadowPlay or Medal. I wanted something small that does one
 job and does not need an account.
 
-![Home screen](docs/screenshots/home-dark.png)
 
 ## What it does
 
@@ -35,6 +34,11 @@ job and does not need an account.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
 
 ## Screenshots
+
+<details>
+<summary><b>Show screenshots</b></summary>
+
+![Home screen](docs/screenshots/home-dark.png)
 
 These screenshots come from the app's own test mode, using a throwaway library of sample footage
 that I renamed to look like different games. The footage is from one game, the names are made up.
@@ -98,6 +102,9 @@ A short setup guide appears the first time you open the app.
 There is also a light theme. It follows your Windows setting.
 
 ![Home, light theme](docs/screenshots/home-light.png)
+
+
+</details>
 
 ## Install
 
