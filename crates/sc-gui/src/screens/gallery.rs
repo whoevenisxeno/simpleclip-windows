@@ -1,17 +1,21 @@
-use crate::app::{ScApp, Screen};
-use crate::theme;
+use crate::app::{ScApp, Screen, ToastKind};
+use crate::theme::{self, icon, mix, pal_ui};
+use crate::widgets;
+use egui::{
+    pos2, vec2, Align, Align2, Color32, FontId, Layout, Rect, RichText, Rounding, Sense, Ui,
+};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Clone)]
-struct Clip {
-    path: PathBuf,
-    name: String,
-    modified: SystemTime,
-    bytes: u64,
-    is_image: bool,
+pub struct Clip {
+    pub path: PathBuf,
+    pub name: String,
+    pub modified: SystemTime,
+    pub bytes: u64,
+    pub is_image: bool,
     /// Game / app the clip came from ("Desktop" when unknown).
-    game: String,
+    pub game: String,
 }
 
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -22,7 +26,7 @@ enum GroupBy {
 }
 
 /// Cached directory scan, so the gallery doesn't re-walk the disk on every
-/// repaint (the status poller repaints once a second), plus the view's filters.
+/// repaint, plus the view's filters.
 #[derive(Default)]
 pub struct Cache {
     clips: Vec<Clip>,
@@ -38,15 +42,35 @@ impl Cache {
     pub fn rescan(&mut self) {
         self.scanned = None;
     }
+
+    /// First video in the list (newest), for the design-review harness.
+    pub fn first_video(&self) -> Option<PathBuf> {
+        self.clips
+            .iter()
+            .find(|c| !c.is_image)
+            .map(|c| c.path.clone())
+    }
+
+    fn refresh(&mut self, dir: &Path) {
+        let stale = self.dir != dir || self.scanned.is_none_or(|t| t.elapsed() > RESCAN_EVERY);
+        if stale {
+            self.clips = scan(dir);
+            self.dir = dir.to_path_buf();
+            self.scanned = Some(Instant::now());
+        }
+    }
 }
 
 const RESCAN_EVERY: Duration = Duration::from_secs(3);
-const CARD_W: f32 = 248.0;
-const THUMB_H: f32 = 140.0;
 
-fn save_dir(app: &ScApp) -> PathBuf {
-    app.cfg.save.resolve_dir()
+/// The newest `n` items, scanning first if the cache is stale.
+pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
+    let dir = app.cfg.save.resolve_dir();
+    app.gallery.refresh(&dir);
+    app.gallery.clips.iter().take(n).cloned().collect()
 }
+
+// ---------------------------------------------------------------- scanning --
 
 /// `2026-10-19`-style day folder names, which say nothing about the game.
 fn is_day_folder(name: &str) -> bool {
@@ -106,34 +130,30 @@ fn pretty(s: &str) -> String {
 
 fn scan(dir: &Path) -> Vec<Clip> {
     let mut clips = Vec::new();
-    let walk = walkdir(dir);
-    for path in walk {
+    for path in walkdir(dir) {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        let is_image = ext == "png";
         if !matches!(ext.as_str(), "mp4" | "mkv" | "png") {
             continue;
         }
         let meta = path.metadata().ok();
-        let modified = meta
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("clip")
-            .to_string();
         clips.push(Clip {
             game: game_of(&path, dir),
-            path,
-            name,
-            modified,
+            name: path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("clip")
+                .to_string(),
+            modified: meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH),
             bytes: meta.map(|m| m.len()).unwrap_or(0),
-            is_image,
+            is_image: ext == "png",
+            path,
         });
     }
     clips.sort_by_key(|c| std::cmp::Reverse(c.modified));
@@ -164,6 +184,8 @@ fn walkdir(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+// -------------------------------------------------------------- formatting --
+
 fn local(t: SystemTime) -> time::OffsetDateTime {
     let utc = time::OffsetDateTime::from(t);
     time::UtcOffset::current_local_offset()
@@ -171,19 +193,25 @@ fn local(t: SystemTime) -> time::OffsetDateTime {
         .unwrap_or(utc)
 }
 
-/// "Mon 19 Oct 2026" in the user's local time zone.
+/// "Today", "Yesterday", or "Mon 19 Oct" in the user's local time zone.
 fn day_label(t: SystemTime) -> String {
     const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     let l = local(t);
+    let today = local(SystemTime::now());
+    if l.date() == today.date() {
+        return "Today".into();
+    }
+    if Some(l.date()) == today.date().previous_day() {
+        return "Yesterday".into();
+    }
     format!(
-        "{} {} {} {}",
+        "{} {} {}",
         DAYS[l.weekday().number_days_from_monday() as usize],
         l.day(),
         MONTHS[l.month() as usize - 1],
-        l.year()
     )
 }
 
@@ -192,14 +220,29 @@ fn time_label(t: SystemTime) -> String {
     format!("{:02}:{:02}", l.hour(), l.minute())
 }
 
+/// "5 min ago", "Today 14:12", "Yesterday 21:03".
+pub fn ago(t: SystemTime) -> String {
+    let secs = SystemTime::now()
+        .duration_since(t)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    match secs {
+        0..=59 => "Just now".into(),
+        60..=3599 => format!("{} min ago", secs / 60),
+        _ => format!("{} {}", day_label(t), time_label(t)),
+    }
+}
+
 fn size_label(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     if bytes as f64 >= 1024.0 * MB {
         format!("{:.1} GB", bytes as f64 / (1024.0 * MB))
     } else {
-        format!("{:.1} MB", bytes as f64 / MB)
+        format!("{:.0} MB", bytes as f64 / MB)
     }
 }
+
+// ------------------------------------------------------------ file actions --
 
 pub fn open_path(path: &Path) {
     #[cfg(target_os = "linux")]
@@ -232,53 +275,60 @@ fn delete(path: &Path) -> bool {
     std::fs::remove_file(path).is_ok()
 }
 
-pub fn view(app: &mut ScApp, ui: &mut egui::Ui) {
-    let dir = save_dir(app);
-    app.thumbs.poll();
+// -------------------------------------------------------------------- view --
 
-    let stale = app.gallery.dir != dir
-        || app
-            .gallery
-            .scanned
-            .is_none_or(|t| t.elapsed() > RESCAN_EVERY);
-    if stale {
-        app.gallery.clips = scan(&dir);
-        app.gallery.dir = dir.clone();
-        app.gallery.scanned = Some(Instant::now());
-    }
+pub fn view(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    let dir = app.cfg.save.resolve_dir();
+    app.gallery.refresh(&dir);
 
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.heading("Gallery");
-        ui.colored_label(theme::MUTED, format!("{} items", app.gallery.clips.len()));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Open folder").clicked() {
-                let _ = std::fs::create_dir_all(&dir);
-                open_path(&dir);
-            }
-            if ui.button("Refresh").clicked() {
-                app.gallery.scanned = None;
-            }
-        });
-    });
-    ui.colored_label(theme::MUTED, dir.display().to_string());
-    ui.separator();
+    let total: u64 = app.gallery.clips.iter().map(|c| c.bytes).sum();
+    let count = app.gallery.clips.len();
+    widgets::page_title(
+        ui,
+        "Clips",
+        Some(&if count == 0 {
+            "Nothing saved yet".to_string()
+        } else {
+            format!(
+                "{count} {} \u{2022} {}",
+                if count == 1 { "item" } else { "items" },
+                size_label(total)
+            )
+        }),
+    );
 
-    if app.gallery.clips.is_empty() {
-        ui.add_space(20.0);
-        ui.vertical_centered(|ui| {
-            ui.colored_label(
-                theme::MUTED,
-                "No clips yet. Hit your save hotkey during a session.",
-            );
+    if count == 0 {
+        widgets::card(ui, |ui| {
+            ui.add_space(22.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("No clips yet")
+                        .font(FontId::new(20.0, theme::semibold()))
+                        .color(p.text),
+                );
+                ui.add_space(4.0);
+                widgets::secondary(
+                    ui,
+                    format!(
+                        "Press {} during a session to keep the last moments.",
+                        app.cfg.hotkeys.save
+                    ),
+                );
+                ui.add_space(14.0);
+                if widgets::quiet_button(ui, Some(icon::FOLDER), "Open folder").clicked() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    open_path(&dir);
+                }
+            });
+            ui.add_space(22.0);
         });
         return;
     }
 
-    controls(app, ui);
-    ui.add_space(6.0);
+    toolbar(app, ui, &dir);
+    ui.add_space(8.0);
 
-    // Apply the search box and game filter.
     let needle = app.gallery.search.trim().to_lowercase();
     let visible: Vec<Clip> = app
         .gallery
@@ -293,24 +343,58 @@ pub fn view(app: &mut ScApp, ui: &mut egui::Ui) {
         .cloned()
         .collect();
     if visible.is_empty() {
-        ui.colored_label(theme::MUTED, "Nothing matches.");
+        ui.add_space(30.0);
+        ui.vertical_centered(|ui| widgets::secondary(ui, "Nothing matches your search."));
         return;
     }
-    render_groups(app, ui, visible);
+    groups(app, ui, visible);
 }
 
-/// Search box, group toggle and per-game filter chips.
-fn controls(app: &mut ScApp, ui: &mut egui::Ui) {
+/// Search, grouping, and the per-game filter chips.
+fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path) {
+    let p = pal_ui(ui);
     ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut app.gallery.search)
-                .hint_text("Search clips or games")
-                .desired_width(220.0),
+        ui.spacing_mut().item_spacing.x = 10.0;
+        // Search field.
+        egui::Frame::none()
+            .fill(p.card_hi)
+            .rounding(Rounding::same(9.0))
+            .inner_margin(egui::Margin::symmetric(10.0, 0.0))
+            .show(ui, |ui| {
+                ui.set_height(30.0);
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if theme::has_icons(ui.ctx()) {
+                        ui.label(
+                            RichText::new(icon::SEARCH)
+                                .family(theme::icons())
+                                .size(13.0)
+                                .color(p.text_2),
+                        );
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.gallery.search)
+                            .hint_text("Search")
+                            .frame(false)
+                            .desired_width(170.0),
+                    );
+                });
+            });
+        widgets::segmented(
+            ui,
+            &mut app.gallery.group,
+            &[(GroupBy::Game, "By game"), (GroupBy::Date, "By date")],
         );
-        ui.add_space(8.0);
-        ui.label("Group by:");
-        ui.selectable_value(&mut app.gallery.group, GroupBy::Game, "Game");
-        ui.selectable_value(&mut app.gallery.group, GroupBy::Date, "Date");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if widgets::icon_button(ui, icon::FOLDER, "Open", "Open clips folder", false).clicked()
+            {
+                let _ = std::fs::create_dir_all(dir);
+                open_path(dir);
+            }
+            if widgets::icon_button(ui, icon::REFRESH, "Refresh", "Refresh", false).clicked() {
+                app.gallery.scanned = None;
+            }
+        });
     });
 
     // One chip per game, most clips first.
@@ -323,23 +407,44 @@ fn controls(app: &mut ScApp, ui: &mut egui::Ui) {
     }
     counts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     if counts.len() > 1 {
-        ui.add_space(4.0);
+        ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             let all = app.gallery.only_game.is_none();
-            if ui
-                .selectable_label(all, format!("All ({})", app.gallery.clips.len()))
-                .clicked()
-            {
+            if chip(ui, &format!("All  {}", app.gallery.clips.len()), all) {
                 app.gallery.only_game = None;
             }
             for (game, n) in counts {
                 let on = app.gallery.only_game.as_deref() == Some(game.as_str());
-                if ui.selectable_label(on, format!("{game} ({n})")).clicked() {
+                if chip(ui, &format!("{game}  {n}"), on) {
                     app.gallery.only_game = if on { None } else { Some(game) };
                 }
             }
         });
     }
+}
+
+fn chip(ui: &mut Ui, label: &str, on: bool) -> bool {
+    let p = pal_ui(ui);
+    let font = FontId::new(13.0, egui::FontFamily::Proportional);
+    let galley = ui.painter().layout_no_wrap(label.to_string(), font, p.text);
+    let size = galley.size() + vec2(24.0, 12.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let (bg, fg) = if on {
+        (p.accent, Color32::WHITE)
+    } else if resp.hovered() {
+        (mix(p.card_hi, p.text, 0.06), p.text)
+    } else {
+        (p.card_hi, p.text)
+    };
+    ui.painter()
+        .rect_filled(rect, Rounding::same(size.y / 2.0), bg);
+    ui.painter()
+        .galley_with_override_text_color(rect.center() - galley.size() / 2.0, galley, fg);
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
 }
 
 /// Clips split into labelled groups: newest group first, newest clip first.
@@ -359,110 +464,166 @@ fn grouped(clips: Vec<Clip>, by: GroupBy) -> Vec<(String, Vec<Clip>)> {
     groups
 }
 
-fn render_groups(app: &mut ScApp, ui: &mut egui::Ui, clips: Vec<Clip>) {
-    let groups = grouped(clips, app.gallery.group);
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for (label, items) in groups {
-            let total: u64 = items.iter().map(|c| c.bytes).sum();
-            let title = egui::RichText::new(format!(
-                "{label}   \u{2022}   {} \u{2022} {}",
-                if items.len() == 1 {
-                    "1 item".to_string()
-                } else {
-                    format!("{} items", items.len())
-                },
-                size_label(total)
-            ))
-            .strong()
-            .color(theme::ACCENT);
-            egui::CollapsingHeader::new(title)
-                .id_salt((&label, app.gallery.group == GroupBy::Game))
-                .default_open(true)
-                .show(ui, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
-                        for clip in &items {
-                            card(app, ui, clip);
-                        }
-                    });
-                });
-            ui.add_space(6.0);
-        }
-    });
+fn groups(app: &mut ScApp, ui: &mut Ui, clips: Vec<Clip>) {
+    let p = pal_ui(ui);
+    let by = app.gallery.group;
+    for (label, items) in grouped(clips, by) {
+        let total: u64 = items.iter().map(|c| c.bytes).sum();
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(&label)
+                    .font(FontId::new(19.0, theme::semibold()))
+                    .color(p.text),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "{} \u{2022} {}",
+                    if items.len() == 1 {
+                        "1 item".to_string()
+                    } else {
+                        format!("{} items", items.len())
+                    },
+                    size_label(total)
+                ))
+                .size(13.0)
+                .color(p.text_2),
+            );
+        });
+        ui.add_space(6.0);
+
+        // Responsive grid: as many ~240px cards as fit.
+        let gap = 14.0;
+        let avail = ui.available_width();
+        let cols = (((avail + gap) / (240.0 + gap)).floor() as usize).max(1);
+        let w = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).floor();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(gap, 16.0);
+            for clip in &items {
+                card(app, ui, clip, w, by);
+            }
+        });
+    }
 }
 
-fn card(app: &mut ScApp, ui: &mut egui::Ui, clip: &Clip) {
-    egui::Frame::none()
-        .fill(ui.visuals().faint_bg_color)
-        .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(8.0))
-        .show(ui, |ui| {
-            ui.set_width(CARD_W);
-            let size = egui::vec2(CARD_W, THUMB_H);
-            let resp = match app.thumbs.get(&clip.path, clip.is_image) {
-                Some(tex) => ui.add(
-                    egui::Image::new(egui::load::SizedTexture::new(tex.id(), size))
-                        .fit_to_exact_size(size)
-                        .rounding(egui::Rounding::same(6.0))
-                        .sense(egui::Sense::click()),
-                ),
-                None => {
-                    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
-                    ui.painter()
-                        .rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        if clip.is_image {
-                            "\u{1F5BC}"
-                        } else {
-                            "\u{25B6}"
-                        },
-                        egui::FontId::proportional(28.0),
-                        theme::MUTED,
-                    );
-                    resp
-                }
-            };
-            if resp.on_hover_text("Open").clicked() {
-                open_path(&clip.path);
-            }
+/// A rounded preview image (or a placeholder while it loads).
+pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> egui::Response {
+    let p = pal_ui(ui);
+    let rounding = Rounding::same(10.0);
+    match app.thumbs.get(&clip.path, clip.is_image) {
+        Some(tex) => ui.add(
+            egui::Image::new(egui::load::SizedTexture::new(tex.id(), size))
+                .fit_to_exact_size(size)
+                .rounding(rounding)
+                .sense(Sense::click()),
+        ),
+        None => {
+            let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+            ui.painter().rect_filled(rect, rounding, p.card_hi);
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                if clip.is_image { "Image" } else { "Loading" },
+                FontId::new(12.0, egui::FontFamily::Proportional),
+                p.text_3,
+            );
+            resp
+        }
+    }
+}
 
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(&clip.name).size(12.0));
-            ui.colored_label(
-                theme::MUTED,
+/// A clip card: preview with hover actions, then a caption.
+fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
+    let p = pal_ui(ui);
+    let h = (w * 9.0 / 16.0).round();
+    ui.vertical(|ui| {
+        ui.set_width(w);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let resp = preview(app, ui, clip, vec2(w, h));
+        let rect = resp.rect;
+        let hovered = ui.rect_contains_pointer(rect);
+        if resp.clicked() {
+            open_path(&clip.path);
+        }
+
+        if hovered {
+            // Soft scrim, a play glyph, and the quick actions along the bottom.
+            ui.painter()
+                .rect_filled(rect, Rounding::same(10.0), Color32::from_black_alpha(70));
+            let c = rect.center();
+            ui.painter()
+                .circle_filled(c, 22.0, Color32::from_white_alpha(235));
+            if theme::has_icons(ui.ctx()) {
+                ui.painter().text(
+                    pos2(c.x + 1.0, c.y),
+                    Align2::CENTER_CENTER,
+                    if clip.is_image {
+                        icon::CLIPS
+                    } else {
+                        icon::PLAY
+                    },
+                    FontId::new(18.0, theme::icons()),
+                    Color32::from_rgb(0x1d, 0x1d, 0x1f),
+                );
+            }
+            let bar = Rect::from_min_max(
+                pos2(rect.left() + 8.0, rect.bottom() - 40.0),
+                pos2(rect.right() - 8.0, rect.bottom() - 6.0),
+            );
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bar), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if widgets::icon_button(ui, icon::DELETE, "Delete", "Move to Recycle Bin", true)
+                        .clicked()
+                    {
+                        if delete(&clip.path) {
+                            app.toast("Moved to the Recycle Bin", ToastKind::Ok);
+                        } else {
+                            app.toast("Couldn't delete that file", ToastKind::Error);
+                        }
+                        app.thumbs.forget(&clip.path);
+                        app.gallery.rescan();
+                    }
+                    if widgets::icon_button(ui, icon::FOLDER, "Show", "Show in folder", false)
+                        .clicked()
+                    {
+                        reveal(&clip.path);
+                    }
+                    if !clip.is_image
+                        && widgets::icon_button(ui, icon::CUT, "Trim", "Trim", false).clicked()
+                    {
+                        app.goto(Screen::Trim(clip.path.clone()));
+                    }
+                });
+            });
+            ui.ctx().request_repaint();
+        }
+
+        // Caption.
+        let (line1, line2) = match by {
+            GroupBy::Game => (
+                format!("{} {}", day_label(clip.modified), time_label(clip.modified)),
+                size_label(clip.bytes),
+            ),
+            GroupBy::Date => (
+                clip.game.clone(),
                 format!(
-                    "{} {}  \u{2022}  {}",
-                    day_label(clip.modified),
+                    "{}  \u{2022}  {}",
                     time_label(clip.modified),
                     size_label(clip.bytes)
                 ),
-            );
-            ui.horizontal(|ui| {
-                if ui
-                    .small_button(if clip.is_image { "View" } else { "Play" })
-                    .clicked()
-                {
-                    open_path(&clip.path);
-                }
-                if !clip.is_image && ui.small_button("Trim").clicked() {
-                    app.screen = Screen::Trim(clip.path.clone());
-                }
-                if ui.small_button("Reveal").clicked() {
-                    reveal(&clip.path);
-                }
-                if ui.small_button("Delete").clicked() {
-                    if delete(&clip.path) {
-                        app.toast(format!("deleted {}", clip.name), theme::WARN);
-                    } else {
-                        app.toast(format!("couldn't delete {}", clip.name), theme::DANGER);
-                    }
-                    app.thumbs.forget(&clip.path);
-                    app.gallery.scanned = None;
-                }
-            });
-        });
+            ),
+        };
+        ui.add(
+            egui::Label::new(
+                RichText::new(line1)
+                    .font(FontId::new(13.5, theme::semibold()))
+                    .color(p.text),
+            )
+            .truncate(),
+        );
+        ui.add(egui::Label::new(RichText::new(line2).size(12.0).color(p.text_2)).truncate());
+    });
 }
 
 #[cfg(test)]

@@ -1,91 +1,250 @@
-use crate::app::{ScApp, Screen};
-use crate::{config_io, daemon, theme, widgets};
-use sc_core::audio::AudioDevice;
-use sc_core::capture::MonitorInfo;
-use sc_core::ipc::{Request, Response};
+use crate::app::{ScApp, Screen, ToastKind};
+use crate::theme::{self, pal_ui};
+use crate::{config_io, widgets};
+use egui::{pos2, vec2, Align, Color32, FontId, Layout, RichText, Sense, Ui};
 
-const STEPS: &[&str] = &[
-    "Welcome",
-    "Monitor",
-    "Microphone",
-    "Replay",
-    "Save location",
-    "Hotkeys",
-    "Quality",
-];
+const STEPS: usize = 4;
 
 #[derive(Default)]
 pub struct WizardState {
     pub step: usize,
-    pub monitors: Vec<MonitorInfo>,
-    pub audio: Vec<AudioDevice>,
-    fetched: bool,
 }
 
-fn fetch_devices(w: &mut WizardState) {
-    if w.fetched {
-        return;
-    }
-    if let Ok(Response::Monitors { monitors: m }) = daemon::request(Request::ListMonitors) {
-        w.monitors = m;
-    }
-    if let Ok(Response::AudioDevices { devices: a }) = daemon::request(Request::ListAudioDevices) {
-        w.audio = a;
-    }
-    w.fetched = true;
+/// First-run setup: four short, calm screens. Everything it sets can be
+/// changed later in Settings.
+pub fn view(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    app.devices.ensure(&app.link);
+
+    let avail = ui.available_size();
+    let w = 540.0_f32.min(avail.x - 48.0);
+    ui.vertical_centered(|ui| {
+        ui.add_space(((avail.y - 520.0) / 2.0).clamp(18.0, 80.0));
+        ui.allocate_ui_with_layout(vec2(w, 520.0), Layout::top_down(Align::Min), |ui| {
+            progress(ui, app.wizard.step);
+            ui.add_space(26.0);
+            match app.wizard.step {
+                0 => welcome(ui),
+                1 => recording(app, ui),
+                2 => shortcut(app, ui),
+                _ => ready(app, ui),
+            }
+            ui.add_space(26.0);
+            buttons(app, ui);
+        });
+    });
+    let _ = p;
 }
 
-pub fn view(app: &mut ScApp, ui: &mut egui::Ui) {
-    fetch_devices(&mut app.wizard);
-    stepper(app, ui);
-    ui.separator();
+/// Four dots; the current one stretches.
+fn progress(ui: &mut Ui, step: usize) {
+    let p = pal_ui(ui);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for i in 0..STEPS {
+            let (w, color) = if i == step {
+                (26.0, p.accent)
+            } else if i < step {
+                (8.0, p.accent.linear_multiply(0.5))
+            } else {
+                (8.0, p.card_hi)
+            };
+            let (rect, _) = ui.allocate_exact_size(vec2(w, 8.0), Sense::hover());
+            ui.painter().rect_filled(rect, 4.0, color);
+        }
+    });
+}
+
+fn heading(ui: &mut Ui, title: &str, sub: &str) {
+    let p = pal_ui(ui);
+    ui.label(
+        RichText::new(title)
+            .font(FontId::new(32.0, theme::semibold()))
+            .color(p.text),
+    );
+    ui.add_space(4.0);
+    ui.label(RichText::new(sub).size(15.0).color(p.text_2));
+    ui.add_space(20.0);
+}
+
+fn welcome(ui: &mut Ui) {
+    let p = pal_ui(ui);
+    // App mark.
+    let (rect, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+    ui.painter().rect_filled(
+        rect,
+        egui::Rounding::same(16.0),
+        Color32::from_rgb(0x1f, 0x21, 0x2b),
+    );
+    ui.painter().circle_stroke(
+        rect.center(),
+        16.0,
+        egui::Stroke::new(4.0_f32, Color32::from_rgb(0xee, 0xf0, 0xf6)),
+    );
+    ui.painter()
+        .circle_filled(rect.center(), 8.0, Color32::from_rgb(0xe5, 0x39, 0x35));
+    ui.add_space(18.0);
+    heading(
+        ui,
+        "Welcome to SimpleClip",
+        "Never miss a great moment again.",
+    );
+    widgets::section(ui, None, |s| {
+        for (title, body) in [
+            (
+                "Always ready",
+                "It quietly keeps the last few seconds of your screen.",
+            ),
+            (
+                "One shortcut",
+                "Something amazing happens? Press a key to save it.",
+            ),
+            (
+                "Nothing to manage",
+                "No record button, no account, no uploads.",
+            ),
+        ] {
+            s.full(|ui| {
+                ui.label(
+                    RichText::new(title)
+                        .font(FontId::new(15.0, theme::semibold()))
+                        .color(p.text),
+                );
+                ui.label(RichText::new(body).size(13.5).color(p.text_2));
+            });
+        }
+    });
+}
+
+fn recording(app: &mut ScApp, ui: &mut Ui) {
+    heading(
+        ui,
+        "What should it record?",
+        "Sensible defaults are already chosen.",
+    );
+    widgets::section(ui, None, |s| {
+        if cfg!(windows) && app.devices.monitors.len() > 1 {
+            s.row("Display", None, |ui| {
+                let label = app
+                    .devices
+                    .monitors
+                    .iter()
+                    .find(|m| m.id == app.cfg.capture.monitor_id)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| "Main display".to_string());
+                egui::ComboBox::from_id_salt("wiz-monitor")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.cfg.capture.monitor_id,
+                            String::new(),
+                            "Main display",
+                        );
+                        for m in &app.devices.monitors {
+                            ui.selectable_value(
+                                &mut app.cfg.capture.monitor_id,
+                                m.id.clone(),
+                                m.name.clone(),
+                            );
+                        }
+                    });
+            });
+        }
+        s.row("Keep the last", Some("Length of each saved clip"), |ui| {
+            let mut v = app.cfg.buffer.replay_duration_secs;
+            let opts = [(15u32, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min")];
+            if opts.iter().any(|(o, _)| *o == v) {
+                widgets::segmented(ui, &mut v, &opts);
+                app.cfg.buffer.replay_duration_secs = v;
+            } else {
+                widgets::segmented(
+                    ui,
+                    &mut app.cfg.buffer.replay_duration_secs,
+                    &[(v, &format!("{v} s"))],
+                );
+            }
+        });
+        s.row("Game and app sound", None, |ui| {
+            widgets::toggle(ui, &mut app.cfg.audio.desktop_enabled);
+        });
+        s.row("Microphone", Some("Include your voice"), |ui| {
+            widgets::toggle(ui, &mut app.cfg.audio.mic_enabled);
+        });
+    });
+}
+
+fn shortcut(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    heading(
+        ui,
+        "Pick your shortcut",
+        "Press it any time to save the last moments.",
+    );
+    widgets::section(ui, None, |s| {
+        s.row("Save clip", None, |ui| {
+            widgets::hotkey_field(ui, &mut app.cfg.hotkeys.save, "wiz-hk-save");
+        });
+        s.row("Take screenshot", None, |ui| {
+            widgets::hotkey_field(ui, &mut app.cfg.hotkeys.screenshot, "wiz-hk-shot");
+        });
+    });
     ui.add_space(6.0);
-    egui::ScrollArea::vertical().show(ui, |ui| match app.wizard.step {
-        0 => step_welcome(ui),
-        1 => step_monitor(app, ui),
-        2 => step_mic(app, ui),
-        3 => step_replay(app, ui),
-        4 => step_save(app, ui),
-        5 => step_hotkeys(app, ui),
-        _ => step_quality(app, ui),
+    ui.label(
+        RichText::new("Choose something your games don't use. You can change this later.")
+            .size(13.0)
+            .color(p.text_2),
+    );
+}
+
+fn ready(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    heading(
+        ui,
+        "You're all set",
+        "SimpleClip is recording in the background.",
+    );
+    widgets::section(ui, None, |s| {
+        s.row("Save a clip", None, |ui| {
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                widgets::keycaps(ui, &app.cfg.hotkeys.save);
+            });
+        });
+        if cfg!(windows) {
+            s.row(
+                "Open at login",
+                Some("Keeps the buffer ready after a restart"),
+                |ui| {
+                    widgets::toggle(ui, &mut app.cfg.general.autostart);
+                },
+            );
+        }
     });
     ui.add_space(8.0);
-    nav_buttons(app, ui);
+    ui.label(
+        RichText::new("It lives in the system tray. Clips are saved to your Videos folder.")
+            .size(13.0)
+            .color(p.text_2),
+    );
+    let _ = pos2(0.0, 0.0);
 }
 
-fn stepper(app: &ScApp, ui: &mut egui::Ui) {
-    ui.add_space(6.0);
+fn buttons(app: &mut ScApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        for (i, name) in STEPS.iter().enumerate() {
-            let color = if i == app.wizard.step {
-                theme::ACCENT
-            } else if i < app.wizard.step {
-                theme::OK
-            } else {
-                theme::MUTED
-            };
-            ui.colored_label(color, format!("{}\u{2009}{name}", i + 1));
-            if i + 1 < STEPS.len() {
-                ui.colored_label(theme::MUTED, "\u{203A}");
-            }
-        }
-    });
-}
-
-fn nav_buttons(app: &mut ScApp, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        if app.wizard.step > 0 && ui.button("\u{2039} Back").clicked() {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        if app.wizard.step > 0 && widgets::quiet_button(ui, None, "Back").clicked() {
             app.wizard.step -= 1;
         }
-        let last = app.wizard.step == STEPS.len() - 1;
-        let label = if last { "Finish" } else { "Next \u{203A}" };
-        if ui.button(label).clicked() {
-            if last {
-                finish(app);
-            } else {
-                app.wizard.step += 1;
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let last = app.wizard.step == STEPS - 1;
+            let label = if last { "Start clipping" } else { "Continue" };
+            if widgets::primary_button(ui, None, label).clicked() {
+                if last {
+                    finish(app);
+                } else {
+                    app.wizard.step += 1;
+                }
             }
-        }
+        });
     });
 }
 
@@ -93,241 +252,9 @@ fn finish(app: &mut ScApp) {
     app.cfg.general.setup_complete = true;
     match config_io::save(&app.cfg) {
         Ok(()) => {
-            app.toast("setup saved - SimpleClip is configured", theme::OK);
             app.screen = Screen::Dashboard;
+            app.toast("You're all set", ToastKind::Ok);
         }
-        Err(e) => app.toast(format!("cannot save config: {e}"), theme::DANGER),
+        Err(e) => app.toast(format!("Couldn't save settings: {e}"), ToastKind::Error),
     }
-}
-
-fn step_welcome(ui: &mut egui::Ui) {
-    widgets::card(ui, "Welcome to SimpleClip", |ui| {
-        ui.label(
-            "SimpleClip keeps the last few seconds of your screen buffered at all times. \
-             When something worth keeping happens, you hit one hotkey and it writes the clip \
-             - no record button, no interruption.",
-        );
-        ui.add_space(6.0);
-        ui.label("This quick setup picks your monitor, audio, buffer length, and hotkey.");
-    });
-}
-
-fn step_monitor(app: &mut ScApp, ui: &mut egui::Ui) {
-    widgets::card(ui, "Which monitor should SimpleClip capture?", |ui| {
-        if app.wizard.monitors.is_empty() {
-            ui.colored_label(
-                theme::MUTED,
-                "No monitors reported yet - capture detection lands in Phase 1. \
-                 You can still finish setup; the daemon will pick the primary display.",
-            );
-        }
-        for m in app.wizard.monitors.clone() {
-            let label = format!(
-                "{}  ({}\u{00D7}{} @ {} Hz)",
-                m.name,
-                m.width,
-                m.height,
-                m.refresh_mhz / 1000
-            );
-            if ui
-                .selectable_label(app.cfg.capture.monitor_id == m.id, label)
-                .clicked()
-            {
-                app.cfg.capture.monitor_id = m.id.clone();
-            }
-        }
-        ui.add_space(8.0);
-        ui.checkbox(&mut app.cfg.capture.show_cursor, "Capture the mouse cursor");
-    });
-}
-
-fn step_mic(app: &mut ScApp, ui: &mut egui::Ui) {
-    widgets::card(ui, "Microphone", |ui| {
-        ui.label("Desktop/system audio is always captured. Add your mic too?");
-        ui.add_space(6.0);
-        ui.checkbox(&mut app.cfg.audio.mic_enabled, "Include microphone");
-        if app.cfg.audio.mic_enabled {
-            ui.add_space(6.0);
-            let mics: Vec<_> = app
-                .wizard
-                .audio
-                .iter()
-                .filter(|d| !d.is_monitor)
-                .cloned()
-                .collect();
-            if mics.is_empty() {
-                ui.colored_label(theme::MUTED, "No input devices reported yet (Phase 1).");
-            }
-            for d in mics {
-                let sel = app.cfg.audio.mic_device.as_deref() == Some(d.id.as_str());
-                if ui.selectable_label(sel, &d.name).clicked() {
-                    app.cfg.audio.mic_device = Some(d.id.clone());
-                }
-            }
-            ui.add_space(6.0);
-            ui.radio_value(
-                &mut app.cfg.audio.tracks,
-                sc_core::config::AudioTracks::Mixed,
-                "Mix into one track (most compatible)",
-            );
-            ui.radio_value(
-                &mut app.cfg.audio.tracks,
-                sc_core::config::AudioTracks::Separate,
-                "Keep desktop + mic on separate tracks (MKV)",
-            );
-        }
-    });
-}
-
-fn step_replay(app: &mut ScApp, ui: &mut egui::Ui) {
-    widgets::card(ui, "How much should SimpleClip keep?", |ui| {
-        ui.label("Replay buffer length. Longer means more RAM used.");
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            for secs in [15u32, 30, 60, 120, 300] {
-                let label = if secs < 60 {
-                    format!("{secs}s")
-                } else {
-                    format!("{}m", secs / 60)
-                };
-                if ui
-                    .selectable_label(app.cfg.buffer.replay_duration_secs == secs, label)
-                    .clicked()
-                {
-                    app.cfg.buffer.replay_duration_secs = secs;
-                }
-            }
-        });
-        ui.add_space(10.0);
-        let est = app.cfg.estimated_buffer_mb();
-        let over = est > app.cfg.buffer.ram_cap_mb;
-        let color = if over { theme::DANGER } else { theme::OK };
-        ui.colored_label(
-            color,
-            format!(
-                "Estimated buffer RAM: ~{est} MB (cap {} MB)",
-                app.cfg.buffer.ram_cap_mb
-            ),
-        );
-        ui.add(egui::Slider::new(&mut app.cfg.buffer.ram_cap_mb, 256..=8192).text("RAM cap (MB)"));
-        if over {
-            ui.colored_label(
-                theme::DANGER,
-                "Over the cap - lower the duration or raise the cap to continue.",
-            );
-        }
-    });
-}
-
-fn step_save(app: &mut ScApp, ui: &mut egui::Ui) {
-    widgets::card(ui, "Where should clips go?", |ui| {
-        let mut dir = app
-            .cfg
-            .save
-            .directory
-            .clone()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        ui.label("Save folder (blank = your Videos folder):");
-        if ui.text_edit_singleline(&mut dir).changed() {
-            app.cfg.save.directory = if dir.trim().is_empty() {
-                None
-            } else {
-                Some(dir.trim().into())
-            };
-        }
-        ui.add_space(8.0);
-        ui.label("Organize clips into subfolders:");
-        use sc_core::config::FolderPolicy::*;
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut app.cfg.save.folder_policy, PerDay, "Per day");
-            ui.selectable_value(&mut app.cfg.save.folder_policy, PerApp, "Per game/app");
-            ui.selectable_value(&mut app.cfg.save.folder_policy, Flat, "All in one folder");
-        });
-        ui.add_space(8.0);
-        use sc_core::config::Container::*;
-        ui.horizontal(|ui| {
-            ui.label("Container:");
-            ui.selectable_value(&mut app.cfg.save.container, Mp4, "MP4 (shareable)");
-            ui.selectable_value(&mut app.cfg.save.container, Mkv, "MKV (crash-safe)");
-        });
-    });
-}
-
-fn step_hotkeys(app: &mut ScApp, ui: &mut egui::Ui) {
-    widgets::card(ui, "Save hotkey", |ui| {
-        if cfg!(target_os = "linux") {
-            ui.label(
-                "On Wayland the most reliable hotkey is a compositor bind that runs the CLI. \
-                 Add these to your compositor config - SimpleClip's daemon does the rest:",
-            );
-            ui.add_space(8.0);
-            let hypr = "bind = SUPER, F10, exec, sc save\nbind = SUPER, F11, exec, sc screenshot";
-            ui.code(hypr);
-            if ui.button("Copy Hyprland binds").clicked() {
-                ui.output_mut(|o| o.copied_text = hypr.to_string());
-                app.toast("copied to clipboard", theme::OK);
-            }
-            ui.add_space(6.0);
-            ui.colored_label(
-                theme::MUTED,
-                "niri and other compositors: bind the same two commands.",
-            );
-        } else {
-            ui.label("Pick global hotkeys (registered by SimpleClip):");
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label("Save clip:");
-                widgets::hotkey_field(ui, &mut app.cfg.hotkeys.save, "wiz-hk-save");
-            });
-            ui.horizontal(|ui| {
-                ui.label("Screenshot:");
-                widgets::hotkey_field(ui, &mut app.cfg.hotkeys.screenshot, "wiz-hk-shot");
-            });
-        }
-    });
-}
-
-fn step_quality(app: &mut ScApp, ui: &mut egui::Ui) {
-    widgets::card(ui, "Quality", |ui| {
-        ui.label("Video bitrate. Higher looks better but uses more RAM and disk.");
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            for (name, kbps) in [
-                ("Low", 8_000u32),
-                ("Balanced", 20_000),
-                ("High", 40_000),
-                ("Ultra", 80_000),
-            ] {
-                if ui
-                    .selectable_label(app.cfg.encode.bitrate_kbps == kbps, name)
-                    .clicked()
-                {
-                    app.cfg.encode.bitrate_kbps = kbps;
-                }
-            }
-        });
-        ui.add_space(10.0);
-        use sc_core::encode::Codec::*;
-        ui.horizontal(|ui| {
-            ui.label("Codec:");
-            ui.selectable_value(&mut app.cfg.encode.codec, H264, "H.264");
-            ui.selectable_value(&mut app.cfg.encode.codec, Hevc, "HEVC");
-            ui.selectable_value(&mut app.cfg.encode.codec, Av1, "AV1");
-        });
-        if app.cfg.encode.codec != H264 {
-            ui.colored_label(
-                theme::WARN,
-                "HEVC/AV1 may not upload or play everywhere. H.264 is safest.",
-            );
-        }
-        ui.add_space(8.0);
-        ui.colored_label(
-            theme::MUTED,
-            format!(
-                "Estimated buffer RAM at these settings: ~{} MB",
-                app.cfg.estimated_buffer_mb()
-            ),
-        );
-    });
 }

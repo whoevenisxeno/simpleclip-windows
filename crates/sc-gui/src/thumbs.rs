@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// Preview width requested from the daemon, in pixels (shown at ~half this on
 /// a 2x display).
-pub const WIDTH: u32 = 480;
+pub const WIDTH: u32 = 640;
 /// How many previews load at once.
 const MAX_IN_FLIGHT: usize = 3;
 

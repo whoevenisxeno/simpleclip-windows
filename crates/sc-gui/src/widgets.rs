@@ -1,46 +1,412 @@
-use crate::theme;
-use egui::{Color32, RichText};
-use sc_core::capture::CaptureState;
+//! Reusable controls in the app's visual language: grouped lists, switches,
+//! segmented controls, buttons, key caps. Everything draws from the palette.
 
-pub fn state_badge(state: CaptureState) -> (&'static str, Color32) {
-    match state {
-        CaptureState::Active => ("capturing", theme::OK),
-        CaptureState::Paused => ("paused", theme::WARN),
-        CaptureState::NeedsConsent => ("needs consent", theme::WARN),
-        CaptureState::Stopped => ("stopped", theme::MUTED),
+use crate::theme::{self, mix, pal_ui};
+use egui::{
+    pos2, vec2, Align, Align2, Color32, FontId, Layout, Rect, Response, RichText, Rounding, Sense,
+    Stroke, Ui,
+};
+
+// ------------------------------------------------------------------ text --
+
+/// A page's large title with an optional quiet subtitle underneath.
+pub fn page_title(ui: &mut Ui, title: &str, subtitle: Option<&str>) {
+    let p = pal_ui(ui);
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(title)
+            .font(FontId::new(30.0, theme::semibold()))
+            .color(p.text),
+    );
+    if let Some(s) = subtitle {
+        ui.add_space(-4.0);
+        ui.label(RichText::new(s).size(14.0).color(p.text_2));
+    }
+    ui.add_space(14.0);
+}
+
+/// Small grey section label ("CAPTURE") above a group.
+pub fn caption(ui: &mut Ui, text: &str) {
+    let p = pal_ui(ui);
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .size(11.5)
+            .font(FontId::new(11.5, theme::semibold()))
+            .color(p.text_2),
+    );
+    ui.add_space(-2.0);
+}
+
+pub fn secondary(ui: &mut Ui, text: impl Into<String>) {
+    let p = pal_ui(ui);
+    ui.label(RichText::new(text.into()).size(13.0).color(p.text_2));
+}
+
+// --------------------------------------------------------------- surfaces --
+
+/// A raised, rounded surface.
+pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let p = pal_ui(ui);
+    egui::Frame::none()
+        .fill(p.card)
+        .rounding(Rounding::same(14.0))
+        .stroke(Stroke::new(1.0_f32, p.line))
+        .inner_margin(egui::Margin::same(18.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+/// An inset grouped list (like iOS/macOS Settings): rows separated by hairlines.
+pub struct Section<'a> {
+    ui: &'a mut Ui,
+    first: bool,
+}
+
+pub fn section<R>(ui: &mut Ui, header: Option<&str>, add: impl FnOnce(&mut Section) -> R) -> R {
+    if let Some(h) = header {
+        caption(ui, h);
+    }
+    let p = pal_ui(ui);
+    let out = egui::Frame::none()
+        .fill(p.card)
+        .rounding(Rounding::same(12.0))
+        .stroke(Stroke::new(1.0_f32, p.line))
+        .inner_margin(egui::Margin::symmetric(16.0, 0.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut s = Section { ui, first: true };
+            add(&mut s)
+        })
+        .inner;
+    ui.add_space(8.0);
+    out
+}
+
+impl Section<'_> {
+    fn divider(&mut self) {
+        if !self.first {
+            let p = pal_ui(self.ui);
+            let w = self.ui.available_width();
+            let (r, _) = self.ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
+            self.ui.painter().rect_filled(r, 0.0, p.line);
+        }
+        self.first = false;
+    }
+
+    /// A row: label (and optional hint) on the left, a control on the right.
+    pub fn row(&mut self, label: &str, hint: Option<&str>, control: impl FnOnce(&mut Ui)) {
+        self.divider();
+        let p = pal_ui(self.ui);
+        let h = if hint.is_some() { 58.0 } else { 48.0 };
+        let w = self.ui.available_width();
+        self.ui
+            .allocate_ui_with_layout(vec2(w, h), Layout::left_to_right(Align::Center), |ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    // Centre the text block in the row (the vertical fills its height).
+                    let text_h = if hint.is_some() { 36.0 } else { 20.0 };
+                    ui.add_space(((h - text_h) / 2.0).max(0.0));
+                    ui.label(RichText::new(label).size(14.5).color(p.text));
+                    if let Some(h) = hint {
+                        ui.label(RichText::new(h).size(12.0).color(p.text_2));
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| control(ui));
+            });
+    }
+
+    /// A full-width row for free-form content (previews, notes).
+    pub fn full(&mut self, add: impl FnOnce(&mut Ui)) {
+        self.divider();
+        self.ui.add_space(10.0);
+        add(self.ui);
+        self.ui.add_space(10.0);
     }
 }
 
-pub fn pill(ui: &mut egui::Ui, text: &str, color: Color32) {
-    let bg = color.linear_multiply(0.18);
-    egui::Frame::none()
-        .fill(bg)
-        .rounding(egui::Rounding::same(10.0))
-        .inner_margin(egui::Margin::symmetric(8.0, 2.0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).color(color).size(12.0).strong());
-        });
+// --------------------------------------------------------------- controls --
+
+/// iOS-style on/off switch.
+pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let p = pal_ui(ui);
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(44.0, 26.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let t = ui.ctx().animate_bool_with_time(resp.id, *on, 0.14);
+    let off_col = if p.dark {
+        Color32::from_rgb(0x63, 0x63, 0x66)
+    } else {
+        Color32::from_rgb(0xc7, 0xc7, 0xcc)
+    };
+    let track = mix(off_col, p.green, t);
+    ui.painter().rect_filled(rect, Rounding::same(13.0), track);
+    let knob_x = egui::lerp((rect.left() + 13.0)..=(rect.right() - 13.0), t);
+    ui.painter().circle_filled(
+        pos2(knob_x, rect.center().y + 0.5),
+        10.0,
+        Color32::from_black_alpha(40),
+    );
+    ui.painter()
+        .circle_filled(pos2(knob_x, rect.center().y), 10.0, Color32::WHITE);
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
 }
 
-/// A hotkey text field with a "Record" button: click it, press the combination,
-/// and the field is filled in as `CTRL+ALT+F10`. Typing by hand still works.
-pub fn hotkey_field(ui: &mut egui::Ui, value: &mut String, id: &str) {
+/// Pill-shaped segmented control. Returns true when the selection changed.
+pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    let p = pal_ui(ui);
+    let font = FontId::new(13.0, egui::FontFamily::Proportional);
+    let mut changed = false;
+    let widths: Vec<f32> = options
+        .iter()
+        .map(|(_, l)| {
+            ui.painter()
+                .layout_no_wrap((*l).to_string(), font.clone(), p.text)
+                .size()
+                .x
+                + 26.0
+        })
+        .collect();
+    let total: f32 = widths.iter().sum::<f32>() + 4.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(total, 30.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, Rounding::same(9.0), p.card_hi);
+    let mut x = rect.left() + 2.0;
+    for ((val, label), w) in options.iter().zip(widths) {
+        let seg = Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(w, 26.0));
+        let resp = ui.interact(seg, ui.id().with(label), Sense::click());
+        let selected = *val == *value;
+        if selected {
+            let fill = if p.dark {
+                Color32::from_rgb(0x63, 0x63, 0x66)
+            } else {
+                Color32::WHITE
+            };
+            ui.painter().rect_filled(
+                seg.translate(vec2(0.0, 0.5)),
+                Rounding::same(7.0),
+                Color32::from_black_alpha(if p.dark { 60 } else { 22 }),
+            );
+            ui.painter().rect_filled(seg, Rounding::same(7.0), fill);
+        }
+        ui.painter().text(
+            seg.center(),
+            Align2::CENTER_CENTER,
+            label,
+            font.clone(),
+            if selected { p.text } else { p.text_2 },
+        );
+        if resp.clicked() && !selected {
+            *value = *val;
+            changed = true;
+        }
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        x += w;
+    }
+    changed
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Tone {
+    Primary,
+    Quiet,
+}
+
+/// A rounded button with an optional leading icon.
+pub fn button(ui: &mut Ui, tone: Tone, glyph: Option<&str>, label: &str) -> Response {
+    let p = pal_ui(ui);
+    let font = FontId::new(14.0, egui::FontFamily::Proportional);
+    let icon_font = FontId::new(15.0, theme::icons());
+    let use_icon = glyph.is_some() && theme::has_icons(ui.ctx());
+    let text_w = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font.clone(), p.text)
+        .size()
+        .x;
+    let w = text_w + 28.0 + if use_icon { 24.0 } else { 0.0 };
+    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(40.0), 34.0), Sense::click());
+    let (bg, fg) = match tone {
+        Tone::Primary => (p.accent, Color32::WHITE),
+        Tone::Quiet => (p.card_hi, p.text),
+    };
+    let bg = if resp.is_pointer_button_down_on() {
+        mix(bg, Color32::BLACK, 0.18)
+    } else if resp.hovered() {
+        mix(
+            bg,
+            if p.dark {
+                Color32::WHITE
+            } else {
+                Color32::BLACK
+            },
+            0.08,
+        )
+    } else {
+        bg
+    };
+    ui.painter().rect_filled(rect, Rounding::same(9.0), bg);
+    let mut x = rect.left() + 14.0;
+    if use_icon {
+        ui.painter().text(
+            pos2(x + 8.0, rect.center().y),
+            Align2::CENTER_CENTER,
+            glyph.unwrap_or(""),
+            icon_font,
+            fg,
+        );
+        x += 24.0;
+    }
+    ui.painter().text(
+        pos2(x, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        fg,
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+pub fn primary_button(ui: &mut Ui, glyph: Option<&str>, label: &str) -> Response {
+    button(ui, Tone::Primary, glyph, label)
+}
+
+pub fn quiet_button(ui: &mut Ui, glyph: Option<&str>, label: &str) -> Response {
+    button(ui, Tone::Quiet, glyph, label)
+}
+
+/// A square icon-only button (falls back to a text label without the icon font).
+pub fn icon_button(ui: &mut Ui, glyph: &str, fallback: &str, tip: &str, danger: bool) -> Response {
+    let p = pal_ui(ui);
+    let has = theme::has_icons(ui.ctx());
+    let size = if has {
+        vec2(30.0, 30.0)
+    } else {
+        vec2(54.0, 28.0)
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let bg = if resp.hovered() {
+        mix(
+            p.card_hi,
+            if p.dark {
+                Color32::WHITE
+            } else {
+                Color32::BLACK
+            },
+            0.08,
+        )
+    } else {
+        p.card_hi
+    };
+    ui.painter().rect_filled(rect, Rounding::same(8.0), bg);
+    let fg = if danger { p.red } else { p.text };
+    if has {
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            glyph,
+            FontId::new(14.0, theme::icons()),
+            fg,
+        );
+    } else {
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            fallback,
+            FontId::new(12.0, egui::FontFamily::Proportional),
+            fg,
+        );
+    }
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.on_hover_text(tip)
+}
+
+/// A filled dot, used for status.
+pub fn dot(ui: &mut Ui, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), 4.5, color);
+}
+
+/// "ALT+F10" drawn as little key caps.
+pub fn keycaps(ui: &mut Ui, combo: &str) {
+    ui.spacing_mut().item_spacing.x = 5.0;
+    for part in combo.split('+').filter(|s| !s.is_empty()) {
+        keycap(ui, part);
+    }
+}
+
+/// Same, for use inside a right-to-left layout.
+pub fn keycaps_rtl(ui: &mut Ui, combo: &str) {
+    ui.spacing_mut().item_spacing.x = 5.0;
+    for part in combo.split('+').filter(|s| !s.is_empty()).rev() {
+        keycap(ui, part);
+    }
+}
+
+fn keycap(ui: &mut Ui, part: &str) {
+    let p = pal_ui(ui);
+    {
+        let label = pretty_key(part);
+        let font = FontId::new(12.5, theme::semibold());
+        let galley = ui.painter().layout_no_wrap(label, font, p.text);
+        let size = vec2((galley.size().x + 16.0).max(28.0), 26.0);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let r = Rounding::same(6.0);
+        ui.painter()
+            .rect_filled(rect.translate(vec2(0.0, 1.5)), r, p.line);
+        ui.painter().rect_filled(rect, r, p.card_hi);
+        ui.painter()
+            .galley(rect.center() - galley.size() / 2.0, galley, p.text);
+    }
+}
+
+fn pretty_key(k: &str) -> String {
+    match k.to_ascii_uppercase().as_str() {
+        "CTRL" | "CONTROL" => "Ctrl".into(),
+        "ALT" => "Alt".into(),
+        "SHIFT" => "Shift".into(),
+        "SUPER" | "WIN" | "META" => "Win".into(),
+        other => {
+            let mut c = other.chars();
+            match c.next() {
+                Some(f) if other.len() > 3 => {
+                    f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase()
+                }
+                _ => other.to_string(),
+            }
+        }
+    }
+}
+
+/// A hotkey as key caps plus a "Change" button that listens for the next combination.
+pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
+    let p = pal_ui(ui);
     let rec_id = ui.make_persistent_id(id);
     let recording = ui.data(|d| d.get_temp::<bool>(rec_id)).unwrap_or(false);
-    ui.horizontal(|ui| {
-        ui.add_enabled(
-            !recording,
-            egui::TextEdit::singleline(value).desired_width(150.0),
-        );
-        if !recording {
-            if ui.button("Record").clicked() {
-                ui.data_mut(|d| d.insert_temp(rec_id, true));
-            }
-            return;
+    let mut changed = false;
+    // Right-to-left parent: add the button first so it sits at the far right.
+    if recording {
+        let cancel = quiet_button(ui, None, "Cancel");
+        if cancel.clicked() {
+            ui.data_mut(|d| d.insert_temp(rec_id, false));
         }
-        ui.colored_label(theme::WARN, "press the combination (Esc cancels)");
-        let events = ui.input(|i| i.events.clone());
-        for ev in events {
+        ui.label(RichText::new("Press the new shortcut…").color(p.orange));
+        for ev in ui.input(|i| i.events.clone()) {
             let egui::Event::Key {
                 key,
                 pressed: true,
@@ -63,22 +429,136 @@ pub fn hotkey_field(ui: &mut egui::Ui, value: &mut String, id: &str) {
                 }
                 parts.push(key.name().to_ascii_uppercase());
                 *value = parts.join("+");
+                changed = true;
             }
             ui.data_mut(|d| d.insert_temp(rec_id, false));
         }
-    });
+        ui.ctx().request_repaint();
+    } else {
+        if quiet_button(ui, None, "Change").clicked() {
+            ui.data_mut(|d| d.insert_temp(rec_id, true));
+        }
+        // We're inside a right-to-left row: add the caps last-key-first so they
+        // read left to right, sitting just left of the button.
+        keycaps_rtl(ui, value);
+    }
+    changed
 }
 
-/// A titled card for grouping wizard/settings fields.
-pub fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+/// A tinted notice bar (success / warning / error).
+pub fn notice(ui: &mut Ui, color: Color32, text: &str) {
     egui::Frame::none()
-        .fill(ui.visuals().faint_bg_color)
-        .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(14.0))
+        .fill(color.linear_multiply(0.14))
+        .rounding(Rounding::same(10.0))
+        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
         .show(ui, |ui| {
-            ui.label(RichText::new(title).strong().size(15.0));
-            ui.add_space(8.0);
-            add(ui)
-        })
-        .inner
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(text).color(color).size(13.5));
+        });
+}
+
+/// Draw a vertical-centred row icon + label inside a rect (sidebar items).
+pub fn nav_item(ui: &mut Ui, glyph: &str, label: &str, selected: bool) -> Response {
+    let p = pal_ui(ui);
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    if selected {
+        ui.painter()
+            .rect_filled(rect, Rounding::same(8.0), p.accent.linear_multiply(0.18));
+    } else if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, Rounding::same(8.0), p.text.linear_multiply(0.06));
+    }
+    let fg = if selected { p.accent } else { p.text };
+    let mut x = rect.left() + 12.0;
+    if theme::has_icons(ui.ctx()) {
+        ui.painter().text(
+            pos2(x + 9.0, rect.center().y),
+            Align2::CENTER_CENTER,
+            glyph,
+            FontId::new(16.0, theme::icons()),
+            fg,
+        );
+        x += 28.0;
+    }
+    ui.painter().text(
+        pos2(x, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::new(
+            14.5,
+            if selected {
+                theme::semibold()
+            } else {
+                egui::FontFamily::Proportional
+            },
+        ),
+        fg,
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// Two-handle range selector over `0..=max` seconds. Returns true if either
+/// handle moved. Keeps at least `min_gap` seconds between the handles.
+pub fn range_slider(ui: &mut Ui, start: &mut f64, end: &mut f64, max: f64, min_gap: f64) -> bool {
+    let p = pal_ui(ui);
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
+    let track = Rect::from_min_max(
+        pos2(rect.left() + 8.0, rect.center().y - 4.0),
+        pos2(rect.right() - 8.0, rect.center().y + 4.0),
+    );
+    let x_of = |t: f64| track.left() + (t / max.max(0.001)) as f32 * track.width();
+    let t_of = |x: f32| (((x - track.left()) / track.width()) as f64 * max).clamp(0.0, max);
+
+    ui.painter()
+        .rect_filled(track, Rounding::same(4.0), p.card_hi);
+    let sel = Rect::from_min_max(
+        pos2(x_of(*start), track.top()),
+        pos2(x_of(*end), track.bottom()),
+    );
+    ui.painter().rect_filled(sel, Rounding::same(4.0), p.accent);
+
+    let mut changed = false;
+    for (is_start, value) in [(true, &mut *start), (false, &mut *end)] {
+        let cx = x_of(*value);
+        let handle = Rect::from_center_size(pos2(cx, rect.center().y), vec2(18.0, 38.0));
+        let id = ui
+            .id()
+            .with(if is_start { "range-start" } else { "range-end" });
+        let resp = ui.interact(handle.expand2(vec2(6.0, 4.0)), id, Sense::drag());
+        if resp.dragged() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                *value = t_of(pos.x);
+                changed = true;
+            }
+        }
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        ui.painter().rect_filled(
+            handle.translate(vec2(0.0, 1.0)),
+            Rounding::same(7.0),
+            Color32::from_black_alpha(50),
+        );
+        ui.painter()
+            .rect_filled(handle, Rounding::same(7.0), Color32::WHITE);
+        ui.painter().rect_filled(
+            Rect::from_center_size(handle.center(), vec2(2.0, 16.0)),
+            Rounding::same(1.0),
+            Color32::from_rgb(0xc7, 0xc7, 0xcc),
+        );
+    }
+    // Keep the handles in order and apart.
+    if *start > *end - min_gap {
+        // Whichever moved last gives way to the other; clamp both to the range.
+        let mid = (*start + *end) / 2.0;
+        *start = (mid - min_gap / 2.0).max(0.0);
+        *end = (*start + min_gap).min(max);
+        *start = (*end - min_gap).max(0.0);
+    }
+    changed
 }

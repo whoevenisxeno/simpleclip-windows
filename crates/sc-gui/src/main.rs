@@ -32,8 +32,8 @@ fn window_icon() -> Option<egui::IconData> {
 
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([880.0, 620.0])
-        .with_min_inner_size([640.0, 480.0])
+        .with_inner_size([1080.0, 720.0])
+        .with_min_inner_size([820.0, 560.0])
         .with_title("SimpleClip");
     if let Some(icon) = window_icon() {
         viewport = viewport.with_icon(icon);

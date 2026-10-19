@@ -1,9 +1,11 @@
-use crate::app::{ScApp, Screen};
-use crate::{daemon, theme, widgets};
+use crate::app::{ScApp, Screen, ToastKind};
+use crate::theme::{self, icon, pal_ui};
+use crate::{daemon, widgets};
+use egui::{vec2, Align, FontId, Layout, RichText, Rounding, Ui};
 use sc_core::ipc::{Request, Response};
 use std::path::{Path, PathBuf};
 
-/// Per-clip trim state, kept in the app so slider positions survive repaints.
+/// Per-clip trim state, kept in the app so handle positions survive repaints.
 #[derive(Default)]
 pub struct TrimState {
     path: PathBuf,
@@ -11,6 +13,8 @@ pub struct TrimState {
     error: Option<String>,
     start: f64,
     end: f64,
+    /// Result of the last export, shown under the controls.
+    result: Option<PathBuf>,
 }
 
 impl TrimState {
@@ -28,100 +32,122 @@ impl TrimState {
                 self.end = duration_secs;
             }
             Ok(Response::Error { message }) => self.error = Some(message),
-            Ok(_) => self.error = Some("unexpected reply from daemon".into()),
+            Ok(_) => self.error = Some("Unexpected reply from SimpleClip".into()),
             Err(e) => self.error = Some(e.to_string()),
         }
     }
 }
 
+fn clock(secs: f64) -> String {
+    let s = secs.max(0.0);
+    format!("{}:{:04.1}", (s / 60.0) as u32, s % 60.0)
+}
+
 /// Lossless trim: pick a start and end, and the daemon cuts the clip without
 /// re-encoding. The cut starts on the keyframe at or before the chosen start
 /// (keyframes are ~2 s apart), so it may begin slightly earlier.
-pub fn view(app: &mut ScApp, ui: &mut egui::Ui, path: &Path) {
+pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
+    let p = pal_ui(ui);
     if app.trim.path != path {
         app.trim.load(path);
     }
-    ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if ui.button("\u{2039} Back to gallery").clicked() {
-            app.screen = Screen::Gallery;
+        if widgets::quiet_button(ui, Some(icon::BACK), "Clips").clicked() {
+            app.goto(Screen::Gallery);
         }
-        ui.heading("Trim");
     });
-    ui.colored_label(theme::MUTED, path.display().to_string());
-    ui.separator();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("clip")
+        .to_string();
+    widgets::page_title(ui, "Trim", Some(&name));
 
-    if let Some(err) = &app.trim.error {
-        widgets::card(ui, "Can't read this clip", |ui| {
-            ui.colored_label(theme::WARN, err.clone());
-            ui.colored_label(theme::MUTED, "The daemon must be running to trim.");
-            if ui.button("Retry").clicked() {
-                app.trim.path = PathBuf::new();
-            }
-        });
+    if let Some(err) = app.trim.error.clone() {
+        widgets::notice(ui, p.red, &err);
+        ui.add_space(8.0);
+        widgets::secondary(
+            ui,
+            "SimpleClip must be running to trim. Start it from Home.",
+        );
+        ui.add_space(10.0);
+        if widgets::quiet_button(ui, Some(icon::REFRESH), "Try again").clicked() {
+            app.trim.path = PathBuf::new();
+        }
         return;
     }
     let Some(duration) = app.trim.duration else {
-        ui.label("Reading clip...");
+        widgets::secondary(ui, "Reading clip\u{2026}");
         return;
     };
 
-    widgets::card(ui, "Preview", |ui| {
-        if ui.button("Play original").clicked() {
-            super::gallery::open_path(path);
-        }
-        ui.colored_label(
-            theme::MUTED,
-            "Opens in your default player. Note the times you want, then set them below.",
-        );
-    });
-    ui.add_space(10.0);
+    // Preview frame.
+    let w = ui.available_width().min(640.0);
+    let size = vec2(w, (w * 9.0 / 16.0).round());
+    let clip = crate::screens::gallery::Clip {
+        path: path.to_path_buf(),
+        name: name.clone(),
+        modified: std::time::SystemTime::UNIX_EPOCH,
+        bytes: 0,
+        is_image: false,
+        game: String::new(),
+    };
+    let resp = crate::screens::gallery::preview(app, ui, &clip, size);
+    if resp.on_hover_text("Play the original").clicked() {
+        crate::screens::gallery::open_path(path);
+    }
+    ui.add_space(14.0);
 
-    widgets::card(ui, "In / out points", |ui| {
+    let mut export = false;
+    widgets::card(ui, |ui| {
         let t = &mut app.trim;
-        ui.add(
-            egui::Slider::new(&mut t.start, 0.0..=duration)
-                .text("start (s)")
-                .fixed_decimals(1),
-        );
-        ui.add(
-            egui::Slider::new(&mut t.end, 0.0..=duration)
-                .text("end (s)")
-                .fixed_decimals(1),
-        );
-        // Keep the range valid whichever handle moved last.
-        if t.end < t.start + 0.5 {
-            t.end = (t.start + 0.5).min(duration);
-            t.start = (t.end - 0.5).max(0.0);
-        }
-        ui.colored_label(
-            theme::MUTED,
-            format!(
-                "keeps {:.1}s of {:.1}s. Lossless: the cut starts at the keyframe at or before the start point.",
-                t.end - t.start,
-                duration
-            ),
-        );
-        ui.add_space(8.0);
-        if ui.button("Export trimmed clip").clicked() {
-            let req = Request::Trim {
-                path: path.to_path_buf(),
-                start_secs: t.start,
-                end_secs: t.end,
-            };
-            match daemon::request(req) {
-                Ok(Response::Saved {
-                    path,
-                    duration_secs,
-                }) => app.toast(
-                    format!("saved {} ({duration_secs:.1}s)", path.display()),
-                    theme::OK,
-                ),
-                Ok(Response::Error { message }) => app.toast(message, theme::WARN),
-                Ok(_) => {}
-                Err(e) => app.toast(e.to_string(), theme::DANGER),
-            }
-            app.gallery.rescan();
-        }
+        widgets::range_slider(ui, &mut t.start, &mut t.end, duration, 0.5);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(clock(t.start)).font(FontId::new(15.0, theme::semibold())));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(clock(t.end)).font(FontId::new(15.0, theme::semibold())));
+                ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{:.1} s selected", t.end - t.start)).color(p.text_2),
+                    );
+                });
+            });
+        });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            export = widgets::primary_button(ui, Some(icon::CUT), "Save trimmed copy").clicked();
+            ui.label(
+                RichText::new("The original is kept. No re-encoding, so quality is unchanged.")
+                    .size(12.5)
+                    .color(p.text_2),
+            );
+        });
     });
+    if export {
+        let req = Request::Trim {
+            path: path.to_path_buf(),
+            start_secs: app.trim.start,
+            end_secs: app.trim.end,
+        };
+        match daemon::request(req) {
+            Ok(Response::Saved {
+                path,
+                duration_secs,
+            }) => {
+                app.trim.result = Some(path);
+                app.toast(format!("Saved a {duration_secs:.1} s copy"), ToastKind::Ok);
+            }
+            Ok(Response::Error { message }) => app.toast(message, ToastKind::Warn),
+            Ok(_) => {}
+            Err(e) => app.toast(e.to_string(), ToastKind::Error),
+        }
+        app.gallery.rescan();
+    }
+    ui.add_space(8.0);
+    widgets::secondary(
+        ui,
+        "Cuts start on the nearest earlier keyframe (up to about 2 s early) to stay lossless.",
+    );
+    let _ = Rounding::ZERO;
 }
