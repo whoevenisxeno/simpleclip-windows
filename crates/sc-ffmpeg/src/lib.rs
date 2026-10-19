@@ -8,6 +8,7 @@ mod encoder;
 #[cfg(target_os = "linux")]
 mod hw;
 mod mux;
+mod player;
 mod recorder;
 mod thumb;
 mod trim;
@@ -16,6 +17,7 @@ pub use audio_encoder::AacEncoder;
 pub use convert::Bgra2Nv12;
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
+pub use player::{media_info, spawn_audio, spawn_video, MediaInfo, VideoFrame, AUDIO_RATE};
 pub use recorder::Recorder;
 pub use thumb::{frame_at, thumbnail};
 pub use trim::{probe_duration, trim_copy};

@@ -10,6 +10,7 @@ repository.workspace = true
 sc-core.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+crossbeam-channel.workspace = true
 
 # FFmpeg is linked from the system library: VA-API on Linux, and on Windows the
 # hardware encoders (NVENC / AMF / QSV) with a libx264 software fallback. Windows

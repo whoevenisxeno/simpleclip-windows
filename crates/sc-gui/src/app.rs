@@ -148,6 +148,9 @@ impl ScApp {
 
     pub fn goto(&mut self, screen: Screen) {
         self.flush_config();
+        if !matches!(screen, Screen::Trim(_)) {
+            self.trim.stop_player();
+        }
         self.screen = screen;
     }
 
@@ -424,6 +427,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("bookmarks", true),
     ("newfolder", true),
     ("trim", true),
+    ("player", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -547,7 +551,7 @@ impl ScApp {
                 "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed" | "details"
                 | "bookmarks" | "newfolder" => Screen::Gallery,
                 "settings" => Screen::Settings,
-                "trim" => {
+                "trim" | "player" => {
                     let first = self.gallery.first_video();
                     first.map(Screen::Trim).unwrap_or(Screen::Gallery)
                 }
@@ -578,13 +582,28 @@ impl ScApp {
             }
         }
         shot.waited += 1;
+        if name == "player" && shot.waited == 25 {
+            if let Some(p) = self.gallery.first_video() {
+                self.trim.play(&p);
+            }
+        }
         if shot.step == 0 && shot.waited == 1 {
             // A taller window so long pages (trim, settings) fit in one picture.
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(1080.0, 900.0)));
         }
         // Wait for previews to settle (including retries) before capturing.
         let settled = !self.thumbs.pending() || shot.waited > 1500;
-        if shot.waited >= (if name == "trim" { 220 } else { 45 }) && settled && !shot.requested {
+        if shot.waited
+            >= (if name == "trim" {
+                220
+            } else if name == "player" {
+                140
+            } else {
+                45
+            })
+            && settled
+            && !shot.requested
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             shot.requested = true;
         }

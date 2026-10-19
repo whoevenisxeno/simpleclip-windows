@@ -5,6 +5,8 @@ mod config_io;
 mod daemon;
 mod dialogs;
 mod library;
+#[cfg(windows)]
+mod player;
 mod screens;
 mod theme;
 mod thumbs;

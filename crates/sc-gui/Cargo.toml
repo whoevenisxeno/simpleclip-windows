@@ -25,6 +25,8 @@ png = "0.18.1"
 
 [target."cfg(windows)".dependencies]
 rfd = "0.17.2"
+sc-ffmpeg = { path = "../sc-ffmpeg" }
+rodio = { version = "0.20", default-features = false }
 trash = "5.2.9"
 
 [target."cfg(windows)".build-dependencies]

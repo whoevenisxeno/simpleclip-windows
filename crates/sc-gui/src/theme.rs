@@ -100,6 +100,8 @@ pub mod icon {
     pub const TAG: &str = "\u{E8EC}";
     pub const ADD: &str = "\u{E710}";
     pub const MORE: &str = "\u{E712}";
+    pub const VOLUME: &str = "\u{E767}";
+    pub const MUTE: &str = "\u{E74F}";
 }
 
 /// Load the system UI font, a semibold weight and the icon font. Anything that

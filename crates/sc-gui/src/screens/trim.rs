@@ -71,9 +71,43 @@ pub struct TrimState {
     previewing: Arc<AtomicBool>,
     /// Where the last trimmed copy was saved.
     result: Option<PathBuf>,
+    /// The temporary preview clip, once the daemon has made it.
+    preview_rx: Option<crossbeam_channel::Receiver<PathBuf>>,
+    /// The in-app player, when a clip is being watched.
+    #[cfg(windows)]
+    player: Option<crate::player::Player>,
 }
 
 impl TrimState {
+    /// Stop and close the player (leaving the screen must silence it).
+    pub fn stop_player(&mut self) {
+        #[cfg(windows)]
+        {
+            self.player = None;
+        }
+    }
+
+    /// Play `path` in the app's own player (or the system player elsewhere).
+    pub fn play(&mut self, path: &Path) {
+        #[cfg(windows)]
+        {
+            self.player = Some(crate::player::Player::open(path));
+        }
+        #[cfg(not(windows))]
+        crate::screens::gallery::open_path(path);
+    }
+
+    fn playing_in_app(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.player.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+
     /// Reset for a newly opened clip and ask the daemon for its length.
     fn load(&mut self, path: &Path) {
         *self = Self {
@@ -138,8 +172,27 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         return;
     };
 
-    // ---- the frame at the start or end of the selection ----
-    frame_preview(app, ui, path);
+    // A finished preview clip opens in the player.
+    if let Some(rx) = &app.trim.preview_rx {
+        if let Ok(clip) = rx.try_recv() {
+            app.trim.preview_rx = None;
+            app.trim.play(&clip);
+        }
+    }
+
+    // ---- the player, or the frame at the start or end of the selection ----
+    if app.trim.playing_in_app() {
+        #[cfg(windows)]
+        if let Some(pl) = app.trim.player.as_mut() {
+            pl.show(ui);
+        }
+        ui.add_space(8.0);
+        if widgets::quiet_button(ui, Some(icon::BACK), "Back to frames").clicked() {
+            app.trim.stop_player();
+        }
+    } else {
+        frame_preview(app, ui, path);
+    }
     ui.add_space(10.0);
 
     // ---- the selection ----
@@ -240,7 +293,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
                         app.goto(Screen::Gallery);
                     }
                     if widgets::quiet_button(ui, Some(icon::PLAY), "Play").clicked() {
-                        crate::screens::gallery::open_path(&r);
+                        app.trim.play(&r);
                     }
                 });
             });
@@ -361,7 +414,7 @@ fn frame_preview(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         egui::Color32::WHITE,
     );
     if resp.on_hover_text("Play the original").clicked() {
-        crate::screens::gallery::open_path(path);
+        t.play(path);
     }
 
     ui.add_space(8.0);
@@ -385,9 +438,11 @@ fn start_preview(app: &mut ScApp, ctx: egui::Context, path: &Path) {
         end_secs: app.trim.end,
         dest: TrimDest::Temp,
     };
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    app.trim.preview_rx = Some(rx);
     std::thread::spawn(move || {
         if let Ok(Response::Saved { path, .. }) = daemon::request(req) {
-            crate::screens::gallery::open_path(&path);
+            let _ = tx.send(path);
         }
         flag.store(false, Ordering::Relaxed);
         ctx.request_repaint();
