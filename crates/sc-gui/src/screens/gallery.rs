@@ -842,6 +842,12 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
 pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> egui::Response {
     let p = pal_ui(ui);
     let rounding = Rounding::same(10.0);
+    // Off-screen cards take their space but load nothing until scrolled into view.
+    let slot = egui::Rect::from_min_size(ui.cursor().min, size);
+    if !ui.is_rect_visible(slot) {
+        let (_, resp) = ui.allocate_exact_size(size, Sense::click());
+        return resp;
+    }
     match app.thumbs.get(&clip.path, clip.is_image) {
         Some(tex) => ui.add(
             egui::Image::new(egui::load::SizedTexture::new(tex.id(), size))

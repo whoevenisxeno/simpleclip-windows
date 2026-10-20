@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Widest picture the decoder produces.
-const MAX_WIDTH: u32 = 1280;
+const MAX_WIDTH: u32 = 960;
 /// The output device asks for samples a little before it plays them, so the
 /// count of samples handed over runs ahead of what is audible. Subtract it.
 const AUDIO_LAG: f64 = 0.09;

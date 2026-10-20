@@ -2,6 +2,17 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.7.0
+
+### Added
+- More quality settings: a Low preset (4 Mbps), a Bitrate box for exact control (1 to 100 Mbps), and a Resolution option (Native, 1440p, 1080p, 720p, 480p) that scales the picture down before encoding for smaller files and less work.
+
+### Changed
+- "Lower CPU use" is now on by default, and is switched on once for existing installs (turn it off again in Settings, Quality, if you prefer). It falls back by itself if your encoder does not support it. It is skipped when a lower resolution is chosen, because the GPU path cannot resize.
+- Smaller installer and download: FFmpeg's avfilter and avdevice libraries (about 40 MB unpacked) are no longer shipped, because SimpleClip never used them.
+- The background service queues fewer pictures between capture and encode, which lowers its memory use.
+- The app window uses less memory: previews are smaller and only loaded when scrolled into view, the least recently shown are dropped, everything is released while the window is minimized, and the built-in player decodes at a smaller size.
+
 ## 4.6.0
 
 ### Added

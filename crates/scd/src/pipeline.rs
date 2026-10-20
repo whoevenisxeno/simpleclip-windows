@@ -77,6 +77,19 @@ impl AudioMode {
 
 const AUDIO_KBPS: u32 = 160;
 
+/// The picture size after applying the optional height cap, keeping the aspect
+/// ratio and even sides.
+fn output_size(w: u32, h: u32, max_h: Option<u32>) -> (u32, u32) {
+    match max_h {
+        Some(m) if m < h => {
+            let oh = m & !1;
+            let ow = ((w as u64 * oh as u64 / h as u64) as u32) & !1;
+            (ow.max(2), oh.max(2))
+        }
+        _ => (w, h),
+    }
+}
+
 fn ring_bytes(kbps: u64, secs: u64) -> usize {
     let bytes = (kbps * 1000 / 8) * secs;
     (bytes + bytes / 2) as usize
@@ -84,7 +97,7 @@ fn ring_bytes(kbps: u64, secs: u64) -> usize {
 
 impl Pipeline {
     pub fn start(cfg: &Config) -> Result<Self> {
-        let (vtx, vrx) = crossbeam_channel::bounded(8);
+        let (vtx, vrx) = crossbeam_channel::bounded(4);
         // Audio is tiny; never drop it (gaps cause audible artifacts), unlike video.
         let (atx, arx) = crossbeam_channel::unbounded();
         let mode = AudioMode::from_config(cfg);
@@ -100,7 +113,10 @@ impl Pipeline {
             mic_device: cfg.audio.mic_device.clone().unwrap_or_default(),
         };
         let cap = sc_capture::start(vtx, audio_tx, &opts).context("starting capture")?;
-        let (width, height) = (cap.width, cap.height);
+        let (src_w, src_h) = (cap.width, cap.height);
+        // Optionally shrink the picture (Settings, Quality, Resolution). Never enlarges.
+        let (width, height) = output_size(src_w, src_h, cfg.encode.max_height);
+        let scaling = (width, height) != (src_w, src_h);
         let paused = Arc::new(AtomicBool::new(false));
         let fps = cfg.capture.target_fps.max(1);
         let secs = cfg.buffer.replay_duration_secs as u64;
@@ -111,7 +127,8 @@ impl Pipeline {
             fps,
             cfg.encode.bitrate_kbps,
             cfg.encode.gop_frames,
-            cfg.encode.gpu_convert,
+            // The GPU colour path can not resize, so scaling uses the CPU path.
+            cfg.encode.gpu_convert && !scaling,
         )
         .context("opening video encoder")?;
         let encoder_kind = venc.kind();
@@ -126,7 +143,7 @@ impl Pipeline {
         let mut conv = if gpu_convert {
             None
         } else {
-            Some(Bgra2Nv12::new(width, height).context("converter")?)
+            Some(Bgra2Nv12::new_scaled(src_w, src_h, width, height).context("converter")?)
         };
         let vring = video_ring.clone();
         let vpaused = paused.clone();
@@ -137,7 +154,7 @@ impl Pipeline {
         // upstream; the capture pacer drops frames if both stages fall behind.
         // Items are (pixels, timestamp_ns, stride); stride 0 means packed NV12,
         // otherwise raw BGRA rows for GPU conversion.
-        let (ntx, nrx) = crossbeam_channel::bounded::<(Vec<u8>, i64, usize)>(4);
+        let (ntx, nrx) = crossbeam_channel::bounded::<(Vec<u8>, i64, usize)>(2);
         let video_convert = std::thread::Builder::new()
             .name("sc-vconv".into())
             .spawn(move || {

@@ -15,7 +15,10 @@ use std::time::{Duration, Instant};
 
 /// Preview width requested from the daemon, in pixels (shown at ~half this on
 /// a 2x display).
-pub const WIDTH: u32 = 640;
+pub const WIDTH: u32 = 480;
+/// Most textures kept at once; the least recently shown are dropped beyond this and
+/// simply reload (from the daemon's disk cache) if you scroll back to them.
+const MAX_TEXTURES: usize = 36;
 /// How many previews load at once.
 const MAX_IN_FLIGHT: usize = 3;
 /// Attempts before giving up on a preview.
@@ -36,6 +39,9 @@ pub struct Thumbs {
     rx: crossbeam_channel::Receiver<Done>,
     in_flight: usize,
     ctx: egui::Context,
+    /// Frame counter, and the frame each preview was last asked for.
+    frame: u64,
+    used: HashMap<PathBuf, u64>,
 }
 
 /// 1.5 s, 3 s, 6 s, ... capped at 20 s.
@@ -53,11 +59,17 @@ impl Thumbs {
             rx,
             in_flight: 0,
             ctx,
+            frame: 0,
+            used: HashMap::new(),
         }
     }
 
     /// Turn finished loads into textures. Call once per frame.
     pub fn poll(&mut self) {
+        self.frame += 1;
+        if self.frame & 127 == 0 {
+            self.trim_to(MAX_TEXTURES);
+        }
         while let Ok((path, img)) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
             let tries = self.tries.get(&path).copied().unwrap_or(0) + 1;
@@ -85,6 +97,7 @@ impl Thumbs {
     /// The preview texture for `path`, starting (or retrying) a background load
     /// when needed. `None` while loading or if it can't be made.
     pub fn get(&mut self, path: &Path, is_image: bool) -> Option<&egui::TextureHandle> {
+        self.used.insert(path.to_path_buf(), self.frame);
         let start = match self.map.get(path) {
             None => true,
             Some(State::Loading) | Some(State::Ready(_)) => false,
@@ -150,9 +163,30 @@ impl Thumbs {
         matches!(self.map.get(path), Some(State::Failed { tries, .. }) if *tries >= MAX_TRIES)
     }
 
+    /// Keep at most `keep` loaded previews, dropping the least recently shown.
+    pub fn trim_to(&mut self, keep: usize) {
+        let mut ready: Vec<(u64, PathBuf)> = self
+            .map
+            .iter()
+            .filter(|(_, s)| matches!(s, State::Ready(_)))
+            .map(|(p, _)| (self.used.get(p).copied().unwrap_or(0), p.clone()))
+            .collect();
+        if ready.len() <= keep {
+            return;
+        }
+        // Oldest first; drop until only `keep` remain.
+        ready.sort();
+        let drop = ready.len() - keep;
+        for (_, p) in ready.into_iter().take(drop) {
+            self.map.remove(&p);
+            self.used.remove(&p);
+        }
+    }
+
     /// Drop a cached preview (e.g. after the file is deleted).
     pub fn forget(&mut self, path: &Path) {
         self.map.remove(path);
+        self.used.remove(path);
         self.tries.remove(path);
     }
 }

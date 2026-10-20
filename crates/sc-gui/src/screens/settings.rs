@@ -211,8 +211,53 @@ fn quality(app: &mut ScApp, ui: &mut Ui) {
                 choice(
                     ui,
                     &mut app.cfg.encode.bitrate_kbps,
-                    &[(8_000, "Standard"), (20_000, "High"), (40_000, "Ultra")],
+                    &[
+                        (4_000, "Low"),
+                        (8_000, "Standard"),
+                        (20_000, "High"),
+                        (40_000, "Ultra"),
+                    ],
                     " kbps",
+                );
+            },
+        );
+        s.row(
+            "Bitrate",
+            Some("Fine tune it: higher is sharper and bigger"),
+            |ui| {
+                let mut mbps = app.cfg.encode.bitrate_kbps as f64 / 1000.0;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut mbps)
+                            .range(1.0..=100.0)
+                            .speed(0.25)
+                            .max_decimals(1)
+                            .suffix(" Mbps"),
+                    )
+                    .changed()
+                {
+                    app.cfg.encode.bitrate_kbps = (mbps * 1000.0).round() as u32;
+                }
+            },
+        );
+        s.row(
+            "Resolution",
+            Some(if app.cfg.encode.max_height.is_some() {
+                "Scaled down on the CPU, so 'Lower CPU use' is skipped"
+            } else {
+                "Native keeps your screen's own size"
+            }),
+            |ui| {
+                widgets::segmented(
+                    ui,
+                    &mut app.cfg.encode.max_height,
+                    &[
+                        (None, "Native"),
+                        (Some(1440), "1440p"),
+                        (Some(1080), "1080p"),
+                        (Some(720), "720p"),
+                        (Some(480), "480p"),
+                    ],
                 );
             },
         );

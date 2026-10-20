@@ -113,7 +113,10 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 foreach ($exe in 'scd.exe', 'sc.exe', 'sc-gui.exe') {
     Copy-Item "$root\target\release\$exe" $stage
 }
-Copy-Item "$FfmpegDir\bin\*.dll" $stage
+# Only the FFmpeg libraries SimpleClip links (no avfilter or avdevice): about 40 MB smaller.
+foreach ($lib in 'avcodec', 'avformat', 'avutil', 'swresample', 'swscale') {
+    Copy-Item "$FfmpegDir\bin\$lib-*.dll" $stage
+}
 Copy-Item "$root\LICENSE" $stage
 Copy-Item "$PSScriptRoot\install.ps1", "$PSScriptRoot\uninstall.ps1" $stage
 if ($Variant -eq 'gpl') {

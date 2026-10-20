@@ -84,6 +84,9 @@ pub struct EncodeSettings {
     /// Let the GPU encoder do the BGRA to YUV colour conversion instead of the CPU
     /// (Windows, NVENC/AMF/QuickSync). Lowers CPU use; falls back automatically.
     pub gpu_convert: bool,
+    /// Scale the picture down so it is at most this many pixels tall (`None` keeps the
+    /// screen's own size). Smaller pictures mean smaller files and less work.
+    pub max_height: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,6 +128,8 @@ pub struct GeneralSettings {
     pub star_prompt_done: bool,
     /// Earliest time (seconds since 1970) the star reminder may show next.
     pub star_prompt_next: Option<u64>,
+    /// Which settings migrations have run (so each runs only once on an old file).
+    pub settings_version: Option<u32>,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -185,7 +190,8 @@ impl Default for EncodeSettings {
             codec: Codec::H264,
             bitrate_kbps: 8_000,
             gop_frames: 120,
-            gpu_convert: false,
+            gpu_convert: true,
+            max_height: None,
         }
     }
 }
@@ -248,6 +254,7 @@ impl Default for GeneralSettings {
             popup_animation: true,
             star_prompt_done: false,
             star_prompt_next: None,
+            settings_version: None,
             notify: true,
             post_save_hook: None,
             autostart: true,
@@ -271,7 +278,13 @@ impl Config {
             return Err(Error::ConfigMissing(path.to_path_buf()));
         }
         let text = std::fs::read_to_string(path)?;
-        let cfg: Config = toml::from_str(&text).map_err(|e| Error::Config(e.to_string()))?;
+        let mut cfg: Config = toml::from_str(&text).map_err(|e| Error::Config(e.to_string()))?;
+        if cfg.general.settings_version.is_none() {
+            // 1: "Lower CPU use" became the default. Applied once to older files.
+            cfg.encode.gpu_convert = true;
+            cfg.general.settings_version = Some(1);
+            let _ = cfg.save(path);
+        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -307,6 +320,11 @@ impl Config {
             return Err(Error::Config(format!(
                 "buffer.replay-duration-secs exceeds hard cap of {MAX_REPLAY_SECS}s"
             )));
+        }
+        if let Some(h) = self.encode.max_height {
+            if !(240..=4320).contains(&h) {
+                return Err(Error::Config("encode.max-height must be 240..=4320".into()));
+            }
         }
         if self.capture.target_fps == 0 || self.capture.target_fps > 240 {
             return Err(Error::Config("capture.target-fps must be 1..=240".into()));

@@ -206,6 +206,10 @@ impl eframe::App for ScApp {
             self.link = link;
         }
         self.thumbs.poll();
+        // A minimized window shows nothing, so give the preview memory back.
+        if ctx.input(|i| i.viewport().minimized) == Some(true) {
+            self.thumbs.trim_to(0);
+        }
         self.autosave(ctx);
 
         if self.screen == Screen::Wizard {
@@ -639,7 +643,13 @@ impl ScApp {
         }
         if shot.step == 0 && shot.waited == 1 {
             // A taller window so long pages (trim, settings) fit in one picture.
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(1080.0, 900.0)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+                1080.0,
+                std::env::var("SC_GUI_SHOT_HEIGHT")
+                    .ok()
+                    .and_then(|h| h.parse().ok())
+                    .unwrap_or(900.0),
+            )));
         }
         // Wait for previews to settle (including retries) before capturing.
         let settled = !self.thumbs.pending() || shot.waited > 1500;

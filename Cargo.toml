@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg", "crates/sc-capture"]
 
 [workspace.package]
-version = "4.6.0"
+version = "4.7.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -25,7 +25,7 @@ notify = "8"
 toml = "0.8"
 directories = "6"
 crossbeam-channel = "0.5"
-ffmpeg-next = "8.1"
+ffmpeg-next = { version = "8.1", default-features = false, features = ["codec", "format", "software-resampling", "software-scaling"] }
 
 [profile.release]
 lto = "thin"
