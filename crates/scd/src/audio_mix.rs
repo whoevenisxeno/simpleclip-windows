@@ -27,6 +27,18 @@ fn frames_to_ns(frames: i64) -> i64 {
     (frames as i128 * 1_000_000_000 / RATE as i128) as i64
 }
 
+/// Scale samples by a volume in percent (100 leaves them alone). Louder than
+/// full scale is clipped rather than wrapped.
+pub fn apply_volume(samples: &mut [f32], percent: u32) {
+    if percent == 100 {
+        return;
+    }
+    let gain = percent as f32 / 100.0;
+    for s in samples {
+        *s = (*s * gain).clamp(-1.0, 1.0);
+    }
+}
+
 /// One audio stream's position on the timeline: how many frames it has produced
 /// since the shared origin.
 #[derive(Default)]
@@ -173,6 +185,21 @@ mod tests {
             timestamp: Timestamp::from_nanos(ts_ms * 1_000_000),
             samples: vec![v; frames * CHANNELS],
         }
+    }
+
+    #[test]
+    fn volume_scales_and_clips() {
+        let mut s = vec![0.5, -0.5, 0.8];
+        apply_volume(&mut s, 100);
+        assert_eq!(s, vec![0.5, -0.5, 0.8]);
+        apply_volume(&mut s, 50);
+        assert_eq!(s, vec![0.25, -0.25, 0.4]);
+        apply_volume(&mut s, 200);
+        assert_eq!(s, vec![0.5, -0.5, 0.8]);
+        apply_volume(&mut s, 200);
+        assert_eq!(s[2], 1.0);
+        apply_volume(&mut s, 0);
+        assert!(s.iter().all(|v| *v == 0.0));
     }
 
     #[test]

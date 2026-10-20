@@ -66,6 +66,24 @@ pub struct AudioSettings {
     pub mic_device: Option<String>,
     pub mic_enabled: bool,
     pub tracks: AudioTracks,
+    /// Loudness of game and app sound in clips, in percent (100 = unchanged).
+    pub desktop_volume: u32,
+    /// Loudness of the microphone in clips, in percent (100 = unchanged).
+    pub mic_volume: u32,
+}
+
+/// The loudest a volume slider may go, in percent.
+pub const MAX_VOLUME_PERCENT: u32 = 200;
+
+impl AudioSettings {
+    /// Same capture setup, ignoring the two volumes. A volume change applies to the
+    /// running recorder on the fly; anything else here needs it restarted.
+    pub fn same_capture_as(&self, other: &Self) -> bool {
+        let mut a = self.clone();
+        a.desktop_volume = other.desktop_volume;
+        a.mic_volume = other.mic_volume;
+        a == *other
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +126,8 @@ pub struct SaveSettings {
 pub struct HotkeySettings {
     pub save: String,
     pub screenshot: String,
+    /// Brings the SimpleClip window up (empty turns it off).
+    pub open: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -179,6 +199,8 @@ impl Default for AudioSettings {
             // wizard and Settings let you turn it off.
             mic_enabled: cfg!(windows),
             tracks: AudioTracks::Mixed,
+            desktop_volume: 100,
+            mic_volume: 100,
         }
     }
 }
@@ -224,11 +246,13 @@ impl Default for HotkeySettings {
             Self {
                 save: "ALT+F10".to_string(),
                 screenshot: "ALT+F9".to_string(),
+                open: "ALT+F8".to_string(),
             }
         } else {
             Self {
                 save: "SUPER+F10".to_string(),
                 screenshot: "SUPER+F9".to_string(),
+                open: "SUPER+F8".to_string(),
             }
         }
     }
@@ -363,6 +387,13 @@ impl Config {
         if self.capture.target_fps == 0 || self.capture.target_fps > 240 {
             return Err(Error::Config("capture.target-fps must be 1..=240".into()));
         }
+        if self.audio.desktop_volume > MAX_VOLUME_PERCENT
+            || self.audio.mic_volume > MAX_VOLUME_PERCENT
+        {
+            return Err(Error::Config(format!(
+                "audio volumes must be 0..={MAX_VOLUME_PERCENT}"
+            )));
+        }
         let est = self.estimated_buffer_mb();
         if est > self.buffer.ram_cap_mb {
             return Err(Error::Config(format!(
@@ -396,6 +427,33 @@ mod tests {
         let mut cfg = Config::default();
         cfg.buffer.replay_duration_secs = MAX_REPLAY_SECS + 1;
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn volumes_default_to_unchanged_and_are_capped() {
+        let mut cfg = Config::default();
+        assert_eq!((cfg.audio.desktop_volume, cfg.audio.mic_volume), (100, 100));
+        cfg.audio.mic_volume = MAX_VOLUME_PERCENT + 1;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn volume_change_is_not_a_capture_change() {
+        let a = AudioSettings::default();
+        let mut b = a.clone();
+        b.mic_volume = 40;
+        assert!(a.same_capture_as(&b));
+        b.mic_enabled = !b.mic_enabled;
+        assert!(!a.same_capture_as(&b));
+    }
+
+    #[test]
+    fn old_config_without_new_fields_still_loads() {
+        let cfg: Config =
+            toml::from_str("[hotkeys]\nsave = \"CTRL+G\"\n[audio]\nmic-enabled = false\n").unwrap();
+        assert_eq!(cfg.hotkeys.save, "CTRL+G");
+        assert_eq!(cfg.audio.mic_volume, 100);
+        assert!(!cfg.hotkeys.open.is_empty());
     }
 
     #[test]

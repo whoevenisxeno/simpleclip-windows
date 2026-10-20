@@ -1,4 +1,4 @@
-use crate::audio_mix::{Mixer, Track};
+use crate::audio_mix::{apply_volume, Mixer, Track};
 use anyhow::{bail, Context, Result};
 use sc_core::audio::{AudioBuffer, AudioRole};
 use sc_core::buffer::PacketRing;
@@ -6,7 +6,7 @@ use sc_core::config::{AudioTracks, Config};
 use sc_core::encode::EncodedPacket;
 use sc_ffmpeg::{AacEncoder, Bgra2Nv12, CodecParams, Encoder, Mp4Muxer};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -24,10 +24,27 @@ pub struct Pipeline {
     pub height: u32,
     pub encoder: sc_core::encode::EncoderKind,
     paused: Arc<AtomicBool>,
+    volumes: Arc<Volumes>,
     _capture: sc_capture::CaptureHandle,
     _video_convert: JoinHandle<()>,
     _video_encode: JoinHandle<()>,
     _audio_encode: JoinHandle<()>,
+}
+
+/// How loud each source goes into the clip, in percent. Shared with the audio
+/// thread so the sliders in Settings take effect without restarting capture.
+struct Volumes {
+    desktop: AtomicU32,
+    mic: AtomicU32,
+}
+
+impl Volumes {
+    fn of(&self, role: AudioRole) -> u32 {
+        match role {
+            AudioRole::Desktop => self.desktop.load(Ordering::Relaxed),
+            AudioRole::Microphone => self.mic.load(Ordering::Relaxed),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -230,10 +247,14 @@ impl Pipeline {
                 })
             })
             .collect();
-        let (tracks, apaused) = (audio_tracks.clone(), paused.clone());
+        let volumes = Arc::new(Volumes {
+            desktop: AtomicU32::new(cfg.audio.desktop_volume),
+            mic: AtomicU32::new(cfg.audio.mic_volume),
+        });
+        let (tracks, apaused, avolumes) = (audio_tracks.clone(), paused.clone(), volumes.clone());
         let audio_encode = std::thread::Builder::new()
             .name("sc-aenc".into())
-            .spawn(move || audio_loop(arx, tracks, mode, apaused))
+            .spawn(move || audio_loop(arx, tracks, mode, apaused, avolumes))
             .context("audio encode thread")?;
 
         tracing::info!(
@@ -252,6 +273,7 @@ impl Pipeline {
             height,
             encoder: encoder_kind,
             paused,
+            volumes,
             _capture: cap,
             _video_convert: video_convert,
             _video_encode: video_encode,
@@ -269,14 +291,16 @@ fn audio_loop(
     tracks: Vec<Arc<AudioTrack>>,
     mode: AudioMode,
     paused: Arc<AtomicBool>,
+    volumes: Arc<Volumes>,
 ) {
     let mut encoders: Vec<Option<AacEncoder>> = tracks.iter().map(|_| None).collect();
     let mut lanes: Vec<Track> = tracks.iter().map(|_| Track::default()).collect();
     let mut mixer = Mixer::default();
-    for buf in rx.iter() {
+    for mut buf in rx.iter() {
         if buf.sample_rate == 0 || paused.load(Ordering::Relaxed) {
             continue;
         }
+        apply_volume(&mut buf.samples, volumes.of(buf.role));
         match mode {
             AudioMode::Mixed => {
                 mixer.push(&buf);
@@ -369,6 +393,13 @@ fn merge_write(
 }
 
 impl Pipeline {
+    /// Change how loud each source is in clips from now on (audio already in the
+    /// buffer keeps the level it was recorded at).
+    pub fn set_volumes(&self, desktop: u32, mic: u32) {
+        self.volumes.desktop.store(desktop, Ordering::Relaxed);
+        self.volumes.mic.store(mic, Ordering::Relaxed);
+    }
+
     /// Snapshot the last `secs` seconds of video and audio and mux them together.
     /// Cloning happens under the lock; muxing runs after, so capture is not stalled.
     pub fn save(&self, secs: u32, path: &Path) -> Result<f64> {

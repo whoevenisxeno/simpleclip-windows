@@ -50,12 +50,17 @@ impl Daemon {
         let needs_restart = {
             let old = self.config.read().unwrap();
             old.capture != new.capture
-                || old.audio != new.audio
+                || !old.audio.same_capture_as(&new.audio)
                 || old.buffer != new.buffer
                 || old.encode != new.encode
         };
         #[cfg(windows)]
         crate::win::set_autostart(new.general.autostart);
+        // The volume sliders reach a running recorder directly, no restart.
+        #[cfg(any(target_os = "linux", windows))]
+        if let Some(p) = self.pipeline.lock().unwrap().as_ref() {
+            p.set_volumes(new.audio.desktop_volume, new.audio.mic_volume);
+        }
         self.set_config(new);
         if needs_restart && self.pipeline.lock().unwrap().is_some() {
             tracing::info!("capture settings changed; restarting pipeline");
