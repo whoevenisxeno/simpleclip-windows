@@ -7,6 +7,7 @@ mod dialogs;
 mod library;
 #[cfg(windows)]
 mod player;
+mod presets;
 mod screens;
 mod star;
 mod theme;
