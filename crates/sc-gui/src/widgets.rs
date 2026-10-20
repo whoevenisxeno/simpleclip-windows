@@ -715,7 +715,7 @@ pub fn theme_picker(ui: &mut Ui, current: &mut String, compact: bool) -> bool {
             } else if resp.hovered() {
                 (p.text_3, 1.5)
             } else {
-                (p.line, 1.0)
+                (p.line, 1.0_f32)
             };
             ui.painter()
                 .rect_stroke(tile, 9.0, Stroke::new(width, stroke));

@@ -30,6 +30,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     quality(app, ui);
     saving(app, ui);
     shortcuts(app, ui);
+    appearance(app, ui);
     general(app, ui);
     ui.add_space(18.0);
     notifications(app, ui);
@@ -733,4 +734,30 @@ fn reset_section(app: &mut ScApp, ui: &mut Ui) {
         app.goto(crate::app::Screen::Wizard);
     }
     ui.data_mut(|d| d.insert_temp(id, asking));
+}
+
+/// Colour theme and accent. Picking one applies at once.
+fn appearance(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    widgets::caption(ui, "Appearance");
+    widgets::card(ui, |ui| {
+        ui.label(
+            RichText::new("Theme")
+                .font(egui::FontId::new(14.0, theme::semibold()))
+                .color(p.text),
+        );
+        ui.add_space(4.0);
+        widgets::theme_picker(ui, &mut app.cfg.general.theme, false);
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Accent color")
+                    .font(egui::FontId::new(14.0, theme::semibold()))
+                    .color(p.text),
+            );
+            ui.add_space(8.0);
+            widgets::accent_picker(ui, &mut app.cfg.general.accent);
+        });
+    });
+    ui.add_space(18.0);
 }

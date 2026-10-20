@@ -60,6 +60,8 @@ pub struct ScApp {
     pub star: crate::star::StarPrompt,
     /// The logo shown in the sidebar, loaded on first use.
     logo: Option<egui::TextureHandle>,
+    /// The theme and accent last applied, to notice a change in Settings or the setup guide.
+    applied_look: (String, Option<String>),
     /// Looks for newer releases and installs them.
     #[cfg(windows)]
     pub updater: crate::update::Updater,
@@ -119,7 +121,18 @@ impl ScApp {
             cfg.hotkeys = Default::default();
             cfg.audio.mic_enabled = true;
             cfg.general.setup_complete = true;
+            // SC_GUI_THEME lets a review run render any theme.
+            if let Ok(t) = std::env::var("SC_GUI_THEME") {
+                cfg.general.theme = t;
+            }
         }
+        // The chosen colour theme (the default follows Windows light and dark).
+        crate::themes::set_theme(
+            &cc.egui_ctx,
+            &cfg.general.theme,
+            cfg.general.accent.as_deref(),
+        );
+        let applied_look = (cfg.general.theme.clone(), cfg.general.accent.clone());
         // After an update, say so once. (Not during the design-review run.)
         let mut updated_from = None;
         #[cfg(windows)]
@@ -159,6 +172,7 @@ impl ScApp {
             sheet: Default::default(),
             star: Default::default(),
             logo: None,
+            applied_look,
             #[cfg(windows)]
             updater: Default::default(),
             shot,
@@ -228,6 +242,15 @@ impl ScApp {
 
 impl eframe::App for ScApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply a theme or accent change as soon as it is made.
+        let look = (
+            self.cfg.general.theme.clone(),
+            self.cfg.general.accent.clone(),
+        );
+        if look != self.applied_look {
+            crate::themes::set_theme(ctx, &look.0, look.1.as_deref());
+            self.applied_look = look;
+        }
         while let Ok(link) = self.link_rx.try_recv() {
             // The daemon came back (it restarted, or was updating): retry failed previews now.
             if matches!(self.link, Link::Disconnected) && matches!(link, Link::Connected(_)) {
@@ -492,6 +515,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
+    ("wizard4", true),
     ("settings", true),
     ("home", false),
     ("clips", false),
@@ -602,6 +626,7 @@ impl ScApp {
                 "wizard1" => 0,
                 "wizard2" => 1,
                 "wizard3" => 2,
+                "wizard4" => 3,
                 _ => self.wizard.step,
             };
             self.shot_demo_data();

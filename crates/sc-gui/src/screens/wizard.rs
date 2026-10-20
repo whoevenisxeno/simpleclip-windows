@@ -3,7 +3,7 @@ use crate::theme::{self, pal_ui};
 use crate::{config_io, widgets};
 use egui::{pos2, vec2, Align, Color32, FontId, Layout, RichText, Sense, Ui};
 
-const STEPS: usize = 4;
+const STEPS: usize = 5;
 
 #[derive(Default)]
 pub struct WizardState {
@@ -25,8 +25,9 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             ui.add_space(26.0);
             match app.wizard.step {
                 0 => welcome(ui),
-                1 => recording(app, ui),
-                2 => shortcut(app, ui),
+                1 => look(app, ui),
+                2 => recording(app, ui),
+                3 => shortcut(app, ui),
                 _ => ready(app, ui),
             }
             ui.add_space(26.0);
@@ -113,6 +114,27 @@ fn welcome(ui: &mut Ui) {
                 ui.label(RichText::new(body).size(13.5).color(p.text_2));
             });
         }
+    });
+}
+
+/// Pick a colour theme; it applies as you choose.
+fn look(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    heading(
+        ui,
+        "Choose a look",
+        "Pick the colors you like. You can change this any time in Settings.",
+    );
+    widgets::theme_picker(ui, &mut app.cfg.general.theme, true);
+    ui.add_space(16.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Accent color")
+                .font(FontId::new(14.0, theme::semibold()))
+                .color(p.text),
+        );
+        ui.add_space(8.0);
+        widgets::accent_picker(ui, &mut app.cfg.general.accent);
     });
 }
 
