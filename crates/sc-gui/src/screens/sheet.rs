@@ -44,6 +44,8 @@ impl SheetState {
 
 /// Draw whichever sheet is open. Call once per frame, after the main content.
 pub fn show(app: &mut ScApp, ctx: &egui::Context) {
+    // A compression can be started from a card's menu with no sheet open.
+    poll_compress(app, ctx);
     if app.sheet.folder_dialog.is_some() {
         folder_dialog(app, ctx);
     } else if app.sheet.manage {
@@ -138,7 +140,6 @@ fn text_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> egui::Res
 // ------------------------------------------------------------------ details --
 
 fn details(app: &mut ScApp, ctx: &egui::Context) {
-    poll_compress(app, ctx);
     let Some(path) = app.sheet.open.clone() else {
         return;
     };
@@ -374,11 +375,48 @@ fn after_file_change(app: &mut ScApp, old: &std::path::Path, new: &std::path::Pa
     app.library.rekey(old, new);
     app.thumbs.forget(old);
     app.gallery.rescan();
-    app.sheet.open = Some(new.to_path_buf());
-    app.sheet.loaded_for = Some(new.to_path_buf());
+    // Follow the clip if its details are what is open (not when a card's menu did it).
+    if app.sheet.open.as_deref() == Some(old) {
+        app.sheet.open = Some(new.to_path_buf());
+        app.sheet.loaded_for = Some(new.to_path_buf());
+    }
 }
 
-fn delete_clip(app: &mut ScApp, clip: &Clip) {
+/// Start shrinking a clip to fit `mb` MB from a card's menu.
+pub fn compress_clip(app: &mut ScApp, clip: &Clip, mb: u32) {
+    if app.sheet.compress_job.is_some() {
+        app.toast("Already compressing a clip", ToastKind::Warn);
+        return;
+    }
+    app.sheet.compress_mb = mb;
+    start_compress(app, clip);
+    app.toast(format!("Compressing to fit {mb} MB..."), ToastKind::Ok);
+}
+
+/// Move a clip into `dest` from a card's menu.
+pub fn move_clip_to(app: &mut ScApp, clip: &Clip, dest: &std::path::Path) {
+    let root = app.cfg.save.resolve_dir();
+    match library::move_clip(&clip.path, dest) {
+        Ok(new) => {
+            after_file_change(app, &clip.path, &new);
+            app.toast(
+                format!("Moved to {}", gallery::folder_label(dest, &root)),
+                ToastKind::Ok,
+            );
+        }
+        Err(e) => app.toast(e, ToastKind::Error),
+    }
+}
+
+/// Ask for a new folder and move a clip into it.
+pub fn move_clip_to_new_folder(app: &mut ScApp, clip: &Clip) {
+    app.sheet.folder_dialog = Some(FolderDialog {
+        name: String::new(),
+        move_clip: Some(clip.path.clone()),
+    });
+}
+
+pub(crate) fn delete_clip(app: &mut ScApp, clip: &Clip) {
     if gallery::delete(&clip.path) {
         app.library.forget(&clip.path);
         app.toast("Moved to the Recycle Bin", ToastKind::Ok);

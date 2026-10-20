@@ -1,4 +1,5 @@
 use crate::app::{ScApp, Screen, ToastKind};
+use crate::screens::sheet;
 use crate::theme::{self, icon, mix, pal_ui};
 use crate::widgets;
 use egui::{
@@ -945,6 +946,116 @@ fn is_default_name(path: &Path) -> bool {
         .is_some_and(|s| s == "sc" || s.starts_with("sc-"))
 }
 
+/// The right-click menu on a clip: everything the card's buttons and the details
+/// sheet can do, without opening anything first.
+fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
+    ui.set_min_width(190.0);
+    let item = |ui: &mut Ui, label: &str| ui.add(egui::Button::new(label).frame(false)).clicked();
+
+    if item(ui, "Play") {
+        open_path(&clip.path);
+        ui.close_menu();
+    }
+    if !clip.is_image && item(ui, "Trim") {
+        app.goto(Screen::Trim(clip.path.clone()));
+        ui.close_menu();
+    }
+    ui.separator();
+    if item(ui, "Copy file") {
+        match copy_file(&clip.path) {
+            Ok(()) => app.toast(
+                "Copied. Paste it in Discord or any chat with Ctrl+V",
+                ToastKind::Ok,
+            ),
+            Err(e) => app.toast(e, ToastKind::Warn),
+        }
+        ui.close_menu();
+    }
+    if !clip.is_image {
+        ui.menu_button("Compress for Discord", |ui| {
+            for mb in [10u32, 25, 50] {
+                if item(ui, &format!("Fit {mb} MB")) {
+                    sheet::compress_clip(app, clip, mb);
+                    ui.close_menu();
+                }
+            }
+        });
+    }
+    if item(ui, "Show in folder") {
+        reveal(&clip.path);
+        ui.close_menu();
+    }
+    ui.separator();
+    if item(ui, "Rename, notes and details...") {
+        app.sheet.open_clip(clip.path.clone());
+        ui.close_menu();
+    }
+    ui.menu_button("Bookmarks", |ui| {
+        let all = app.library.bookmarks.clone();
+        let mine: Vec<u32> = app
+            .library
+            .bookmarks_of(&clip.path)
+            .iter()
+            .map(|b| b.id)
+            .collect();
+        for b in &all {
+            let mark = if mine.contains(&b.id) {
+                "\u{2713}  "
+            } else {
+                "     "
+            };
+            if item(ui, &format!("{mark}{}", b.name)) {
+                app.library.toggle_bookmark(&clip.path, b.id);
+            }
+        }
+        if !all.is_empty() {
+            ui.separator();
+        }
+        if item(
+            ui,
+            if all.is_empty() {
+                "Create a bookmark..."
+            } else {
+                "Edit bookmarks..."
+            },
+        ) {
+            app.sheet.manage = true;
+            ui.close_menu();
+        }
+    });
+    ui.menu_button("Move to folder", |ui| {
+        let root = app.cfg.save.resolve_dir();
+        let here = clip
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        for f in app.gallery.folder_choices(&root) {
+            let label = folder_label(&f, &root);
+            let current = f == here;
+            let text = if current {
+                format!("\u{2713}  {label}")
+            } else {
+                format!("     {label}")
+            };
+            if item(ui, &text) && !current {
+                sheet::move_clip_to(app, clip, &f);
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        if item(ui, "New folder...") {
+            sheet::move_clip_to_new_folder(app, clip);
+            ui.close_menu();
+        }
+    });
+    ui.separator();
+    if item(ui, "Delete") {
+        sheet::delete_clip(app, clip);
+        ui.close_menu();
+    }
+}
+
 /// A clip card: preview with hover actions, then a caption, bookmarks and note.
 fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
     let p = pal_ui(ui);
@@ -954,6 +1065,7 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
         ui.spacing_mut().item_spacing.y = 5.0;
         let resp = preview(app, ui, clip, vec2(w, h));
         let rect = resp.rect;
+        resp.context_menu(|ui| clip_menu(app, ui, clip));
         let hovered = ui.rect_contains_pointer(rect);
         if resp.clicked() {
             open_path(&clip.path);
@@ -1082,13 +1194,19 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
             .truncate()
             .sense(Sense::click()),
         );
+        title.context_menu(|ui| clip_menu(app, ui, clip));
         if title
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
             app.sheet.open_clip(clip.path.clone());
         }
-        ui.add(egui::Label::new(RichText::new(line2).size(12.0).color(p.text_2)).truncate());
+        ui.add(
+            egui::Label::new(RichText::new(line2).size(12.0).color(p.text_2))
+                .truncate()
+                .sense(Sense::click()),
+        )
+        .context_menu(|ui| clip_menu(app, ui, clip));
 
         // Bookmarks (click one to browse by it) and the start of the note.
         let marks: Vec<(String, [u8; 3])> = app
