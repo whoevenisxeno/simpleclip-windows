@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.9.3
+
+### Changed
+- Logo: the ring is now white instead of blue, and made of five longer dashes instead of many short ones, so it stays clear at small sizes (tray icon, taskbar, file icon).
+
 ## 4.9.2
 
 ### Fixed
