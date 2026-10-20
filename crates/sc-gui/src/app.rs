@@ -525,12 +525,12 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("details", false),
     ("trim", false),
     // These leave a dialog on screen, so they come last.
+    ("share", true),
     ("update", true),
     ("uninstall", true),
     ("update-download", true),
     ("update-forced", true),
     ("star", true),
-    ("share", true),
 ];
 
 impl Shot {
