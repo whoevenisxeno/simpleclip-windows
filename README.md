@@ -16,7 +16,7 @@ job and does not need an account.
 
 - **Always-on replay buffer.** Windows Graphics Capture for video, WASAPI for sound, encoded on the
   GPU the whole time and kept in RAM.
-- **Hotkeys.** `Alt+F10` saves a clip, `Alt+F9` saves a screenshot, `Alt+F8` brings the SimpleClip window up. All three can be changed in Settings.
+- **Hotkeys.** `Alt+F10` saves a clip, `Alt+F9` saves a screenshot, `Alt+F8` brings the SimpleClip window up. All three can be changed in Settings, and any key can be used, the backtick included.
 - **Hardware encoding.** It tries NVENC (NVIDIA), AMF (AMD), QuickSync (Intel), then software x264,
   then Media Foundation, and uses the first one that works.
 - **Audio.** Game and app sound, plus an optional microphone. The mic can be mixed into one track

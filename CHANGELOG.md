@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.13.0
+
+### Added
+- Any key can now be a shortcut, on its own or with Ctrl, Alt, Shift and Win: the backtick (`) and the other punctuation keys, arrows, Tab, Enter, Backspace, Caps Lock, the numpad, the media and volume keys, F1 to F24, and keys with no name (saved as `VK_xx`). The recorder in Settings picks them up, and a shortcut with a plain typing key such as ` stops that key typing in other programs while SimpleClip runs. On its own Esc still cancels the recording, but Ctrl+Esc and the like can be recorded. The recorder also waits until every key is let go before it listens, so pressing Enter or Space to click Change does not become the shortcut.
+
 ## 4.12.0
 
 ### Added
