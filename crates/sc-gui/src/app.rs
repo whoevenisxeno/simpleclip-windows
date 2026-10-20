@@ -62,6 +62,8 @@ pub struct ScApp {
     logo: Option<egui::TextureHandle>,
     /// The theme and accent last applied, to notice a change in Settings or the setup guide.
     applied_look: (String, Option<String>),
+    /// The user's own saved presets (the built-in ones live in `presets`).
+    pub presets: Vec<crate::presets::Preset>,
     /// Looks for newer releases and installs them.
     #[cfg(windows)]
     pub updater: crate::update::Updater,
@@ -173,6 +175,7 @@ impl ScApp {
             star: Default::default(),
             logo: None,
             applied_look,
+            presets: crate::presets::load(),
             #[cfg(windows)]
             updater: Default::default(),
             shot,

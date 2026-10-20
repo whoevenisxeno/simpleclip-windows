@@ -25,6 +25,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
 
     app.devices.ensure(&app.link);
 
+    presets_section(app, ui);
     recording(app, ui);
     audio(app, ui);
     quality(app, ui);
@@ -759,5 +760,105 @@ fn appearance(app: &mut ScApp, ui: &mut Ui) {
             widgets::accent_picker(ui, &mut app.cfg.general.accent);
         });
     });
+    ui.add_space(18.0);
+}
+
+/// One line describing a preset, for its row.
+fn preset_summary(p: &crate::presets::Preset) -> String {
+    format!(
+        "{} fps, {} Mbps, {} s replay{}",
+        p.fps,
+        p.bitrate_kbps / 1000,
+        p.replay_secs,
+        match p.max_height {
+            Some(h) => format!(", {h}p"),
+            None => String::new(),
+        }
+    )
+}
+
+/// Built-in and saved recording presets: apply one, or save the current settings.
+fn presets_section(app: &mut ScApp, ui: &mut Ui) {
+    use crate::presets;
+    let built_in = presets::built_in();
+    let user = app.presets.clone();
+    let name_id = egui::Id::new("preset-name");
+    let mut apply: Option<presets::Preset> = None;
+    let mut delete: Option<usize> = None;
+    let mut save_as: Option<String> = None;
+
+    section(ui, Some("Presets"), |s| {
+        s.row(
+            "Preset",
+            Some("Quick recording setups. Choosing one changes the settings below."),
+            |ui| {
+                egui::ComboBox::from_id_salt("preset-choice")
+                    .selected_text("Choose...")
+                    .width(180.0)
+                    .show_ui(ui, |ui| {
+                        for p in built_in.iter().chain(user.iter()) {
+                            if ui
+                                .selectable_label(
+                                    false,
+                                    format!("{}  ({})", p.name, preset_summary(p)),
+                                )
+                                .clicked()
+                            {
+                                apply = Some(p.clone());
+                            }
+                        }
+                    });
+            },
+        );
+        s.row(
+            "Save as a preset",
+            Some("Keeps the current frame rate, quality, sound and replay length"),
+            |ui| {
+                let mut name: String = ui.data(|d| d.get_temp(name_id)).unwrap_or_default();
+                if widgets::quiet_button(ui, None, "Save").clicked() && !name.trim().is_empty() {
+                    save_as = Some(name.trim().to_string());
+                    name.clear();
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut name)
+                        .hint_text("Preset name")
+                        .desired_width(150.0),
+                );
+                ui.data_mut(|d| d.insert_temp(name_id, name));
+            },
+        );
+        for (i, p) in user.iter().enumerate() {
+            s.row(&p.name, Some(&preset_summary(p)), |ui| {
+                if widgets::quiet_button(ui, None, "Delete").clicked() {
+                    delete = Some(i);
+                }
+                if widgets::quiet_button(ui, None, "Apply").clicked() {
+                    apply = Some(p.clone());
+                }
+            });
+        }
+    });
+
+    if let Some(p) = apply {
+        presets::apply(&p, &mut app.cfg);
+        app.toast(format!("Applied {}", p.name), crate::app::ToastKind::Ok);
+    }
+    if let Some(name) = save_as {
+        presets::upsert(&mut app.presets, presets::capture(&app.cfg, &name));
+        match presets::save(&app.presets) {
+            Ok(()) => app.toast(format!("Saved {name}"), crate::app::ToastKind::Ok),
+            Err(e) => app.toast(
+                format!("Couldn't save the preset: {e}"),
+                crate::app::ToastKind::Error,
+            ),
+        }
+    }
+    if let Some(i) = delete {
+        if i < app.presets.len() {
+            let gone = app.presets.remove(i);
+            let _ = presets::save(&app.presets);
+            app.toast(format!("Deleted {}", gone.name), crate::app::ToastKind::Ok);
+        }
+    }
     ui.add_space(18.0);
 }
