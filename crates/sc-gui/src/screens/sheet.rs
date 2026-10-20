@@ -21,6 +21,11 @@ pub struct SheetState {
     new_color: usize,
     pub folder_dialog: Option<FolderDialog>,
     error: Option<String>,
+    /// Size chosen for "Compress for Discord" (0 until chosen, meaning 10 MB).
+    compress_mb: u32,
+    compress_open: bool,
+    /// A compression running in the background, and what it will report.
+    compress_job: Option<crossbeam_channel::Receiver<Result<(PathBuf, f64), String>>>,
 }
 
 pub struct FolderDialog {
@@ -133,6 +138,7 @@ fn text_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> egui::Res
 // ------------------------------------------------------------------ details --
 
 fn details(app: &mut ScApp, ctx: &egui::Context) {
+    poll_compress(app, ctx);
     let Some(path) = app.sheet.open.clone() else {
         return;
     };
@@ -195,6 +201,34 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                             ToastKind::Ok,
                         ),
                         Err(e) => app.toast(e, ToastKind::Warn),
+                    }
+                }
+                if !clip.is_image {
+                    let busy = app.sheet.compress_job.is_some();
+                    let label = if busy {
+                        "Compressing..."
+                    } else {
+                        "Compress for Discord..."
+                    };
+                    if widgets::quiet_button(ui, Some(icon::SHARE), label).clicked() && !busy {
+                        app.sheet.compress_open = !app.sheet.compress_open;
+                    }
+                    if app.sheet.compress_open && !busy {
+                        if app.sheet.compress_mb == 0 {
+                            app.sheet.compress_mb = 10;
+                        }
+                        widgets::segmented(
+                            ui,
+                            &mut app.sheet.compress_mb,
+                            &[(10, "10 MB"), (25, "25 MB"), (50, "50 MB")],
+                        );
+                        widgets::secondary(
+                            ui,
+                            "Saves a smaller copy that fits the upload limit. The original stays.",
+                        );
+                        if widgets::primary_button(ui, None, "Compress").clicked() {
+                            start_compress(app, &clip);
+                        }
                     }
                 }
                 if widgets::quiet_button(ui, Some(icon::FOLDER), "Show in folder").clicked() {
@@ -599,6 +633,61 @@ fn make_folder(app: &mut ScApp) {
             // Keep the dialog open so the name can be fixed.
             app.sheet.error = Some(e);
             app.sheet.folder_dialog = Some(d);
+        }
+    }
+}
+
+/// Start shrinking a clip in the background (the daemon does the work).
+fn start_compress(app: &mut ScApp, clip: &Clip) {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let req = sc_core::ipc::Request::Compress {
+        path: clip.path.clone(),
+        target_mb: app.sheet.compress_mb.max(1),
+    };
+    app.sheet.compress_job = Some(rx);
+    app.sheet.compress_open = false;
+    std::thread::spawn(move || {
+        let result = match crate::daemon::request(req) {
+            Ok(sc_core::ipc::Response::Saved {
+                path,
+                duration_secs,
+            }) => Ok((path, duration_secs)),
+            Ok(sc_core::ipc::Response::Error { message }) => Err(message),
+            Ok(_) => Err("unexpected reply from SimpleClip".to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        let _ = tx.send(result);
+    });
+}
+
+/// Report a finished compression, and keep repainting while one is running.
+fn poll_compress(app: &mut ScApp, ctx: &egui::Context) {
+    let Some(rx) = &app.sheet.compress_job else {
+        return;
+    };
+    match rx.try_recv() {
+        Ok(Ok((path, _))) => {
+            app.sheet.compress_job = None;
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            app.gallery.rescan();
+            app.toast(
+                format!("Saved {name} ({})", gallery::size_label(size)),
+                ToastKind::Ok,
+            );
+        }
+        Ok(Err(message)) => {
+            app.sheet.compress_job = None;
+            app.toast(message, ToastKind::Warn);
+        }
+        Err(crossbeam_channel::TryRecvError::Empty) => {
+            ctx.request_repaint_after(std::time::Duration::from_millis(300));
+        }
+        Err(crossbeam_channel::TryRecvError::Disconnected) => {
+            app.sheet.compress_job = None;
         }
     }
 }
