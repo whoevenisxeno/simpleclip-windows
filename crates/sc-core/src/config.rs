@@ -132,6 +132,10 @@ pub struct GeneralSettings {
     pub settings_version: Option<u32>,
     /// The app version that last ran, so an update can say "Updated to ...".
     pub last_version: Option<String>,
+    /// Colour theme id ("system" follows Windows light/dark; the app knows the others).
+    pub theme: String,
+    /// Optional accent colour as `#rrggbb`, drawn over the theme's own.
+    pub accent: Option<String>,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -258,6 +262,8 @@ impl Default for GeneralSettings {
             star_prompt_next: None,
             settings_version: None,
             last_version: None,
+            theme: "system".to_string(),
+            accent: None,
             notify: true,
             post_save_hook: None,
             autostart: true,
