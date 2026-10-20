@@ -116,7 +116,11 @@ pub fn parse_release(json: &[u8], current: &str) -> Result<Option<Release>, Stri
                 .map(|h| h.to_ascii_lowercase()),
         }))
     };
-    let (app, full, dlls) = (find("-app.zip")?, find("-win64.zip")?, find("-dlls.sha256")?);
+    let (app, full, dlls) = (
+        find("-app.zip")?,
+        find("-win64.zip")?,
+        find("-dlls.sha256")?,
+    );
     if app.is_none() && full.is_none() {
         return Err("this release has no update package attached".into());
     }
