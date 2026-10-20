@@ -37,6 +37,9 @@ pub struct ClipMeta {
     /// This clip is the result of a trim (so it can be listed apart from originals).
     #[serde(default)]
     pub trimmed: bool,
+    /// This clip is a size-limited copy made by Compress for Discord.
+    #[serde(default)]
+    pub compressed: bool,
     /// The game a clip came from, remembered when it is renamed (a custom name no
     /// longer says which game it was).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,6 +51,7 @@ impl ClipMeta {
         self.bookmarks.is_empty()
             && self.note.trim().is_empty()
             && !self.trimmed
+            && !self.compressed
             && self.game.is_none()
     }
 }
@@ -220,6 +224,12 @@ impl Library {
         self.meta(path).is_some_and(|m| m.trimmed) || has_trim_suffix(path)
     }
 
+    /// Is this clip a compressed copy? Remembered when the app made it; copies made by
+    /// `sc compress` are recognised by their `-10mb` style name.
+    pub fn is_compressed(&self, path: &Path) -> bool {
+        self.meta(path).is_some_and(|m| m.compressed) || has_compress_suffix(path)
+    }
+
     /// The game remembered for this clip, if any.
     pub fn game(&self, path: &Path) -> Option<&str> {
         self.meta(path).and_then(|m| m.game.as_deref())
@@ -238,6 +248,14 @@ impl Library {
             return;
         }
         self.meta_mut(path).trimmed = trimmed;
+        self.prune(path);
+    }
+
+    pub fn set_compressed(&mut self, path: &Path, compressed: bool) {
+        if self.meta(path).is_some_and(|m| m.compressed) == compressed {
+            return;
+        }
+        self.meta_mut(path).compressed = compressed;
         self.prune(path);
     }
 
@@ -291,6 +309,24 @@ fn has_trim_suffix(path: &Path) -> bool {
         return false;
     };
     stem[i + 5..].chars().all(|c| c.is_ascii_digit())
+}
+
+/// Does the name end the way `Compress for Discord` names things: `-10mb`, or `-10mb-2`
+/// when that name was taken?
+fn has_compress_suffix(path: &Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let is_size = |p: &str| {
+        p.strip_suffix("mb")
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    };
+    let parts: Vec<&str> = stem.split('-').collect();
+    match parts.as_slice() {
+        [.., last] if is_size(last) => true,
+        [.., size, n] => is_size(size) && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()),
+        _ => false,
+    }
 }
 
 /// Make a user-typed name safe as a Windows file name (without the extension).
@@ -421,6 +457,22 @@ mod tests {
         lib.set_note(p, "hi");
         lib.set_note(p, "");
         assert!(lib.meta(p).is_none());
+    }
+
+    #[test]
+    fn compressed_clips_are_flagged_and_recognised_by_name() {
+        let mut lib = Library::default();
+        let a = Path::new("V/a.mp4");
+        assert!(!lib.is_compressed(a));
+        lib.set_compressed(a, true);
+        assert!(lib.is_compressed(a));
+        lib.set_compressed(a, false);
+        assert!(!lib.is_compressed(a));
+        assert!(lib.is_compressed(Path::new("V/sc-game-20261019-10mb.mp4")));
+        assert!(lib.is_compressed(Path::new("V/sc-game-20261019-trim-25mb-2.mp4")));
+        assert!(!lib.is_compressed(Path::new("V/sc-game-20261019.mp4")));
+        assert!(!lib.is_compressed(Path::new("V/my-2-clips.mp4")));
+        assert!(!lib.is_compressed(Path::new("V/mb.mp4")));
     }
 
     #[test]

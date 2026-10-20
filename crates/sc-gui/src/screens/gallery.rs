@@ -18,12 +18,14 @@ pub struct Clip {
     pub game: String,
 }
 
-/// Which clips to list: your originals, the trimmed copies, or everything.
+/// Which clips to list: your originals, the trimmed copies, the compressed copies, or
+/// everything.
 #[derive(Default, Clone, Copy, PartialEq)]
 enum ViewKind {
     #[default]
     Originals,
     Trimmed,
+    Compressed,
     All,
 }
 
@@ -147,7 +149,7 @@ pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
     app.gallery
         .clips
         .iter()
-        .filter(|c| !app.library.is_trimmed(&c.path))
+        .filter(|c| !app.library.is_trimmed(&c.path) && !app.library.is_compressed(&c.path))
         .take(n)
         .cloned()
         .collect()
@@ -504,13 +506,20 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     app.gallery.refresh(&dirs, &app.library);
 
     // Split the listing by kind so trimmed copies aren't mixed in with originals.
+    // A compressed copy of a trimmed clip counts as compressed only.
+    let compressed_count = app
+        .gallery
+        .clips
+        .iter()
+        .filter(|c| app.library.is_compressed(&c.path))
+        .count();
     let trimmed_count = app
         .gallery
         .clips
         .iter()
-        .filter(|c| app.library.is_trimmed(&c.path))
+        .filter(|c| app.library.is_trimmed(&c.path) && !app.library.is_compressed(&c.path))
         .count();
-    let originals_count = app.gallery.clips.len() - trimmed_count;
+    let originals_count = app.gallery.clips.len() - trimmed_count - compressed_count;
     let kind = app.gallery.kind;
     let in_kind: Vec<Clip> = app
         .gallery
@@ -518,8 +527,13 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         .iter()
         .filter(|c| match kind {
             ViewKind::All => true,
-            ViewKind::Trimmed => app.library.is_trimmed(&c.path),
-            ViewKind::Originals => !app.library.is_trimmed(&c.path),
+            ViewKind::Trimmed => {
+                app.library.is_trimmed(&c.path) && !app.library.is_compressed(&c.path)
+            }
+            ViewKind::Compressed => app.library.is_compressed(&c.path),
+            ViewKind::Originals => {
+                !app.library.is_trimmed(&c.path) && !app.library.is_compressed(&c.path)
+            }
         })
         .cloned()
         .collect();
@@ -548,6 +562,10 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             &[
                 (ViewKind::Originals, &format!("Clips  {originals_count}")),
                 (ViewKind::Trimmed, &format!("Trimmed  {trimmed_count}")),
+                (
+                    ViewKind::Compressed,
+                    &format!("Compressed  {compressed_count}"),
+                ),
                 (ViewKind::All, "All"),
             ],
         );
@@ -589,6 +607,8 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
                 ui,
                 if kind == ViewKind::Trimmed {
                     "No trimmed clips yet. Open a clip and choose Trim."
+                } else if kind == ViewKind::Compressed {
+                    "No compressed clips yet. Open a clip and choose Compress for Discord."
                 } else {
                     "Nothing here yet."
                 },
@@ -930,10 +950,17 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
             open_path(&clip.path);
         }
 
-        // A small corner label marks clips that came from a trim.
-        if app.library.is_trimmed(&clip.path) {
+        // A small corner label marks clips that came from a trim or a compression.
+        let badge = if app.library.is_compressed(&clip.path) {
+            Some("Compressed")
+        } else if app.library.is_trimmed(&clip.path) {
+            Some("Trimmed")
+        } else {
+            None
+        };
+        if let Some(badge) = badge {
             let galley = ui.painter().layout_no_wrap(
-                "Trimmed".to_string(),
+                badge.to_string(),
                 FontId::new(11.0, theme::semibold()),
                 Color32::WHITE,
             );
