@@ -107,30 +107,7 @@ pub fn parse_hotkey(spec: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
 }
 
 fn parse_key(k: &str) -> Option<u32> {
-    if let Some(n) = k.strip_prefix('F').and_then(|n| n.parse::<u32>().ok()) {
-        if (1..=24).contains(&n) {
-            return Some(0x6F + n); // VK_F1 = 0x70
-        }
-    }
-    if k.len() == 1 {
-        let c = k.as_bytes()[0];
-        if c.is_ascii_uppercase() || c.is_ascii_digit() {
-            return Some(c as u32); // VK codes for A-Z / 0-9 are their ASCII values
-        }
-    }
-    Some(match k {
-        "SPACE" => 0x20,
-        "PRINT" | "PRINTSCREEN" | "PRTSC" => 0x2C,
-        "PAUSE" => 0x13,
-        "INSERT" | "INS" => 0x2D,
-        "DELETE" | "DEL" => 0x2E,
-        "HOME" => 0x24,
-        "END" => 0x23,
-        "PAGEUP" | "PGUP" => 0x21,
-        "PAGEDOWN" | "PGDN" => 0x22,
-        "SCROLLLOCK" => 0x91,
-        _ => return None,
-    })
+    sc_core::keys::vk_from_name(k)
 }
 
 /// Own the global hotkeys on a dedicated message-loop thread. Bindings follow
@@ -640,6 +617,14 @@ mod tests {
         assert_eq!(parse_hotkey("F9"), Some((HOT_KEY_MODIFIERS(0), 0x78)));
         assert_eq!(parse_hotkey("ALT+PRINT").unwrap().1, 0x2C);
         assert_eq!(parse_hotkey("CTRL+7").unwrap().1, b'7' as u32);
+    }
+
+    #[test]
+    fn parses_any_key() {
+        assert_eq!(parse_hotkey("`"), Some((HOT_KEY_MODIFIERS(0), 0xC0)));
+        assert_eq!(parse_hotkey("CTRL+ALT+LEFT").unwrap().1, 0x25);
+        assert_eq!(parse_hotkey("ALT+VK_FA").unwrap().1, 0xFA);
+        assert_eq!(parse_hotkey("SHIFT+-").unwrap().1, 0xBD);
     }
 
     #[test]
