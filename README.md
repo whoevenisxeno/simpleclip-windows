@@ -35,6 +35,14 @@ job and does not need an account.
 - **Trimmed clips stay separate.** They get their own view and a small badge, and they are left out
   of the normal clip list and the Recent row on Home. You can also send them to a folder of your
   choice.
+- **Share a clip.** "Copy file" puts the clip on the clipboard, so pasting into Discord or a
+  chat attaches it. "Compress for Discord" makes a smaller copy that fits 10, 25 or 50 MB, scaling
+  the picture down only as far as it must. The original stays.
+- **Presets.** Three built in (Balanced, Light, Sharp) and your own. A preset holds the frame rate,
+  quality, sound and replay length, and nothing about your displays, devices, folders or theme.
+- **Themes.** Ten colour themes plus the default, which follows Windows light and dark. You pick one
+  in the setup guide and can change it, and add an accent colour, in Settings.
+- **Frame rates** of 30, 60, 120, 144, 165 and 240.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
   an "Update available" button appears at the top right, shows the changelog, and updates in place
@@ -70,11 +78,25 @@ Trimmed clips only:
 
 ![Trimmed clips view](docs/screenshots/clips-trimmed-dark.png)
 
+### Themes
+
+The default follows Windows. Pick another in the setup guide or in Settings:
+
+![Choose a look in the setup guide](docs/screenshots/setup-look.png)
+
+![Appearance settings](docs/screenshots/settings-appearance.png)
+
+![Ember theme](docs/screenshots/home-ember.png)
+
+![Sand theme](docs/screenshots/clips-sand.png)
+
 ### Clip details
 
 Rename, move to a folder, add bookmarks, write a note:
 
-![Clip details](docs/screenshots/details-dark.png)
+![Clip details](docs/screenshots/details-actions.png)
+
+The buttons on the left include Copy file and Compress for Discord.
 
 Create and recolour bookmarks:
 
@@ -158,9 +180,15 @@ saved C:\Users\you\Videos\SimpleClip\rainbowsix\sc-rainbowsix-20261019.png (0.0s
 
 > sc trim <clip> --start 2 --end 6
 saved ...\sc-rainbowsix-20261019-182103-trim.mp4 (4.0s)
+
+> sc compress <clip> --mb 4
+saved ...\sample-4mb.mp4 (15.9s)
 ```
 
-Other commands: `pause`, `resume`, `quit`, `monitors`, `audio-devices`, `thumbnail`.
+A 15.5 MB clip compressed with `--mb 4` came out at 3.3 MB, scaled from 1080p to 540p, with its
+sound and length unchanged.
+
+Other commands: `pause`, `resume`, `quit`, `monitors`, `audio-devices`, `thumbnail`, `test-notification`.
 
 ## Default config
 
@@ -205,6 +233,8 @@ setup-complete = false
 popup-style = "detailed"      # or "minimal"
 popup-position = "top-right"  # top-left, bottom-right, bottom-left, center
 popup-animation = true
+theme = "system"           # or midnight, graphite, ember, forest, violet, rose, ocean, daylight, sand, mint
+# accent = "#8b5cf6"           # optional accent colour over any theme
 save-sound = true
 # save-sound-file = 'C:\path\to\your.wav'
 ```
