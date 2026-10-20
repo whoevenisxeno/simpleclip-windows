@@ -2,6 +2,23 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.8.0
+
+### New
+- New logo: the app, installer, tray icon and sidebar all use the new replay-buffer icon. It is built from `assets/icon.svg` by `assets/make-icon.ps1`.
+- After an update, SimpleClip says "SimpleClip updated to ..." once.
+
+### Fixed
+- Updating could start the installer more than once, which opened two SimpleClip windows and two command windows. It now starts it once and runs it without a console window.
+- Only one SimpleClip window can be open at a time.
+- Saving several clips in the same second no longer overwrites earlier ones; each gets its own name.
+- A damaged `config.toml` no longer stops the background service from starting. It is moved aside as `config.toml.bad` and the defaults are used.
+- Error messages for missing or unreadable video files are now plain, not codes.
+
+### Security and robustness
+- Updates are checked against the SHA-256 that GitHub publishes for the installer, and are only downloaded from this project's own releases. A stalled download now gives up instead of waiting for ever.
+- Old logs (keeping 7 days), old preview images (30 days, 200 MB) and old downloaded installers are cleaned up automatically.
+
 ## 4.7.1
 
 ### Fixed
