@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.11.0
+
+### Added
+- After you save a trim, a prompt asks if you want to copy the clip or compress it for Discord. Choosing Compress lets you pick 10, 25 or 50 MB, makes the smaller copy, then offers to copy that file. "Don't ask again" in the prompt, or the switch in Settings, turns it off.
+- A Compressed section next to Trimmed in Clips. Compressed copies (made in the app or with `sc compress`) are listed there with a "Compressed" badge, kept out of your main clip list and the Recent row on Home, and grouped under the game they came from.
+
 ## 4.10.0
 
 ### Added
