@@ -3,6 +3,7 @@
 #![cfg(any(target_os = "linux", windows))]
 
 mod audio_encoder;
+mod compress;
 mod convert;
 mod encoder;
 #[cfg(target_os = "linux")]
@@ -14,6 +15,7 @@ mod thumb;
 mod trim;
 
 pub use audio_encoder::AacEncoder;
+pub use compress::{compress_to_size, Compressed};
 pub use convert::Bgra2Nv12;
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
