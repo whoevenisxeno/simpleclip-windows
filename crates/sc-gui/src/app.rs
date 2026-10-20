@@ -58,6 +58,8 @@ pub struct ScApp {
     pub sheet: screens::sheet::SheetState,
     /// The occasional "star the project" card.
     pub star: crate::star::StarPrompt,
+    /// The logo shown in the sidebar, loaded on first use.
+    logo: Option<egui::TextureHandle>,
     /// Looks for newer releases and installs them.
     #[cfg(windows)]
     pub updater: crate::update::Updater,
@@ -118,13 +120,29 @@ impl ScApp {
             cfg.audio.mic_enabled = true;
             cfg.general.setup_complete = true;
         }
+        // After an update, say so once. (Not during the design-review run.)
+        let mut updated_from = None;
+        #[cfg(windows)]
+        if shot.is_none() {
+            std::thread::spawn(crate::update::clean_old_downloads);
+        }
+        if shot.is_none() && cfg.general.last_version.as_deref() != Some(env!("CARGO_PKG_VERSION"))
+        {
+            updated_from = cfg
+                .general
+                .last_version
+                .clone()
+                .or_else(|| cfg.general.setup_complete.then(String::new));
+            cfg.general.last_version = Some(env!("CARGO_PKG_VERSION").to_string());
+            let _ = config_io::save(&cfg);
+        }
         // Show the wizard only until it has been completed once.
         let screen = if cfg.general.setup_complete {
             Screen::Dashboard
         } else {
             Screen::Wizard
         };
-        Self {
+        let mut app = Self {
             saved_cfg: cfg.clone(),
             cfg,
             autosave: AutoSave::default(),
@@ -140,10 +158,18 @@ impl ScApp {
             library: crate::library::Library::load(),
             sheet: Default::default(),
             star: Default::default(),
+            logo: None,
             #[cfg(windows)]
             updater: Default::default(),
             shot,
+        };
+        if updated_from.is_some() {
+            app.toast(
+                format!("SimpleClip updated to {}", env!("CARGO_PKG_VERSION")),
+                ToastKind::Ok,
+            );
         }
+        app
     }
 
     pub fn toast(&mut self, text: impl Into<String>, kind: ToastKind) {
@@ -294,19 +320,18 @@ impl ScApp {
         let p = theme::pal_ui(ui);
         // App mark and name.
         ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(26.0, 26.0), egui::Sense::hover());
-            ui.painter().rect_filled(
-                rect,
-                egui::Rounding::same(7.0),
-                Color32::from_rgb(0x1f, 0x21, 0x2b),
-            );
-            ui.painter().circle_stroke(
-                rect.center(),
-                7.0,
-                egui::Stroke::new(2.0_f32, Color32::from_rgb(0xee, 0xf0, 0xf6)),
-            );
-            ui.painter()
-                .circle_filled(rect.center(), 3.6, Color32::from_rgb(0xe5, 0x39, 0x35));
+            // The app logo (assets/icon.svg, rendered by assets/make-icon.ps1).
+            let logo = self.logo.get_or_insert_with(|| {
+                let img =
+                    crate::thumbs::decode_png_bytes(include_bytes!("../../../assets/icon-64.png"))
+                        .unwrap_or_else(|| egui::ColorImage::new([1, 1], Color32::TRANSPARENT));
+                ui.ctx()
+                    .load_texture("logo", img, egui::TextureOptions::LINEAR)
+            });
+            ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                logo.id(),
+                vec2(30.0, 30.0),
+            )));
             ui.label(
                 RichText::new("SimpleClip")
                     .font(FontId::new(17.0, theme::semibold()))

@@ -374,28 +374,19 @@ pub fn set_autostart(on: bool) {
 // ------------------------------------------------------------------ tray --
 
 fn tray_icon_image(active: bool) -> tray_icon::Icon {
-    // 32x32 record-dot glyph, drawn in code so there is no asset to ship.
+    // The app logo at 32x32 (assets/tray-32.rgba, made by assets/make-icon.ps1). While
+    // paused it is drawn in grey and slightly faded, so the state shows at a glance.
     const N: u32 = 32;
-    let (r, g, b) = if active {
-        (0xE5, 0x39, 0x35)
-    } else {
-        (0x9E, 0x9E, 0x9E)
-    };
-    let mut px = Vec::with_capacity((N * N * 4) as usize);
-    for y in 0..N {
-        for x in 0..N {
-            let (dx, dy) = (x as f32 + 0.5 - 16.0, y as f32 + 0.5 - 16.0);
-            let d = (dx * dx + dy * dy).sqrt();
-            let (rgba, _) = if d <= 9.0 {
-                ([r, g, b, 255], ())
-            } else if d <= 14.0 {
-                ([0xF5, 0xF5, 0xF5, 255], ()) // ring
-            } else if d <= 15.0 {
-                ([0xF5, 0xF5, 0xF5, 140], ()) // soft edge
-            } else {
-                ([0, 0, 0, 0], ())
-            };
-            px.extend_from_slice(&rgba);
+    static LOGO: &[u8] = include_bytes!("../../../assets/tray-32.rgba");
+    let mut px = LOGO.to_vec();
+    if !active {
+        for i in (0..px.len()).step_by(4) {
+            let grey =
+                (px[i] as f32 * 0.30 + px[i + 1] as f32 * 0.59 + px[i + 2] as f32 * 0.11) as u8;
+            px[i] = grey;
+            px[i + 1] = grey;
+            px[i + 2] = grey;
+            px[i + 3] = (px[i + 3] as f32 * 0.7) as u8;
         }
     }
     tray_icon::Icon::from_rgba(px, N, N).expect("valid icon")

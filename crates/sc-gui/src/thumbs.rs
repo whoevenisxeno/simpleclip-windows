@@ -234,8 +234,12 @@ fn load(path: &Path, is_image: bool) -> Option<egui::ColorImage> {
 /// Decode a PNG into an egui image, shrinking big ones (screenshots) so the
 /// gallery doesn't hold full-resolution textures.
 pub fn decode_png(path: &Path) -> Option<egui::ColorImage> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+    decode_png_bytes(&std::fs::read(path).ok()?)
+}
+
+/// Same as [`decode_png`], for PNG data already in memory.
+pub fn decode_png_bytes(bytes: &[u8]) -> Option<egui::ColorImage> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
         .read_info()
         .ok()?;
     let mut buf = vec![0; reader.output_buffer_size()?];
