@@ -2,6 +2,14 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.7.1
+
+### Fixed
+- Clip previews could stay on "Preview unavailable" for good if the background service was briefly unreachable (while it restarted, for example). Previews now retry every 20 seconds and again as soon as the service is back.
+
+### Changed
+- The background service reuses its picture buffers instead of allocating new ones 60 times a second, which lowers its CPU use by about 15 percent. (Memory is about the same: most of the service's memory is FFmpeg, the video driver and the screen-capture system, not SimpleClip's own buffers.)
+
 ## 4.7.0
 
 ### Added
@@ -10,7 +18,7 @@ Versions: a big update raises the first number, a minor update the middle one, a
 ### Changed
 - "Lower CPU use" is now on by default, and is switched on once for existing installs (turn it off again in Settings, Quality, if you prefer). It falls back by itself if your encoder does not support it. It is skipped when a lower resolution is chosen, because the GPU path cannot resize.
 - Smaller installer and download: FFmpeg's avfilter and avdevice libraries (about 40 MB unpacked) are no longer shipped, because SimpleClip never used them.
-- The background service queues fewer pictures between capture and encode, which lowers its memory use.
+- The background service queues fewer pictures between capture and encode.
 - The app window uses less memory: previews are smaller and only loaded when scrolled into view, the least recently shown are dropped, everything is released while the window is minimized, and the built-in player decodes at a smaller size.
 
 ## 4.6.0

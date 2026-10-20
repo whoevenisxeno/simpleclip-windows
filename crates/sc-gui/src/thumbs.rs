@@ -102,14 +102,18 @@ impl Thumbs {
             None => true,
             Some(State::Loading) | Some(State::Ready(_)) => false,
             Some(State::Failed { at, tries }) => {
-                if *tries >= MAX_TRIES {
-                    false
-                } else if at.elapsed() >= backoff(*tries) {
+                // After the quick retries, keep trying slowly: the daemon may simply have
+                // been away (restarted, updating), and previews should come back by themselves.
+                let wait = if *tries >= MAX_TRIES {
+                    Duration::from_secs(20)
+                } else {
+                    backoff(*tries)
+                };
+                if at.elapsed() >= wait {
                     true
                 } else {
-                    // Come back when the retry is due.
                     self.ctx
-                        .request_repaint_after(backoff(*tries).saturating_sub(at.elapsed()));
+                        .request_repaint_after(wait.saturating_sub(at.elapsed()));
                     false
                 }
             }
@@ -161,6 +165,21 @@ impl Thumbs {
     /// True once every attempt has failed (so the UI can say so).
     pub fn gave_up(&self, path: &Path) -> bool {
         matches!(self.map.get(path), Some(State::Failed { tries, .. }) if *tries >= MAX_TRIES)
+    }
+
+    /// Forget every failure so those previews are tried again right away (used when
+    /// the daemon comes back).
+    pub fn retry_failed(&mut self) {
+        let failed: Vec<PathBuf> = self
+            .map
+            .iter()
+            .filter(|(_, s)| matches!(s, State::Failed { .. }))
+            .map(|(p, _)| p.clone())
+            .collect();
+        for p in failed {
+            self.map.remove(&p);
+            self.tries.remove(&p);
+        }
     }
 
     /// Keep at most `keep` loaded previews, dropping the least recently shown.

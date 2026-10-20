@@ -1,10 +1,10 @@
-//! Windows capture: Windows Graphics Capture for video, WASAPI loopback for
+﻿//! Windows capture: Windows Graphics Capture for video, WASAPI loopback for
 //! desktop audio. Both are stamped against one shared `Instant` epoch so audio
 //! and video stay aligned in the replay buffer.
 
 use crate::{Error, Options, Result};
 use sc_core::audio::{AudioBuffer, AudioDevice, AudioRole};
-use sc_core::capture::{MonitorInfo, PixelFormat, VideoFrame};
+use sc_core::capture::{FramePool, MonitorInfo, PixelFormat, VideoFrame};
 use sc_core::time::Timestamp;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -95,7 +95,7 @@ impl CaptureHandle {
             stride: s.stride,
             format: PixelFormat::Bgra8,
             timestamp: Timestamp::from_nanos(0),
-            data: s.data[..(s.stride * height) as usize].to_vec(),
+            data: s.data[..(s.stride * height) as usize].to_vec().into(),
         })
     }
 }
@@ -249,6 +249,7 @@ fn pace(
 ) {
     let period = Duration::from_nanos(1_000_000_000 / fps as u64);
     let mut next = Instant::now();
+    let pool = FramePool::new(1);
     let mut warned = false;
     let (mut sent, mut dropped, mut report) = (0u32, 0u32, Instant::now());
     while !stop.load(Ordering::Relaxed) {
@@ -282,7 +283,7 @@ fn pace(
                 stride: s.stride,
                 format: PixelFormat::Bgra8,
                 timestamp: Timestamp::from_nanos(epoch.elapsed().as_nanos() as i64),
-                data: s.data[..(s.stride * height) as usize].to_vec(),
+                data: pool.copy_of(&s.data[..(s.stride * height) as usize]),
             }
         };
         // Drop on a full queue rather than stalling the pacer: video may skip,

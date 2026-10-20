@@ -106,7 +106,7 @@ fn on_process(stream: &pw::stream::Stream, cap: &mut Cap) {
         stride,
         format: PixelFormat::Bgra8,
         timestamp: Timestamp::from_nanos(cap.epoch.elapsed().as_nanos() as i64),
-        data: bytes[offset..offset + size].to_vec(),
+        data: bytes[offset..offset + size].to_vec().into(),
     };
     // Never block the PipeWire thread; drop the frame if the consumer is behind.
     let _ = cap.frames.try_send(frame);

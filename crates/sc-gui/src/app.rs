@@ -203,6 +203,10 @@ impl ScApp {
 impl eframe::App for ScApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(link) = self.link_rx.try_recv() {
+            // The daemon came back (it restarted, or was updating): retry failed previews now.
+            if matches!(self.link, Link::Disconnected) && matches!(link, Link::Connected(_)) {
+                self.thumbs.retry_failed();
+            }
             self.link = link;
         }
         self.thumbs.poll();

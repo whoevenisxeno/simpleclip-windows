@@ -154,7 +154,7 @@ impl Pipeline {
         // upstream; the capture pacer drops frames if both stages fall behind.
         // Items are (pixels, timestamp_ns, stride); stride 0 means packed NV12,
         // otherwise raw BGRA rows for GPU conversion.
-        let (ntx, nrx) = crossbeam_channel::bounded::<(Vec<u8>, i64, usize)>(2);
+        let (ntx, nrx) = crossbeam_channel::bounded::<(sc_core::capture::FrameBuf, i64, usize)>(2);
         let video_convert = std::thread::Builder::new()
             .name("sc-vconv".into())
             .spawn(move || {
@@ -165,7 +165,7 @@ impl Pipeline {
                     let ts = frame.timestamp.as_nanos();
                     let item = match conv.as_mut() {
                         Some(c) => match c.convert(&frame.data, frame.stride as usize) {
-                            Ok(nv12) => (nv12, ts, 0),
+                            Ok(nv12) => (nv12.into(), ts, 0),
                             Err(e) => {
                                 tracing::debug!(error = %e, "frame convert failed");
                                 continue;
