@@ -637,3 +637,168 @@ pub fn swatches(ui: &mut Ui, colors: &[[u8; 3]], selected: Option<[u8; 3]>) -> O
     }
     picked
 }
+
+// ----------------------------------------------------------------- themes --
+
+/// A tiny picture of the app in one palette: sidebar, a card and an accent.
+fn theme_preview(painter: &egui::Painter, rect: Rect, p: &theme::Palette) {
+    let r = Rounding::same(9.0);
+    painter.rect_filled(rect, r, p.bg);
+    let side = Rect::from_min_max(
+        rect.min,
+        pos2(rect.left() + rect.width() * 0.28, rect.bottom()),
+    );
+    painter.rect_filled(
+        side,
+        Rounding {
+            ne: 0.0,
+            se: 0.0,
+            ..r
+        },
+        p.sidebar,
+    );
+    // Sidebar items.
+    for i in 0..3 {
+        let y = rect.top() + 12.0 + i as f32 * 9.0;
+        let w = side.width() - 14.0;
+        painter.rect_filled(
+            Rect::from_min_size(pos2(side.left() + 7.0, y), vec2(w, 4.0)),
+            2.0,
+            if i == 0 { p.accent } else { p.card_hi },
+        );
+    }
+    // A card with a line of text and an accent button.
+    let card = Rect::from_min_max(
+        pos2(side.right() + 8.0, rect.top() + 10.0),
+        pos2(rect.right() - 8.0, rect.bottom() - 10.0),
+    );
+    painter.rect_filled(card, 5.0, p.card);
+    painter.rect_stroke(card, 5.0, Stroke::new(1.0_f32, p.line));
+    painter.rect_filled(
+        Rect::from_min_size(card.min + vec2(6.0, 6.0), vec2(card.width() * 0.6, 4.0)),
+        2.0,
+        p.text_2,
+    );
+    painter.rect_filled(
+        Rect::from_min_size(
+            pos2(card.left() + 6.0, card.bottom() - 14.0),
+            vec2(card.width() * 0.4, 8.0),
+        ),
+        4.0,
+        p.accent,
+    );
+}
+
+/// A grid of theme tiles. Returns true when the choice changed. `compact` makes
+/// the tiles smaller (the setup guide).
+pub fn theme_picker(ui: &mut Ui, current: &mut String, compact: bool) -> bool {
+    let p = pal_ui(ui);
+    let (tw, th) = if compact { (98.0, 60.0) } else { (132.0, 80.0) };
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
+        for t in crate::themes::THEMES {
+            let selected = current.as_str() == t.id;
+            let (rect, resp) = ui.allocate_exact_size(vec2(tw, th + 22.0), Sense::click());
+            let tile = Rect::from_min_size(rect.min, vec2(tw, th));
+            match &t.pal {
+                Some(pal) => theme_preview(ui.painter(), tile, pal),
+                None => {
+                    // The default follows Windows, so show both halves.
+                    theme_preview(ui.painter(), tile, &theme::DARK);
+                    let right = Rect::from_min_max(pos2(tile.center().x, tile.top()), tile.max);
+                    theme_preview(&ui.painter().with_clip_rect(right), tile, &theme::LIGHT);
+                }
+            }
+            let (stroke, width) = if selected {
+                (p.accent, 2.5)
+            } else if resp.hovered() {
+                (p.text_3, 1.5)
+            } else {
+                (p.line, 1.0)
+            };
+            ui.painter()
+                .rect_stroke(tile, 9.0, Stroke::new(width, stroke));
+            ui.painter().text(
+                pos2(tile.left() + 2.0, tile.bottom() + 5.0),
+                Align2::LEFT_TOP,
+                if t.id == "system" {
+                    format!("{} (default)", t.name)
+                } else {
+                    t.name.to_string()
+                },
+                FontId::new(
+                    12.5,
+                    if selected {
+                        theme::semibold()
+                    } else {
+                        egui::FontFamily::Proportional
+                    },
+                ),
+                if selected { p.text } else { p.text_2 },
+            );
+            if resp
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+                && !selected
+            {
+                *current = t.id.to_string();
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// Accent colour swatches (and "theme default"). Returns true when it changed.
+pub fn accent_picker(ui: &mut Ui, current: &mut Option<String>) -> bool {
+    let p = pal_ui(ui);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        // "Theme default": a ring with no fill.
+        let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+        ui.painter()
+            .circle_stroke(rect.center(), 10.0, Stroke::new(1.5_f32, p.text_3));
+        ui.painter().line_segment(
+            [
+                rect.center() + vec2(-6.0, 6.0),
+                rect.center() + vec2(6.0, -6.0),
+            ],
+            Stroke::new(1.5_f32, p.text_3),
+        );
+        if current.is_none() {
+            ui.painter()
+                .circle_stroke(rect.center(), 13.0, Stroke::new(2.0_f32, p.accent));
+        }
+        if resp
+            .on_hover_text("Theme default")
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+            && current.is_some()
+        {
+            *current = None;
+            changed = true;
+        }
+        for (hex, name) in crate::themes::ACCENTS {
+            let color = crate::themes::parse_hex(hex).unwrap_or(p.accent);
+            let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+            ui.painter().circle_filled(rect.center(), 10.0, color);
+            let chosen = current.as_deref() == Some(*hex);
+            if chosen {
+                ui.painter()
+                    .circle_stroke(rect.center(), 13.0, Stroke::new(2.0_f32, color));
+            }
+            if resp
+                .on_hover_text(*name)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+                && !chosen
+            {
+                *current = Some((*hex).to_string());
+                changed = true;
+            }
+        }
+    });
+    changed
+}
