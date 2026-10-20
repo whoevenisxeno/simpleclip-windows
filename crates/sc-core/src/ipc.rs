@@ -56,6 +56,12 @@ pub enum Request {
         #[serde(default)]
         dest: TrimDest,
     },
+    /// Re-encode a saved clip to fit under `target_mb` megabytes (for Discord and chat
+    /// upload limits), as a new file beside it.
+    Compress {
+        path: PathBuf,
+        target_mb: u32,
+    },
 }
 
 /// Where a trimmed copy is written.

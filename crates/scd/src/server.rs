@@ -119,6 +119,13 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             },
             Err(message) => Response::Error { message },
         },
+        Request::Compress { path, target_mb } => match compress(&path, target_mb) {
+            Ok((path, duration_secs)) => Response::Saved {
+                path,
+                duration_secs,
+            },
+            Err(message) => Response::Error { message },
+        },
         Request::Pause => {
             daemon.set_paused(true);
             Response::Ok
@@ -234,5 +241,34 @@ fn trim(
     _: sc_core::ipc::TrimDest,
     _: Option<std::path::PathBuf>,
 ) -> Result<(std::path::PathBuf, f64), String> {
+    Err("not supported on this platform".into())
+}
+
+/// Shrink `path` to at most `target_mb` megabytes into `<name>-<n>mb.mp4` beside it.
+#[cfg(any(target_os = "linux", windows))]
+fn compress(path: &std::path::Path, target_mb: u32) -> Result<(std::path::PathBuf, f64), String> {
+    if target_mb == 0 || target_mb > 500 {
+        return Err("choose a size between 1 and 500 MB".into());
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("bad file name")?;
+    let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let mut out = dir.join(format!("{stem}-{target_mb}mb.mp4"));
+    let mut n = 2;
+    while out.exists() {
+        out = dir.join(format!("{stem}-{target_mb}mb-{n}.mp4"));
+        n += 1;
+    }
+    // Decimal megabytes, so the file is under the limit however it is counted.
+    let target = target_mb as u64 * 1_000_000;
+    sc_ffmpeg::compress_to_size(path, &out, target).map_err(|e| e.to_string())?;
+    let secs = media_duration(&out).unwrap_or(0.0);
+    Ok((out, secs))
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn compress(_: &std::path::Path, _: u32) -> Result<(std::path::PathBuf, f64), String> {
     Err("not supported on this platform".into())
 }

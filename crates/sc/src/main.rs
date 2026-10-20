@@ -54,6 +54,13 @@ enum Command {
         #[arg(long)]
         end: f64,
     },
+    /// Re-encode a clip to fit under a size limit (10 fits Discord without Nitro).
+    Compress {
+        path: std::path::PathBuf,
+        /// Largest size in megabytes.
+        #[arg(long, default_value_t = 10)]
+        mb: u32,
+    },
     /// List displays that can be captured.
     Monitors,
     /// List audio output devices whose sound can be captured.
@@ -88,6 +95,13 @@ fn main() -> Result<()> {
                 start_secs: start,
                 end_secs: end,
                 dest: Default::default(),
+            },
+            false,
+        ),
+        Command::Compress { path, mb } => (
+            Request::Compress {
+                path: std::path::absolute(&path).unwrap_or(path),
+                target_mb: mb,
             },
             false,
         ),
