@@ -722,11 +722,7 @@ pub fn theme_picker(ui: &mut Ui, current: &mut String, compact: bool) -> bool {
             ui.painter().text(
                 pos2(tile.left() + 2.0, tile.bottom() + 5.0),
                 Align2::LEFT_TOP,
-                if t.id == "system" {
-                    format!("{} (default)", t.name)
-                } else {
-                    t.name.to_string()
-                },
+                t.name,
                 FontId::new(
                     12.5,
                     if selected {

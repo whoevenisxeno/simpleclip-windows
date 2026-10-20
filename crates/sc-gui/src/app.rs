@@ -507,11 +507,6 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("newfolder", true),
     ("trim", true),
     ("player", true),
-    ("update", true),
-    ("uninstall", true),
-    ("update-download", true),
-    ("update-forced", true),
-    ("star", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -521,6 +516,12 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("clips", false),
     ("details", false),
     ("trim", false),
+    // These leave a dialog on screen, so they come last.
+    ("update", true),
+    ("uninstall", true),
+    ("update-download", true),
+    ("update-forced", true),
+    ("star", true),
 ];
 
 impl Shot {

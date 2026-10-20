@@ -123,7 +123,7 @@ fn look(app: &mut ScApp, ui: &mut Ui) {
     heading(
         ui,
         "Choose a look",
-        "Pick the colors you like. You can change this any time in Settings.",
+        "Pick the colors you like. SimpleClip is the default. You can change this any time in Settings.",
     );
     widgets::theme_picker(ui, &mut app.cfg.general.theme, true);
     ui.add_space(16.0);
