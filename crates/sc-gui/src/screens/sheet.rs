@@ -188,6 +188,15 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                     app.goto(Screen::Trim(clip.path.clone()));
                     done = true;
                 }
+                if widgets::quiet_button(ui, Some(icon::COPY), "Copy file").clicked() {
+                    match gallery::copy_file(&clip.path) {
+                        Ok(()) => app.toast(
+                            "Copied. Paste it in Discord or any chat with Ctrl+V",
+                            ToastKind::Ok,
+                        ),
+                        Err(e) => app.toast(e, ToastKind::Warn),
+                    }
+                }
                 if widgets::quiet_button(ui, Some(icon::FOLDER), "Show in folder").clicked() {
                     gallery::reveal(&clip.path);
                 }

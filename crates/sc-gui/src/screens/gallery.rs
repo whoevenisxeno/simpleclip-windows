@@ -357,6 +357,24 @@ pub fn open_path(path: &Path) {
     let _ = std::process::Command::new("explorer").arg(path).spawn();
 }
 
+/// Put the clip's file on the clipboard, like Copy in Explorer, so pasting into Discord
+/// (or any chat or folder) attaches it.
+pub fn copy_file(path: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let name = path.to_string_lossy().to_string();
+        let _clip = clipboard_win::Clipboard::new_attempts(10)
+            .map_err(|_| "the clipboard is busy, try again".to_string())?;
+        clipboard_win::raw::set_file_list_with(&[name], clipboard_win::options::DoClear)
+            .map_err(|e| format!("couldn't copy the file: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("copying files is only available on Windows".to_string())
+    }
+}
+
 /// Open the folder with the file selected.
 pub fn reveal(path: &Path) {
     #[cfg(target_os = "windows")]
@@ -1079,6 +1097,21 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run with `cargo test -p sc-gui -- --ignored`: it replaces the clipboard contents.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "uses the real clipboard"]
+    fn copied_file_lands_on_the_clipboard() {
+        let file = std::env::temp_dir().join("sc-clipboard-test.mp4");
+        std::fs::write(&file, b"x").unwrap();
+        copy_file(&file).expect("copy");
+        let _clip = clipboard_win::Clipboard::new_attempts(10).unwrap();
+        let mut got = Vec::new();
+        clipboard_win::raw::get_file_list_path(&mut got).expect("read back");
+        assert_eq!(got, vec![file.clone()]);
+        let _ = std::fs::remove_file(file);
+    }
 
     fn g(p: &str) -> String {
         game_of(Path::new(p), Path::new("V"))
