@@ -42,6 +42,9 @@ pub struct Updater {
     pub open: bool,
     /// The forced update has been started (so it is only started once).
     forced_started: bool,
+    /// The installer has been launched (so it is only launched once, however many
+    /// frames pass before the window closes).
+    handed_over: bool,
     /// Bytes of the installer downloaded so far.
     progress: Arc<AtomicU64>,
     /// The release being installed, kept for the progress view.
@@ -58,6 +61,7 @@ impl Default for Updater {
             started: Instant::now(),
             open: false,
             forced_started: false,
+            handed_over: false,
             progress: Arc::new(AtomicU64::new(0)),
             installing: None,
             ready_since: None,
@@ -78,6 +82,12 @@ impl Updater {
     }
 
     /// Look for a newer release in the background.
+    /// The version updates are compared against. `SC_UPDATE_PRETEND_VERSION` lets a test
+    /// run pretend to be older, to try the update flow against a real release.
+    fn compare_base() -> String {
+        std::env::var("SC_UPDATE_PRETEND_VERSION").unwrap_or_else(|_| CURRENT.to_string())
+    }
+
     pub fn check(&mut self, ctx: &egui::Context) {
         if matches!(self.state(), State::Checking | State::Downloading(_)) {
             return;
@@ -86,7 +96,7 @@ impl Updater {
         Self::set(&self.state, State::Checking, ctx);
         let (state, ctx) = (self.state.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let next = match sc_core::update::fetch_latest(CURRENT) {
+            let next = match sc_core::update::fetch_latest(&Self::compare_base()) {
                 Ok(Some(r)) => State::Available(r),
                 Ok(None) => State::UpToDate,
                 Err(e) => State::Failed(e),
@@ -113,6 +123,13 @@ impl Updater {
                         "-fsSL",
                         "--retry",
                         "2",
+                        // Give up on a stalled connection instead of waiting for ever.
+                        "--max-time",
+                        "900",
+                        "--speed-time",
+                        "30",
+                        "--speed-limit",
+                        "1024",
                         "-H",
                         "User-Agent: SimpleClip",
                         "-o",
@@ -139,9 +156,24 @@ impl Updater {
                 if got == 0 || (r.size > 0 && got != r.size) {
                     return Err("the download was incomplete".to_string());
                 }
+                // GitHub publishes each file's SHA-256; refuse anything that does not match.
+                if let Some(want) = r.sha256.as_deref() {
+                    match sha256_of(&dest) {
+                        Some(have) if have.eq_ignore_ascii_case(want) => {}
+                        _ => {
+                            return Err(
+                                "the download did not match its checksum, so it was not installed"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
                 progress.store(got, Ordering::Relaxed);
                 Ok(())
             })();
+            if result.is_err() {
+                let _ = std::fs::remove_file(&dest);
+            }
             Self::set(
                 &state,
                 match result {
@@ -175,7 +207,7 @@ impl Updater {
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)
-            .creation_flags(0x0800_0008) // detached, no console window
+            .creation_flags(0x0800_0000) // no console window (DETACHED_PROCESS would make cmd open one)
             .spawn();
     }
 
@@ -194,7 +226,7 @@ impl Updater {
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)
-            .creation_flags(0x0800_0008)
+            .creation_flags(0x0800_0000)
             .spawn();
     }
 
@@ -221,6 +253,7 @@ impl Updater {
                 notes: notes.into(),
                 url: String::new(),
                 size: 0,
+                sha256: None,
             });
         }
         self.open = true;
@@ -238,7 +271,10 @@ impl Updater {
             // Show "installing" for a moment before handing over, so it never looks stuck.
             let since = *self.ready_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= Duration::from_millis(1400) {
-                Self::hand_over(&p);
+                if !self.handed_over {
+                    self.handed_over = true;
+                    Self::hand_over(&p);
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
@@ -257,7 +293,17 @@ impl Updater {
             return;
         };
         // Far behind (several major versions): the update is not optional.
-        let forced = sc_core::update::major_gap(&r.version, CURRENT) >= FORCE_AFTER_MAJORS;
+        let forced =
+            sc_core::update::major_gap(&r.version, &Self::compare_base()) >= FORCE_AFTER_MAJORS;
+        // Test switch: install a newer version without waiting for a click.
+        if std::env::var_os("SC_UPDATE_AUTO").is_some()
+            && matches!(state, State::Available(_))
+            && !self.forced_started
+        {
+            self.forced_started = true;
+            self.download(r, ctx);
+            return;
+        }
         if wizard && !forced {
             return;
         }
@@ -492,6 +538,7 @@ impl Updater {
             notes: "## What changed\n\n### Added\n- A lot of things\n\n### Fixed\n- A lot of other things\n".into(),
             url: String::new(),
             size: 58 * 1024 * 1024,
+            sha256: None,
         };
         self.progress.store(24 * 1024 * 1024, Ordering::Relaxed);
         self.installing = Some(r.clone());
@@ -500,5 +547,41 @@ impl Updater {
             *s = State::Downloading(r);
         }
         self.open = true;
+    }
+}
+
+/// SHA-256 of a file as lowercase hex, using Windows' own `certutil` so the app
+/// needs no hashing library.
+fn sha256_of(path: &std::path::Path) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("certutil")
+        .arg("-hashfile")
+        .arg(path)
+        .arg("SHA256")
+        .creation_flags(0x0800_0000)
+        .output()
+        .ok()?;
+    // Line 1 is a header, line 2 the hash (possibly with spaces), then a footer.
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .nth(1)
+        .map(|l| {
+            l.split_whitespace()
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .filter(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Delete installers left in the temp folder by earlier updates.
+pub fn clean_old_downloads() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with("SimpleClip-") && name.ends_with("-Setup.exe") {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
