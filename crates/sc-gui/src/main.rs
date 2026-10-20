@@ -10,6 +10,7 @@ mod player;
 mod screens;
 mod star;
 mod theme;
+mod themes;
 mod thumbs;
 #[cfg(windows)]
 mod update;

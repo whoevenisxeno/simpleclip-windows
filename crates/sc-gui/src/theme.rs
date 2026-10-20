@@ -27,7 +27,7 @@ pub struct Palette {
     pub orange: Color32,
 }
 
-const DARK: Palette = Palette {
+pub const DARK: Palette = Palette {
     dark: true,
     bg: Color32::from_rgb(0x1c, 0x1c, 0x1e),
     sidebar: Color32::from_rgb(0x25, 0x25, 0x28),
@@ -43,7 +43,7 @@ const DARK: Palette = Palette {
     orange: Color32::from_rgb(0xff, 0x9f, 0x0a),
 };
 
-const LIGHT: Palette = Palette {
+pub const LIGHT: Palette = Palette {
     dark: false,
     bg: Color32::from_rgb(0xf5, 0xf5, 0xf7),
     sidebar: Color32::from_rgb(0xe9, 0xe9, 0xed),
@@ -59,13 +59,21 @@ const LIGHT: Palette = Palette {
     orange: Color32::from_rgb(0xff, 0x95, 0x00),
 };
 
-/// The palette for the current light/dark mode.
+/// The palette in use: the chosen fixed theme, or the original light or dark one
+/// (with the accent colour laid over it, if one is chosen).
 pub fn pal(ctx: &egui::Context) -> Palette {
-    if ctx.style().visuals.dark_mode {
+    if let Some(p) = crate::themes::fixed_palette(ctx) {
+        return p;
+    }
+    let mut p = if ctx.style().visuals.dark_mode {
         DARK
     } else {
         LIGHT
+    };
+    if let Some(a) = crate::themes::system_accent(ctx) {
+        p.accent = a;
     }
+    p
 }
 
 pub fn pal_ui(ui: &egui::Ui) -> Palette {
@@ -160,7 +168,7 @@ pub fn apply(ctx: &egui::Context) {
     ctx.style_mut_of(egui::Theme::Light, |s| style(s, LIGHT));
 }
 
-fn style(s: &mut egui::Style, p: Palette) {
+pub(crate) fn style(s: &mut egui::Style, p: Palette) {
     s.text_styles = [
         (TextStyle::Heading, FontId::new(26.0, semibold())),
         (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
