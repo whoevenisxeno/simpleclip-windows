@@ -9,7 +9,7 @@ pub fn path() -> PathBuf {
 }
 
 pub fn load() -> Config {
-    Config::load(&path()).unwrap_or_default()
+    Config::load_or_recover(&path())
 }
 
 pub fn save(cfg: &Config) -> Result<(), String> {

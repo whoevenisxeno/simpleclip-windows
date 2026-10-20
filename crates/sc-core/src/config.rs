@@ -130,6 +130,8 @@ pub struct GeneralSettings {
     pub star_prompt_next: Option<u64>,
     /// Which settings migrations have run (so each runs only once on an old file).
     pub settings_version: Option<u32>,
+    /// The app version that last ran, so an update can say "Updated to ...".
+    pub last_version: Option<String>,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -255,6 +257,7 @@ impl Default for GeneralSettings {
             star_prompt_done: false,
             star_prompt_next: None,
             settings_version: None,
+            last_version: None,
             notify: true,
             post_save_hook: None,
             autostart: true,
@@ -287,6 +290,28 @@ impl Config {
         }
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Load the config, or start fresh if it can not be used. A missing file is
+    /// created with the defaults. A file that will not parse or fails validation
+    /// is moved aside as `config.toml.bad` (never deleted) and replaced with the
+    /// defaults, so a damaged file can not stop SimpleClip from starting.
+    pub fn load_or_recover(path: &std::path::Path) -> Self {
+        match Self::load(path) {
+            Ok(cfg) => cfg,
+            Err(Error::ConfigMissing(_)) => {
+                let cfg = Self::default();
+                let _ = cfg.save(path);
+                cfg
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "config unusable, starting from defaults");
+                let _ = std::fs::rename(path, path.with_extension("toml.bad"));
+                let cfg = Self::default();
+                let _ = cfg.save(path);
+                cfg
+            }
+        }
     }
 
     pub fn save(&self, path: &std::path::Path) -> Result<()> {
@@ -370,5 +395,24 @@ mod tests {
         cfg.buffer.ram_cap_mb = 1;
         cfg.encode.bitrate_kbps = 50_000;
         assert!(cfg.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn broken_config_is_moved_aside_and_replaced() {
+        let dir = std::env::temp_dir().join(format!("sc-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "this is = [not valid toml").unwrap();
+        let cfg = Config::load_or_recover(&path);
+        assert_eq!(cfg.buffer.replay_duration_secs, 30);
+        assert!(dir.join("config.toml.bad").exists());
+        assert!(Config::load(&path).is_ok(), "defaults were written back");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

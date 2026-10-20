@@ -64,6 +64,8 @@ fn main() -> Result<()> {
     popup::configure(&config.general);
     let daemon = Daemon::new(config);
     reload::spawn_watcher(config_path, daemon.clone());
+    // Tidy the preview cache in the background; it must never slow start-up.
+    std::thread::spawn(thumbs::prune);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "scd starting");
 
     // Start capture off-thread so the IPC server is reachable immediately (the
@@ -118,16 +120,7 @@ fn main() -> Result<()> {
 }
 
 fn load_or_create(path: &std::path::Path) -> Result<Config> {
-    match Config::load(path) {
-        Ok(cfg) => Ok(cfg),
-        Err(sc_core::Error::ConfigMissing(_)) => {
-            let cfg = Config::default();
-            cfg.save(path).context("writing default config")?;
-            tracing::info!(path = %path.display(), "wrote default config");
-            Ok(cfg)
-        }
-        Err(e) => Err(e).context("loading config"),
-    }
+    Ok(Config::load_or_recover(path))
 }
 
 #[cfg(not(windows))]
@@ -145,6 +138,29 @@ fn init_logging(verbose: bool, _foreground: bool) -> Option<()> {
 /// Windows logging: to the parent terminal with `--foreground`, otherwise to a
 /// rolling file under `%LOCALAPPDATA%\SimpleClip\logs`. The returned guard must
 /// outlive `main` so buffered lines are flushed.
+/// Keep only the newest `keep` daily log files so logs never pile up.
+#[cfg(windows)]
+fn prune_logs(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut logs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("scd.log"))
+        })
+        .collect();
+    // Names end in the date, so sorting by name sorts by age.
+    logs.sort();
+    let drop = logs.len().saturating_sub(keep);
+    for p in logs.into_iter().take(drop) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 #[cfg(windows)]
 fn init_logging(
     verbose: bool,
@@ -172,6 +188,7 @@ fn init_logging(
             let dir = directories::ProjectDirs::from("", "", "SimpleClip")
                 .map(|d| d.data_local_dir().join("logs"))
                 .unwrap_or_else(|| PathBuf::from("."));
+            prune_logs(&dir, 7);
             let appender = tracing_appender::rolling::daily(dir, "scd.log");
             let (writer, guard) = tracing_appender::non_blocking(appender);
             builder.with_writer(writer).init();
