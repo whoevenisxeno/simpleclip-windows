@@ -74,6 +74,12 @@ impl Cache {
         self.only = None;
     }
 
+    /// Switch the list to the compressed clips.
+    pub fn show_compressed(&mut self) {
+        self.kind = ViewKind::Compressed;
+        self.only = None;
+    }
+
     /// The clip at `path`, if it is in the current listing.
     pub fn find(&self, path: &Path) -> Option<Clip> {
         self.clips.iter().find(|c| c.path == path).cloned()
@@ -170,10 +176,13 @@ fn game_of(path: &Path, _root: &Path) -> String {
     if parts.first() == Some(&"sc") {
         parts.remove(0);
     }
-    // Trailing date / time / "trim" markers aren't part of the name.
+    // Trailing date / time / "trim" / "10mb" markers aren't part of the name.
     while let Some(last) = parts.last() {
         let digits = !last.is_empty() && last.chars().all(|c| c.is_ascii_digit());
-        if digits || last.starts_with("trim") {
+        let size = last
+            .strip_suffix("mb")
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        if digits || size || last.starts_with("trim") {
             parts.pop();
         } else {
             break;
@@ -1142,6 +1151,13 @@ mod tests {
 
     fn g(p: &str) -> String {
         game_of(Path::new(p), Path::new("V"))
+    }
+
+    #[test]
+    fn compressed_clips_group_with_their_game() {
+        assert_eq!(g("V/sc-rainbowsix-20261019-171200-10mb.mp4"), "Rainbowsix");
+        assert_eq!(g("V/sc-apex-20261017-210500-trim-25mb-2.mp4"), "Apex");
+        assert_eq!(g("V/sc-20261019-181903-10mb.mp4"), "Desktop");
     }
 
     #[test]
