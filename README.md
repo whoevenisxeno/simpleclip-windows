@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon-256.png" alt="SimpleClip" width="112"></p>
+
 # SimpleClip for Windows
 
 SimpleClip keeps the last 30 seconds (or 15 s, 1 min, 2 min, 5 min) of your screen in memory. When

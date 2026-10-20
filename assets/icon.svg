@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#232a38"/><stop offset="1" stop-color="#0c0f15"/></linearGradient><linearGradient id="blue" gradientUnits="userSpaceOnUse" x1="44" y1="44" x2="212" y2="212"><stop offset="0" stop-color="#6cc4ff"/><stop offset="1" stop-color="#0a84ff"/></linearGradient><radialGradient id="red" cx=".38" cy=".35" r=".75"><stop offset="0" stop-color="#ff7a70"/><stop offset="1" stop-color="#e5352b"/></radialGradient></defs>
+<rect x="8" y="8" width="240" height="240" rx="58" fill="url(#bg)"/><rect x="8.75" y="8.75" width="238.5" height="238.5" rx="57.25" fill="none" stroke="#ffffff" stroke-opacity=".09" stroke-width="1.5"/>
+<circle cx="128" cy="128" r="74" fill="none" stroke="#ffffff" stroke-opacity=".08" stroke-width="17"/>
+<path d="M165 63.9A74 74 0 1 0 202 128" fill="none" stroke="url(#blue)" stroke-width="17" stroke-linecap="round" stroke-dasharray="14 25.8" stroke-dashoffset="24.54"/>
+<path d="M202 97 186 124h32Z" fill="url(#blue)" stroke="url(#blue)" stroke-width="12" stroke-linejoin="round"/>
+<circle cx="128" cy="128" r="31" fill="url(#red)"/></svg>
