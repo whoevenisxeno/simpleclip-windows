@@ -7,8 +7,8 @@ use sc_core::capture::CaptureState;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
-use windows::core::{w, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
+use windows::core::{w, BOOL, PWSTR};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM};
 use windows::Win32::Media::Audio::{
     PlaySoundW, SND_ASYNC, SND_FILENAME, SND_MEMORY, SND_NODEFAULT,
 };
@@ -19,12 +19,14 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
-    MOD_SHIFT, MOD_WIN,
+    GetAsyncKeyState, RegisterHotKey, SendInput, UnregisterHotKey, HOT_KEY_MODIFIERS, INPUT,
+    INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL,
+    MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_MENU,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetForegroundWindow, GetWindowThreadProcessId, PeekMessageW, PostQuitMessage,
-    TranslateMessage, MSG, PM_REMOVE, WM_HOTKEY,
+    DispatchMessageW, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, PeekMessageW, PostQuitMessage,
+    SetForegroundWindow, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_RESTORE, WM_HOTKEY,
 };
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -143,6 +145,7 @@ pub fn spawn_hotkey(daemon: Daemon) {
 
 const SAVE_ID: i32 = 0x5C01;
 const SHOT_ID: i32 = 0x5C02;
+const OPEN_ID: i32 = 0x5C03;
 
 /// One configurable global hotkey: what is registered with Windows right now,
 /// and the last value that failed (so a bad binding is reported once, not every poll).
@@ -151,6 +154,8 @@ struct Binding {
     what: &'static str,
     registered: Option<String>,
     failed: Option<String>,
+    /// The registered combination includes Alt (see `mask_alt`).
+    uses_alt: bool,
 }
 
 impl Binding {
@@ -160,6 +165,7 @@ impl Binding {
             what,
             registered: None,
             failed: None,
+            uses_alt: false,
         }
     }
 
@@ -172,6 +178,12 @@ impl Binding {
             unsafe {
                 let _ = UnregisterHotKey(None, self.id);
             }
+        }
+        self.uses_alt = false;
+        // An empty binding means "off" and is not an error.
+        if want.trim().is_empty() {
+            self.failed = None;
+            return;
         }
         let Some((mods, vk)) = parse_hotkey(want) else {
             tracing::warn!(hotkey = %want, what = self.what, "unrecognized hotkey");
@@ -190,6 +202,7 @@ impl Binding {
                 tracing::info!(hotkey = %want, what = self.what, "hotkey registered");
                 self.registered = Some(want.to_string());
                 self.failed = None;
+                self.uses_alt = mods.0 & MOD_ALT.0 != 0;
             }
             Err(e) => {
                 tracing::warn!(hotkey = %want, what = self.what, error = %e, "hotkey in use by another app");
@@ -208,13 +221,19 @@ impl Binding {
 fn hotkey_loop(daemon: Daemon) {
     let mut save = Binding::new(SAVE_ID, "save");
     let mut shot = Binding::new(SHOT_ID, "screenshot");
+    let mut open = Binding::new(OPEN_ID, "open");
     loop {
-        let (want_save, want_shot) = {
+        let (want_save, want_shot, want_open) = {
             let cfg = daemon.config.read().unwrap();
-            (cfg.hotkeys.save.clone(), cfg.hotkeys.screenshot.clone())
+            (
+                cfg.hotkeys.save.clone(),
+                cfg.hotkeys.screenshot.clone(),
+                cfg.hotkeys.open.clone(),
+            )
         };
         save.sync(&want_save);
         shot.sync(&want_shot);
+        open.sync(&want_open);
         // WM_HOTKEY lands in this thread's queue; poll it so config changes are
         // also noticed promptly.
         let mut msg = MSG::default();
@@ -222,18 +241,55 @@ fn hotkey_loop(daemon: Daemon) {
             if msg.message != WM_HOTKEY {
                 continue;
             }
+            let id = msg.wParam.0 as i32;
+            if let Some(b) = [&save, &shot, &open].into_iter().find(|b| b.id == id) {
+                tracing::info!(what = b.what, "hotkey pressed");
+                if b.uses_alt {
+                    mask_alt();
+                }
+            }
             let d = daemon.clone();
-            match msg.wParam.0 as i32 {
+            match id {
                 SAVE_ID => {
                     std::thread::spawn(move || save_from_hotkey(&d));
                 }
                 SHOT_ID => {
                     std::thread::spawn(move || screenshot_from_hotkey(&d));
                 }
+                OPEN_ID => {
+                    std::thread::spawn(open_gui);
+                }
                 _ => {}
             }
         }
         std::thread::sleep(Duration::from_millis(40));
+    }
+}
+
+/// Windows treats a lone press and release of Alt as "go to the menu bar". A
+/// hotkey like Alt+F10 swallows the F10 but not the Alt, so the program in front
+/// would still see a lone Alt: its menu lights up, a game can lose focus, a
+/// browser eats the next key. Pressing an unassigned key while Alt is still down
+/// turns it into a combination, which is what stops that.
+fn mask_alt() {
+    unsafe {
+        if GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 == 0 {
+            return; // Alt is already up, nothing to cancel
+        }
+        let key = |flags: KEYBD_EVENT_FLAGS| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(0xE8), // unassigned
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        let inputs = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
 }
 
@@ -392,7 +448,43 @@ fn tray_icon_image(active: bool) -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(px, N, N).expect("valid icon")
 }
 
+/// Show the SimpleClip window that is already open, restoring it if it was
+/// minimised. Returns false when there is no such window.
+fn raise_gui() -> bool {
+    unsafe extern "system" fn visit(hwnd: HWND, found: LPARAM) -> BOOL {
+        let mut title = [0u16; 32];
+        let n = GetWindowTextW(hwnd, &mut title).max(0) as usize;
+        let mut class = [0u16; 64];
+        let c = GetClassNameW(hwnd, &mut class).max(0) as usize;
+        let is_title = String::from_utf16_lossy(&title[..n]) == "SimpleClip";
+        // The save card is also titled "SimpleClip"; it is not the app.
+        let is_card = String::from_utf16_lossy(&class[..c]) == "SimpleClipPopup";
+        if is_title && !is_card && (IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool()) {
+            *(found.0 as *mut Option<HWND>) = Some(hwnd);
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let mut found: Option<HWND> = None;
+        let _ = EnumWindows(
+            Some(visit),
+            LPARAM(&mut found as *mut Option<HWND> as isize),
+        );
+        let Some(hwnd) = found else { return false };
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(hwnd);
+        true
+    }
+}
+
+/// Bring SimpleClip up: the open window if there is one, otherwise a new one.
 fn open_gui() {
+    if raise_gui() {
+        return;
+    }
     let gui = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("sc-gui.exe")))
