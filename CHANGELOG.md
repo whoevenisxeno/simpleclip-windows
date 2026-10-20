@@ -2,6 +2,15 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.10.0
+
+### Added
+- Themes: ten colour themes besides the default (Midnight, Graphite, Ember, Forest, Violet, Rose, Ocean, Daylight, Sand, Mint), plus an optional accent colour over any of them. The default is the original look and still follows Windows light and dark. The setup guide has a new "Choose a look" step, and Settings has an Appearance section.
+- Compress for Discord: in a clip's details, make a smaller copy that fits 10, 25 or 50 MB. The picture is scaled down only as far as needed, and all sound tracks are mixed into one. The original stays. `sc compress <clip> --mb 10` does the same from the command line.
+- Copy file: puts a clip on the clipboard, so you can paste it straight into Discord or a chat.
+- Presets: Balanced, Light and Sharp are built in, and you can save your own. A preset holds the frame rate, quality, sound and replay length, and never your displays, devices, folders, shortcuts or theme.
+- Frame rates of 144, 165 and 240 fps. The keyframe interval is now shown in seconds and keeps its length when you change the frame rate.
+
 ## 4.9.3
 
 ### Changed
