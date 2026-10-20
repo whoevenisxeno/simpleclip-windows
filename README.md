@@ -37,7 +37,9 @@ job and does not need an account.
   choice.
 - **Share a clip.** "Copy file" puts the clip on the clipboard, so pasting into Discord or a
   chat attaches it. "Compress for Discord" makes a smaller copy that fits 10, 25 or 50 MB, scaling
-  the picture down only as far as it must. The original stays.
+  the picture down only as far as it must. The original stays. Right after you save a trim, a
+  prompt offers both, and once a clip is compressed it offers to copy that file. Compressed copies
+  get their own Compressed section next to Trimmed, so they never clutter your clips.
 - **Presets.** Three built in (Balanced, Light, Sharp) and your own. A preset holds the frame rate,
   quality, sound and replay length, and nothing about your displays, devices, folders or theme.
 - **Themes.** Ten colour themes plus the default, which follows Windows light and dark. You pick one
@@ -77,6 +79,17 @@ Grouped by folder:
 Trimmed clips only:
 
 ![Trimmed clips view](docs/screenshots/clips-trimmed-dark.png)
+
+### Sharing
+
+After saving a trim, SimpleClip asks what you want to do with it. You can turn the prompt off in
+Settings.
+
+![Share prompt after a trim](docs/screenshots/share-prompt.png)
+
+Compressed copies are listed apart from your clips, next to the Trimmed ones:
+
+![Compressed clips](docs/screenshots/clips-compressed.png)
 
 ### Themes
 
