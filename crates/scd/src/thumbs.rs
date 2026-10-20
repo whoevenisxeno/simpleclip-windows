@@ -106,6 +106,40 @@ pub fn cached_frame(_: &Path, _: f64, _: u32) -> Result<PathBuf, String> {
     Err("not supported on this platform".into())
 }
 
+/// Keep the preview cache from growing for ever: drop previews not touched in a
+/// month, then the oldest ones until the folder is under 200 MB. Runs at start-up.
+pub fn prune() {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+    const MAX_BYTES: u64 = 200 * 1024 * 1024;
+    let Ok(entries) = std::fs::read_dir(cache_dir()) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    for e in entries.flatten() {
+        let Ok(m) = e.metadata() else { continue };
+        if !m.is_file() {
+            continue;
+        }
+        let when = m.modified().unwrap_or(now);
+        if now.duration_since(when).unwrap_or_default() > MAX_AGE {
+            let _ = std::fs::remove_file(e.path());
+        } else {
+            files.push((when, m.len(), e.path()));
+        }
+    }
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort();
+    for (_, len, path) in files {
+        if total <= MAX_BYTES {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
