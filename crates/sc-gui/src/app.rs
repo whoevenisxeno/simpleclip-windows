@@ -56,6 +56,8 @@ pub struct ScApp {
     pub library: crate::library::Library,
     /// The open details / bookmark / new-folder sheet, if any.
     pub sheet: screens::sheet::SheetState,
+    /// The occasional "star the project" card.
+    pub star: crate::star::StarPrompt,
     /// Looks for newer releases and installs them.
     #[cfg(windows)]
     pub updater: crate::update::Updater,
@@ -137,6 +139,7 @@ impl ScApp {
             thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
             library: crate::library::Library::load(),
             sheet: Default::default(),
+            star: Default::default(),
             #[cfg(windows)]
             updater: Default::default(),
             shot,
@@ -254,6 +257,15 @@ impl eframe::App for ScApp {
             self.screen == Screen::Wizard,
         );
         screens::sheet::show(self, ctx);
+        #[cfg(windows)]
+        let update_open = self.updater.open;
+        #[cfg(not(windows))]
+        let update_open = false;
+        let star_busy = self.screen == Screen::Wizard || update_open;
+        // The design-review run never touches the settings, so it only draws a forced card.
+        if self.shot.is_none() || self.star.is_showing() {
+            crate::star::show(self, ctx, star_busy);
+        }
         // Bookmarks and notes save a moment after the last edit.
         self.library.flush_if_due();
         if self.library.is_dirty() {
@@ -443,6 +455,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("uninstall", true),
     ("update-download", true),
     ("update-forced", true),
+    ("star", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -568,6 +581,7 @@ impl ScApp {
                 "update" => Screen::Dashboard,
                 "uninstall" => Screen::Settings,
                 "update-download" | "update-forced" => Screen::Dashboard,
+                "star" => Screen::Dashboard,
                 "settings" => Screen::Settings,
                 "trim" | "player" => {
                     let first = self.gallery.first_video();
@@ -593,6 +607,7 @@ impl ScApp {
                 "uninstall" => {
                     ctx.data_mut(|d| d.insert_temp(egui::Id::new("uninstall-ask"), true))
                 }
+                "star" => self.star.force(),
                 "update-download" => {
                     #[cfg(windows)]
                     self.updater.demo_download("4.9.0");

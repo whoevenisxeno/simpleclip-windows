@@ -8,6 +8,7 @@ mod library;
 #[cfg(windows)]
 mod player;
 mod screens;
+mod star;
 mod theme;
 mod thumbs;
 #[cfg(windows)]

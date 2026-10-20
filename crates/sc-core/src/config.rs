@@ -120,6 +120,11 @@ pub struct GeneralSettings {
     pub popup_position: PopupPosition,
     /// Slide the cards in and out instead of just showing them.
     pub popup_animation: bool,
+    /// The user opened the GitHub page from the star reminder (or asked not to be asked
+    /// again), so it never shows again.
+    pub star_prompt_done: bool,
+    /// Earliest time (seconds since 1970) the star reminder may show next.
+    pub star_prompt_next: Option<u64>,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -241,6 +246,8 @@ impl Default for GeneralSettings {
             popup_style: PopupStyle::Detailed,
             popup_position: PopupPosition::TopRight,
             popup_animation: true,
+            star_prompt_done: false,
+            star_prompt_next: None,
             notify: true,
             post_save_hook: None,
             autostart: true,

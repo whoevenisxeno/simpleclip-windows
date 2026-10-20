@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.6.0
+
+### Added
+- An occasional "Enjoying SimpleClip?" card in the app window, asking for a star on GitHub. It appears at most once a week, only after the window has been open for 5 minutes, and never during setup or while an update is on screen. Opening the GitHub page from it (or choosing "Don't ask again") stops it for good. "Maybe later" waits another week.
+
 ## 4.5.0
 
 ### Added
