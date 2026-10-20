@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.12.6
+
+### Added
+- Right-click a clip (its picture or its title) for a menu with everything the three dots and the details window offer: Play, Trim, Copy file, Compress for Discord (10, 25 or 50 MB), Show in folder, rename and notes, bookmarks (tick or untick them, or edit them), Move to folder (or a new one), and Delete. Compressing from the menu runs in the background and reports when the smaller copy is saved.
+
 ## 4.12.5
 
 ### Added
