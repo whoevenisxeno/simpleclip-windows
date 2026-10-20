@@ -33,8 +33,18 @@ pub enum Error {
     Ffmpeg(String),
     #[error("no usable hardware encoder found for {codec}")]
     NoEncoder { codec: &'static str },
-    #[error("ffmpeg returned {code} at {ctx}")]
+    #[error("{}", av_message(*code, ctx))]
     Av { code: i32, ctx: &'static str },
+}
+
+/// Plain wording for the FFmpeg errors people actually meet.
+fn av_message(code: i32, ctx: &str) -> String {
+    match code {
+        -2 => "couldn't open the file; it may have been moved or deleted".into(),
+        -13 => "couldn't open the file; permission denied".into(),
+        -1_094_995_529 => "this file is not a valid video".into(),
+        _ => format!("ffmpeg returned {code} at {ctx}"),
+    }
 }
 
 /// Initialize FFmpeg once. Cheap to call repeatedly.
