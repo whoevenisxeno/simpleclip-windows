@@ -392,41 +392,132 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
     uninstall_section(app, ui);
 }
 
-/// A button at the very bottom to remove SimpleClip (asks first).
+/// A button at the very bottom to remove SimpleClip. It opens a confirmation
+/// that offers to wipe your clips too (off by default) and asks for a GitHub star.
 #[cfg(windows)]
 fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
     ui.add_space(18.0);
-    let _ = app;
-    let exe = crate::update::Updater::uninstall_exe();
-    let id = egui::Id::new("uninstall-confirm");
-    let mut asking: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
-    let mut go = false;
+    let exe = crate::update::Updater::uninstall_exe()
+        // The design-review run shows the dialog even from a portable folder.
+        .or_else(|| std::env::var_os("SC_GUI_SHOTS").map(std::path::PathBuf::from));
+    let ask_id = egui::Id::new("uninstall-ask");
+    let wipe_id = egui::Id::new("uninstall-wipe");
+    let mut asking: bool = ui.data(|d| d.get_temp(ask_id)).unwrap_or(false);
+    let mut wipe: bool = ui.data(|d| d.get_temp(wipe_id)).unwrap_or(false);
+
     section(ui, Some("Uninstall"), |s| {
-        let hint = match (&exe, asking) {
-            (None, _) => "This copy was not installed, so delete its folder to remove it.",
-            (_, true) => {
-                "Your clips, bookmarks and settings are kept. Remove them by hand if you want."
-            }
-            _ => "Removes the app and the background service. Your clips are kept.",
+        let hint = if exe.is_none() {
+            "This copy was not installed, so delete its folder to remove it."
+        } else {
+            "Removes the app and the background service."
         };
         s.row("Uninstall SimpleClip", Some(hint), |ui| {
-            if exe.is_none() {
-                return;
-            }
-            if asking {
-                if widgets::primary_button(ui, None, "Yes, uninstall").clicked() {
-                    go = true;
-                }
-                if widgets::quiet_button(ui, None, "Cancel").clicked() {
-                    asking = false;
-                }
-            } else if widgets::quiet_button(ui, None, "Uninstall{2026}").clicked() {
+            if exe.is_some() && widgets::quiet_button(ui, None, "Uninstall\u{2026}").clicked() {
                 asking = true;
             }
         });
     });
-    ui.data_mut(|d| d.insert_temp(id, asking));
+
+    let (mut go, mut cancel) = (false, false);
+    if asking && exe.is_some() {
+        let clips = app.gallery.all_paths().len();
+        egui::Window::new("uninstall-window")
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .auto_sized()
+            .frame(
+                egui::Frame::none()
+                    .fill(p.card)
+                    .rounding(egui::Rounding::same(14.0))
+                    .stroke(egui::Stroke::new(1.0_f32, p.line))
+                    .inner_margin(egui::Margin::same(20.0))
+                    .shadow(egui::Shadow {
+                        offset: egui::vec2(0.0, 8.0),
+                        blur: 28.0,
+                        spread: 0.0,
+                        color: egui::Color32::from_black_alpha(90),
+                    }),
+            )
+            .show(ui.ctx(), |ui| {
+                ui.set_width(440.0);
+                ui.label(
+                    RichText::new("Are you sure you want to uninstall SimpleClip?")
+                        .font(egui::FontId::new(18.0, theme::semibold()))
+                        .color(p.text),
+                );
+                ui.add_space(4.0);
+                widgets::secondary(
+                    ui,
+                    "The app and the background service will be removed. Your settings stay in case you come back.",
+                );
+                ui.add_space(14.0);
+                widgets::card(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                RichText::new("Also delete my clips")
+                                    .font(egui::FontId::new(14.0, theme::semibold()))
+                                    .color(p.text),
+                            );
+                            widgets::secondary(
+                                ui,
+                                if clips == 0 {
+                                    "No clips found. They would go to the Recycle Bin.".to_string()
+                                } else {
+                                    format!(
+                                        "Moves {clips} clips and screenshots to the Recycle Bin."
+                                    )
+                                },
+                            );
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            widgets::toggle(ui, &mut wipe);
+                        });
+                    });
+                });
+                ui.add_space(14.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.label(
+                        RichText::new("If you enjoyed SimpleClip, a star on GitHub helps a lot:")
+                            .size(13.0)
+                            .color(p.text_2),
+                    );
+                    ui.hyperlink_to(
+                        "star the project",
+                        "https://github.com/whoevenisxeno/simpleclip-windows",
+                    );
+                });
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if widgets::primary_button(ui, None, "Uninstall").clicked() {
+                        go = true;
+                    }
+                    if widgets::quiet_button(ui, None, "Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+    }
+    if cancel {
+        asking = false;
+        wipe = false;
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(ask_id, asking);
+        d.insert_temp(wipe_id, wipe);
+    });
     if go {
+        if wipe {
+            for path in app.gallery.all_paths() {
+                // Recycle Bin only: nothing here is deleted for good.
+                let _ = trash::delete(&path);
+            }
+        }
         if let Some(exe) = exe {
             crate::update::Updater::start_uninstall(&exe);
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

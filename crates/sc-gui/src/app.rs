@@ -440,6 +440,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("trim", true),
     ("player", true),
     ("update", true),
+    ("uninstall", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -563,6 +564,7 @@ impl ScApp {
                 "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed" | "details"
                 | "bookmarks" | "newfolder" => Screen::Gallery,
                 "update" => Screen::Dashboard,
+                "uninstall" => Screen::Settings,
                 "settings" => Screen::Settings,
                 "trim" | "player" => {
                     let first = self.gallery.first_video();
@@ -585,6 +587,9 @@ impl ScApp {
                     }
                 }
                 "bookmarks" => self.sheet.manage = true,
+                "uninstall" => {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("uninstall-ask"), true))
+                }
                 "update" => {
                     #[cfg(windows)]
                     self.updater.demo();

@@ -146,7 +146,7 @@ impl Updater {
     /// Run the uninstaller after this app has closed (it can not replace files in use).
     pub fn start_uninstall(exe: &std::path::Path) {
         use std::os::windows::process::CommandExt;
-        let script = format!("ping -n 3 127.0.0.1 >nul & \"{}\"", exe.display());
+        let script = format!("ping -n 3 127.0.0.1 >nul & \"{}\" /SILENT", exe.display());
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)
