@@ -207,6 +207,9 @@ impl Updater {
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(script)
+            // Test switches must not leak into the relaunched app (it would update again).
+            .env_remove("SC_UPDATE_AUTO")
+            .env_remove("SC_UPDATE_PRETEND_VERSION")
             .creation_flags(0x0800_0000) // no console window (DETACHED_PROCESS would make cmd open one)
             .spawn();
     }
