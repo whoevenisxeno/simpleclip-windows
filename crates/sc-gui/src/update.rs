@@ -144,10 +144,19 @@ impl Updater {
             .unwrap_or_default();
         let _ = std::fs::create_dir_all(&logs);
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C1F2D7E-4A6B-4C55-9E2B-5D3B8A1F0C11}_is1";
+        // A small script file, run after this app has closed. The service is stopped
+        // directly (it keeps nothing on disk that a stop could lose). The "Apps and
+        // features" version is only updated for a real installed copy.
         let script = format!(
-            // The service is stopped directly (it keeps nothing on disk that a stop could lose).
-            // The "Apps and features" version is only updated for a real installed copy.
-            "ping -n 2 127.0.0.1 >nul & taskkill /f /im scd.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul & robocopy \"{staged}\" \"{dir}\" /E /R:15 /W:1 /XF *.ps1 /NP /NDL > \"{log}\" 2>&1 & if exist \"{uninstaller}\" reg add \"{key}\" /v DisplayVersion /d {version} /f >nul 2>&1 & rmdir /s /q \"{stage_root}\" & start \"\" \"{scd}\" & start \"\" \"{gui}\"",
+            "@echo off\r\n\
+             ping -n 2 127.0.0.1 >nul\r\n\
+             taskkill /f /im scd.exe >nul 2>&1\r\n\
+             ping -n 2 127.0.0.1 >nul\r\n\
+             robocopy \"{staged}\" \"{dir}\" /E /R:15 /W:1 /XF *.ps1 /NP /NDL > \"{log}\" 2>&1\r\n\
+             if exist \"{uninstaller}\" reg add \"{key}\" /v DisplayVersion /d {version} /f >nul 2>&1\r\n\
+             rmdir /s /q \"{stage_root}\"\r\n\
+             start \"\" \"{scd}\"\r\n\
+             start \"\" \"{gui}\"\r\n",
             uninstaller = dir.join("unins000.exe").display(),
             scd = dir.join("scd.exe").display(),
             gui = dir.join("sc-gui.exe").display(),
@@ -156,9 +165,13 @@ impl Updater {
             log = logs.join("update.log").display(),
             stage_root = update_dir().display(),
         );
+        let script_path = std::env::temp_dir().join("SimpleClip-update.cmd");
+        if std::fs::write(&script_path, script).is_err() {
+            return;
+        }
         let _ = std::process::Command::new("cmd")
             .arg("/C")
-            .raw_arg(script)
+            .raw_arg(format!("\"{}\"", script_path.display()))
             // Test switches must not leak into the relaunched app (it would update again).
             .env_remove("SC_UPDATE_AUTO")
             .env_remove("SC_UPDATE_PRETEND_VERSION")
@@ -542,6 +555,9 @@ pub fn clean_old_downloads() {
     };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
+        if name == "SimpleClip-update.cmd" {
+            let _ = std::fs::remove_file(e.path());
+        }
         if name.starts_with("SimpleClip-") && name.ends_with("-Setup.exe") {
             let _ = std::fs::remove_file(e.path());
         }
