@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.9.1
+
+### Fixed
+- An update could leave SimpleClip closed for about 20 seconds before it came back. The service is now stopped straight away, so the restart takes a few seconds.
+- Updating a copy that is not installed no longer touches the version shown in Apps and features.
+
 ## 4.9.0
 
 ### Changed
