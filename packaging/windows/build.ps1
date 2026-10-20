@@ -135,6 +135,19 @@ if (-not $NoZip) {
     Step "Wrote $zipPath"
 }
 
+# --- Update packages (used by the in-app updater, which never runs the installer) ---
+# The small package holds only the programs. dlls.sha256 lists each FFmpeg library's
+# hash, so an update can tell whether the libraries changed (then it needs the full zip).
+$appZip = Join-Path $root "dist\SimpleClip-$version-app.zip"
+Remove-Item $appZip -ErrorAction SilentlyContinue
+Compress-Archive -Path "$stage\scd.exe", "$stage\sc.exe", "$stage\sc-gui.exe" -DestinationPath $appZip
+Step "Wrote $appZip"
+$dllList = Join-Path $root "dist\SimpleClip-$version-dlls.sha256"
+Get-ChildItem $stage -Filter *.dll | Sort-Object Name | ForEach-Object {
+    "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+} | Set-Content $dllList -Encoding ascii
+Step "Wrote $dllList"
+
 # --- Installer (Setup.exe) ---------------------------------------------------
 if (-not $NoInstaller) {
     $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
