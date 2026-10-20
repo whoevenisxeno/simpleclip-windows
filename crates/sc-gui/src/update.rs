@@ -29,7 +29,8 @@ pub enum State {
     UpToDate,
     Available(Release),
     Downloading(Release),
-    /// The installer is downloaded; the app should hand over to it and close.
+    /// The update is downloaded and unpacked (the folder holding the new files); the
+    /// app should hand over to the copy step and close.
     Ready(PathBuf),
     Failed(String),
 }
@@ -45,8 +46,9 @@ pub struct Updater {
     /// The installer has been launched (so it is only launched once, however many
     /// frames pass before the window closes).
     handed_over: bool,
-    /// Bytes of the installer downloaded so far.
+    /// Bytes of the update package downloaded so far, and its total size.
     progress: Arc<AtomicU64>,
+    package_size: Arc<AtomicU64>,
     /// The release being installed, kept for the progress view.
     installing: Option<Release>,
     /// When the download finished (the app waits a moment so you can see it).
@@ -63,6 +65,7 @@ impl Default for Updater {
             forced_started: false,
             handed_over: false,
             progress: Arc::new(AtomicU64::new(0)),
+            package_size: Arc::new(AtomicU64::new(0)),
             installing: None,
             ready_since: None,
         }
@@ -105,79 +108,24 @@ impl Updater {
         });
     }
 
-    /// Download the installer in the background; the state becomes `Ready` when done.
-    /// The size on disk is polled so the dialog can show a progress bar.
+    /// Download the update in the background and unpack it; the state becomes `Ready`
+    /// when the new files are waiting in a staging folder. SimpleClip is updated in
+    /// place: the installer is never run. The size on disk is polled so the dialog
+    /// can show a progress bar.
     fn download(&mut self, r: Release, ctx: &egui::Context) {
-        use std::os::windows::process::CommandExt;
         self.progress.store(0, Ordering::Relaxed);
+        self.package_size.store(0, Ordering::Relaxed);
         self.installing = Some(r.clone());
         self.ready_since = None;
         Self::set(&self.state, State::Downloading(r.clone()), ctx);
-        let (state, ctx, progress) = (self.state.clone(), ctx.clone(), self.progress.clone());
+        let (state, ctx) = (self.state.clone(), ctx.clone());
+        let (progress, total) = (self.progress.clone(), self.package_size.clone());
         std::thread::spawn(move || {
-            let dest = std::env::temp_dir().join(format!("SimpleClip-{}-Setup.exe", r.version));
-            let _ = std::fs::remove_file(&dest);
-            let result = (|| -> Result<(), String> {
-                let mut child = std::process::Command::new("curl.exe")
-                    .args([
-                        "-fsSL",
-                        "--retry",
-                        "2",
-                        // Give up on a stalled connection instead of waiting for ever.
-                        "--max-time",
-                        "900",
-                        "--speed-time",
-                        "30",
-                        "--speed-limit",
-                        "1024",
-                        "-H",
-                        "User-Agent: SimpleClip",
-                        "-o",
-                    ])
-                    .arg(&dest)
-                    .arg(&r.url)
-                    .creation_flags(0x0800_0000)
-                    .spawn()
-                    .map_err(|e| format!("couldn't run curl: {e}"))?;
-                loop {
-                    progress.store(
-                        std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0),
-                        Ordering::Relaxed,
-                    );
-                    ctx.request_repaint();
-                    match child.try_wait() {
-                        Ok(Some(status)) if status.success() => break,
-                        Ok(Some(_)) => return Err("the download failed".to_string()),
-                        Ok(None) => std::thread::sleep(Duration::from_millis(120)),
-                        Err(e) => return Err(e.to_string()),
-                    }
-                }
-                let got = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-                if got == 0 || (r.size > 0 && got != r.size) {
-                    return Err("the download was incomplete".to_string());
-                }
-                // GitHub publishes each file's SHA-256; refuse anything that does not match.
-                if let Some(want) = r.sha256.as_deref() {
-                    match sha256_of(&dest) {
-                        Some(have) if have.eq_ignore_ascii_case(want) => {}
-                        _ => {
-                            return Err(
-                                "the download did not match its checksum, so it was not installed"
-                                    .to_string(),
-                            );
-                        }
-                    }
-                }
-                progress.store(got, Ordering::Relaxed);
-                Ok(())
-            })();
-            if result.is_err() {
-                let _ = std::fs::remove_file(&dest);
-            }
+            let result = prepare_update(&r, &progress, &total, &ctx);
             Self::set(
                 &state,
                 match result {
-                    Ok(()) => State::Ready(dest),
+                    Ok(root) => State::Ready(root),
                     Err(e) => State::Failed(e),
                 },
                 &ctx,
@@ -185,24 +133,26 @@ impl Updater {
         });
     }
 
-    /// Run the downloaded installer after this app has closed, then reopen the
-    /// daemon and the app from the install folder.
-    fn hand_over(setup: &std::path::Path) {
+    /// After this app has closed: stop the daemon, copy the new files over the old
+    /// ones (only the files that differ), then start the daemon and the app again.
+    /// No installer runs, so settings, shortcuts and the uninstaller stay as they are.
+    fn hand_over(staged: &std::path::Path, version: &str) {
         use std::os::windows::process::CommandExt;
-        let dir = std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
-            .filter(|d| d.join("unins000.exe").exists())
-            .or_else(|| {
-                std::env::var_os("LOCALAPPDATA")
-                    .map(|l| PathBuf::from(l).join("Programs").join("SimpleClip"))
-            })
+        let Some(dir) = install_dir() else { return };
+        let logs = directories::ProjectDirs::from("", "", "SimpleClip")
+            .map(|d| d.data_local_dir().join("logs"))
             .unwrap_or_default();
+        let _ = std::fs::create_dir_all(&logs);
+        let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C1F2D7E-4A6B-4C55-9E2B-5D3B8A1F0C11}_is1";
         let script = format!(
-            "ping -n 2 127.0.0.1 >nul & \"{}\" /SILENT /NORESTART /SUPPRESSMSGBOXES & start \"\" \"{}\" & start \"\" \"{}\"",
-            setup.display(),
-            dir.join("scd.exe").display(),
-            dir.join("sc-gui.exe").display()
+            "ping -n 2 127.0.0.1 >nul & \"{sc}\" quit & ping -n 2 127.0.0.1 >nul & taskkill /f /im scd.exe >nul 2>&1 & robocopy \"{staged}\" \"{dir}\" /E /R:15 /W:1 /XF *.ps1 /NP /NDL > \"{log}\" 2>&1 & reg query \"{key}\" >nul 2>&1 && reg add \"{key}\" /v DisplayVersion /d {version} /f >nul 2>&1 & rmdir /s /q \"{stage_root}\" & start \"\" \"{scd}\" & start \"\" \"{gui}\"",
+            sc = dir.join("sc.exe").display(),
+            scd = dir.join("scd.exe").display(),
+            gui = dir.join("sc-gui.exe").display(),
+            dir = dir.display(),
+            staged = staged.display(),
+            log = logs.join("update.log").display(),
+            stage_root = update_dir().display(),
         );
         let _ = std::process::Command::new("cmd")
             .arg("/C")
@@ -254,9 +204,9 @@ impl Updater {
             *s = State::Available(Release {
                 version: "4.2.0".into(),
                 notes: notes.into(),
-                url: String::new(),
-                size: 0,
-                sha256: None,
+                app: None,
+                full: None,
+                dlls: None,
             });
         }
         self.open = true;
@@ -276,7 +226,12 @@ impl Updater {
             if since.elapsed() >= Duration::from_millis(1400) {
                 if !self.handed_over {
                     self.handed_over = true;
-                    Self::hand_over(&p);
+                    let version = self
+                        .installing
+                        .as_ref()
+                        .map(|r| r.version.clone())
+                        .unwrap_or_default();
+                    Self::hand_over(&p, &version);
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
@@ -350,6 +305,7 @@ impl Updater {
         let downloading = matches!(state, State::Downloading(_) | State::Ready(_));
         let finished = matches!(state, State::Ready(_));
         let got = self.progress.load(Ordering::Relaxed);
+        let pkg = self.package_size.load(Ordering::Relaxed);
         let mut close = false;
         let mut install = false;
         egui::Window::new("update-window")
@@ -409,8 +365,8 @@ impl Updater {
                     });
                 ui.add_space(14.0);
                 if downloading {
-                    let frac = if r.size > 0 {
-                        (got as f32 / r.size as f32).clamp(0.0, 1.0)
+                    let frac = if pkg > 0 {
+                        (got as f32 / pkg as f32).clamp(0.0, 1.0)
                     } else {
                         0.0
                     };
@@ -426,11 +382,11 @@ impl Updater {
                         ui,
                         if finished {
                             "Download finished. Installing the update. SimpleClip reopens by itself in a moment.".to_string()
-                        } else if r.size > 0 {
+                        } else if pkg > 0 {
                             format!(
                                 "Downloading\u{2026} {:.1} of {:.1} MB ({:.0}%)",
                                 mb(got),
-                                mb(r.size),
+                                mb(pkg),
                                 frac * 100.0
                             )
                         } else {
@@ -539,11 +495,12 @@ impl Updater {
         let r = Release {
             version: version.into(),
             notes: "## What changed\n\n### Added\n- A lot of things\n\n### Fixed\n- A lot of other things\n".into(),
-            url: String::new(),
-            size: 58 * 1024 * 1024,
-            sha256: None,
+            app: None,
+            full: None,
+            dlls: None,
         };
         self.progress.store(24 * 1024 * 1024, Ordering::Relaxed);
+        self.package_size.store(58 * 1024 * 1024, Ordering::Relaxed);
         self.installing = Some(r.clone());
         self.forced_started = true;
         if let Ok(mut s) = self.state.lock() {
@@ -587,4 +544,186 @@ pub fn clean_old_downloads() {
             let _ = std::fs::remove_file(e.path());
         }
     }
+}
+
+/// The folder SimpleClip is running from (an installed copy, or a portable one).
+fn install_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(|p| p.to_path_buf())
+}
+
+/// Where a downloaded update is unpacked before it is copied into place.
+fn update_dir() -> PathBuf {
+    directories::ProjectDirs::from("", "", "SimpleClip")
+        .map(|d| d.data_local_dir().join("update"))
+        .unwrap_or_else(|| std::env::temp_dir().join("SimpleClip-update"))
+}
+
+/// Are the FFmpeg libraries in `dir` the same ones this release ships? Then the
+/// small app-only package is enough. The release lists each library's SHA-256.
+fn libraries_unchanged(r: &Release, dir: &std::path::Path) -> bool {
+    let Some(list) = &r.dlls else {
+        return true;
+    };
+    let Ok(text) = sc_core::update::curl(&[&list.url]) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&text);
+    let mut seen = 0;
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        // A plain file name only, never a path.
+        if name.contains(['\\', '/', ':']) {
+            return false;
+        }
+        match sha256_of(&dir.join(name)) {
+            Some(have) if have.eq_ignore_ascii_case(hash) => seen += 1,
+            _ => return false,
+        }
+    }
+    seen > 0
+}
+
+/// Download an asset to `dest`, showing progress, and check its size and SHA-256.
+fn download_file(
+    asset: &sc_core::update::Asset,
+    dest: &std::path::Path,
+    progress: &AtomicU64,
+    ctx: &egui::Context,
+) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let _ = std::fs::remove_file(dest);
+    let result = (|| -> Result<(), String> {
+        let mut child = std::process::Command::new("curl.exe")
+            .args([
+                "-fsSL",
+                "--retry",
+                "2",
+                // Give up on a stalled connection instead of waiting for ever.
+                "--max-time",
+                "900",
+                "--speed-time",
+                "30",
+                "--speed-limit",
+                "1024",
+                "-H",
+                "User-Agent: SimpleClip",
+                "-o",
+            ])
+            .arg(dest)
+            .arg(&asset.url)
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .map_err(|e| format!("couldn't run curl: {e}"))?;
+        loop {
+            progress.store(
+                std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0),
+                Ordering::Relaxed,
+            );
+            ctx.request_repaint();
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => break,
+                Ok(Some(_)) => return Err("the download failed".to_string()),
+                Ok(None) => std::thread::sleep(Duration::from_millis(120)),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        let got = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+        if got == 0 || (asset.size > 0 && got != asset.size) {
+            return Err("the download was incomplete".to_string());
+        }
+        // GitHub publishes each file's SHA-256; refuse anything that does not match.
+        if let Some(want) = asset.sha256.as_deref() {
+            match sha256_of(dest) {
+                Some(have) if have.eq_ignore_ascii_case(want) => {}
+                _ => {
+                    return Err(
+                        "the download did not match its checksum, so it was not installed"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        progress.store(got, Ordering::Relaxed);
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    result
+}
+
+/// Pick the right package, download and check it, and unpack it into a staging
+/// folder. Returns the folder holding the new files.
+fn prepare_update(
+    r: &Release,
+    progress: &AtomicU64,
+    total: &AtomicU64,
+    ctx: &egui::Context,
+) -> Result<PathBuf, String> {
+    use std::os::windows::process::CommandExt;
+    let dir = install_dir().ok_or("couldn't find the SimpleClip folder")?;
+    // The new files are copied over the old ones, so the folder must be writable.
+    let probe = dir.join(".update-write-test");
+    if std::fs::write(&probe, b"x").is_err() {
+        return Err(
+            "SimpleClip can't update itself in this folder. Download the new version from the release page."
+                .to_string(),
+        );
+    }
+    let _ = std::fs::remove_file(&probe);
+
+    // The small app-only package, unless the FFmpeg libraries changed too.
+    let asset = match (&r.app, &r.full) {
+        (Some(app), full) => {
+            if libraries_unchanged(r, &dir) {
+                app
+            } else {
+                full.as_ref()
+                    .ok_or("this update also needs new libraries, which were not published")?
+            }
+        }
+        (None, Some(full)) => full,
+        (None, None) => return Err("this release has no update package".to_string()),
+    };
+    total.store(asset.size, Ordering::Relaxed);
+
+    let zip = std::env::temp_dir().join(format!("SimpleClip-{}-update.zip", r.version));
+    download_file(asset, &zip, progress, ctx)?;
+
+    let stage = update_dir().join(&r.version);
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(&stage).map_err(|e| format!("couldn't prepare the update: {e}"))?;
+    // `tar` ships with Windows 10 and 11 and reads zip files.
+    let unpacked = std::process::Command::new("tar")
+        .arg("-xf")
+        .arg(&zip)
+        .arg("-C")
+        .arg(&stage)
+        .creation_flags(0x0800_0000)
+        .status();
+    let _ = std::fs::remove_file(&zip);
+    if !unpacked.map(|s| s.success()).unwrap_or(false) {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err("couldn't unpack the update".to_string());
+    }
+    // The full package nests everything in a SimpleClip folder.
+    let root = if stage.join("sc-gui.exe").exists() {
+        stage.clone()
+    } else {
+        stage.join("SimpleClip")
+    };
+    if ["scd.exe", "sc.exe", "sc-gui.exe"]
+        .iter()
+        .any(|f| !root.join(f).exists())
+    {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err("the update package was incomplete, so it was not installed".to_string());
+    }
+    Ok(root)
 }
