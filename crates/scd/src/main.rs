@@ -105,6 +105,7 @@ fn main() -> Result<()> {
                 }
             })
             .context("ipc thread")?;
+        win::announce_startup(daemon.clone());
         // The tray owns the main thread's message loop until the user quits.
         win::run_tray(daemon);
         tracing::info!("scd quitting");

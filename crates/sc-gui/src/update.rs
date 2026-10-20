@@ -8,24 +8,17 @@
 use crate::theme::{self, pal};
 use crate::widgets;
 use egui::{Align2, Color32, FontId, RichText, Rounding, Stroke};
+use sc_core::update::curl;
+pub use sc_core::update::Release;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// The version this build is.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
-const API: &str = "https://api.github.com/repos/whoevenisxeno/simpleclip-windows/releases/latest";
 const PAGE: &str = "https://github.com/whoevenisxeno/simpleclip-windows/releases/latest";
 /// How often a running app looks again.
 const RECHECK: Duration = Duration::from_secs(6 * 3600);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Release {
-    pub version: String,
-    pub notes: String,
-    pub url: String,
-    pub size: u64,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
@@ -58,77 +51,6 @@ impl Default for Updater {
     }
 }
 
-/// `4.1.0` / `v4.1.0` as numbers.
-fn parse(v: &str) -> Vec<u64> {
-    v.trim()
-        .trim_start_matches(['v', 'V'])
-        .split('.')
-        .map(|p| {
-            p.chars()
-                .take_while(char::is_ascii_digit)
-                .collect::<String>()
-                .parse()
-                .unwrap_or(0)
-        })
-        .collect()
-}
-
-/// Is `remote` a higher version than `local`?
-pub fn is_newer(remote: &str, local: &str) -> bool {
-    let (mut r, mut l) = (parse(remote), parse(local));
-    let n = r.len().max(l.len()).max(3);
-    r.resize(n, 0);
-    l.resize(n, 0);
-    r > l
-}
-
-fn curl(args: &[&str]) -> Result<Vec<u8>, String> {
-    use std::os::windows::process::CommandExt;
-    let out = std::process::Command::new("curl.exe")
-        .args(["-fsSL", "--max-time", "30", "-H", "User-Agent: SimpleClip"])
-        .args(args)
-        .creation_flags(0x0800_0000) // no console window
-        .output()
-        .map_err(|e| format!("couldn't run curl: {e}"))?;
-    if out.status.success() {
-        Ok(out.stdout)
-    } else {
-        Err(format!(
-            "couldn't reach GitHub ({})",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    }
-}
-
-/// Read the latest release's JSON into a [`Release`], or `None` when it isn't newer.
-fn parse_release(json: &[u8]) -> Result<Option<Release>, String> {
-    let v: serde_json::Value =
-        serde_json::from_slice(json).map_err(|_| "unexpected reply from GitHub".to_string())?;
-    let tag = v["tag_name"].as_str().ok_or("no release found")?;
-    if !is_newer(tag, CURRENT) {
-        return Ok(None);
-    }
-    let asset = v["assets"]
-        .as_array()
-        .and_then(|a| {
-            a.iter().find(|a| {
-                a["name"]
-                    .as_str()
-                    .is_some_and(|n| n.ends_with("-Setup.exe"))
-            })
-        })
-        .ok_or("this release has no installer attached")?;
-    Ok(Some(Release {
-        version: tag.trim_start_matches(['v', 'V']).to_string(),
-        notes: v["body"].as_str().unwrap_or("").to_string(),
-        url: asset["browser_download_url"]
-            .as_str()
-            .ok_or("installer has no download link")?
-            .to_string(),
-        size: asset["size"].as_u64().unwrap_or(0),
-    }))
-}
-
 impl Updater {
     fn set(state: &Arc<Mutex<State>>, s: State, ctx: &egui::Context) {
         if let Ok(mut g) = state.lock() {
@@ -150,7 +72,7 @@ impl Updater {
         Self::set(&self.state, State::Checking, ctx);
         let (state, ctx) = (self.state.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let next = match curl(&[API]).and_then(|j| parse_release(&j)) {
+            let next = match sc_core::update::fetch_latest(CURRENT) {
                 Ok(Some(r)) => State::Available(r),
                 Ok(None) => State::UpToDate,
                 Err(e) => State::Failed(e),
@@ -210,6 +132,25 @@ impl Updater {
             .arg("/C")
             .raw_arg(script)
             .creation_flags(0x0800_0008) // detached, no console window
+            .spawn();
+    }
+
+    /// The uninstaller of this installed copy, if this is one (not for a portable folder).
+    pub fn uninstall_exe() -> Option<PathBuf> {
+        std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.join("unins000.exe")))
+            .filter(|p| p.exists())
+    }
+
+    /// Run the uninstaller after this app has closed (it can not replace files in use).
+    pub fn start_uninstall(exe: &std::path::Path) {
+        use std::os::windows::process::CommandExt;
+        let script = format!("ping -n 3 127.0.0.1 >nul & \"{}\"", exe.display());
+        let _ = std::process::Command::new("cmd")
+            .arg("/C")
+            .raw_arg(script)
+            .creation_flags(0x0800_0008)
             .spawn();
     }
 
@@ -408,35 +349,5 @@ fn changelog(ui: &mut egui::Ui, notes: &str) {
         } else {
             ui.add(egui::Label::new(RichText::new(t).size(13.0).color(p.text_2)).wrap());
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn versions_compare_numerically() {
-        assert!(is_newer("v4.1.0", "4.0.0"));
-        assert!(is_newer("4.0.1", "4.0.0"));
-        assert!(is_newer("5.0.0", "4.9.9"));
-        assert!(is_newer("4.10.0", "4.9.0"));
-        assert!(!is_newer("4.0.0", "4.0.0"));
-        assert!(!is_newer("v3.9.9", "4.0.0"));
-        assert!(is_newer("4.0.0.1", "4.0.0"));
-    }
-
-    #[test]
-    fn release_json_is_read() {
-        let json = br###"{"tag_name":"v99.0.0","body":"## 99.0.0\n- x","assets":[
-            {"name":"SimpleClip-99.0.0-win64.zip","browser_download_url":"z","size":1},
-            {"name":"SimpleClip-99.0.0-Setup.exe","browser_download_url":"https://x/setup.exe","size":42}]}"###;
-        let r = parse_release(json).unwrap().unwrap();
-        assert_eq!(r.version, "99.0.0");
-        assert_eq!(r.url, "https://x/setup.exe");
-        assert_eq!(r.size, 42);
-        // Not newer: nothing to offer.
-        let old = br#"{"tag_name":"v0.0.1","assets":[]}"#;
-        assert!(parse_release(old).unwrap().is_none());
     }
 }

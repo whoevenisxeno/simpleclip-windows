@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.2.0
+
+### Added
+- An Uninstall button at the bottom of Settings. It asks first, then closes the app and runs the uninstaller. Your clips are kept. It only shows for an installed copy, not a portable folder.
+- A card when SimpleClip starts (for example when you sign in to Windows): it says SimpleClip is running in the background, shows the save hotkey, and checks for updates, telling you if a newer version is out or that you are up to date. It follows the "Show a card when a clip is saved" setting, and the update line follows "Check for updates".
+
 ## 4.1.0
 
 ### Added

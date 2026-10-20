@@ -251,6 +251,53 @@ fn screenshot_from_hotkey(daemon: &Daemon) {
 
 // --------------------------------------------------------- notifications --
 
+/// A card shortly after start-up: SimpleClip is running in the background, and
+/// whether a newer version is out. Waits a little for the network at sign-in.
+pub fn announce_startup(daemon: Daemon) {
+    std::thread::Builder::new()
+        .name("sc-startup-card".into())
+        .spawn(move || {
+            let (notify_on, check, hotkey, secs) = {
+                let c = daemon.config.read().unwrap();
+                (
+                    c.general.notify,
+                    c.general.update_check,
+                    c.hotkeys.save.clone(),
+                    c.buffer.replay_duration_secs,
+                )
+            };
+            if !notify_on {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let mut lines = vec![format!("{hotkey} saves the last {secs}s")];
+            if check {
+                let current = env!("CARGO_PKG_VERSION");
+                let mut result = Err(String::new());
+                for attempt in 0..4 {
+                    result = sc_core::update::fetch_latest(current);
+                    if result.is_ok() {
+                        break;
+                    }
+                    if attempt < 3 {
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                    }
+                }
+                lines.push(match result {
+                    Ok(Some(r)) => format!("Update {} is available. Open SimpleClip.", r.version),
+                    Ok(None) => format!("You are up to date ({current})"),
+                    Err(_) => "Couldn't check for updates".to_string(),
+                });
+            }
+            crate::popup::show(crate::popup::Popup {
+                ok: true,
+                title: "SimpleClip is running".into(),
+                lines,
+            });
+        })
+        .ok();
+}
+
 /// Show a one-line popup in the top-right corner (errors, hotkey problems).
 pub fn notify(title: &str, body: &str) {
     crate::popup::show(crate::popup::Popup::simple(

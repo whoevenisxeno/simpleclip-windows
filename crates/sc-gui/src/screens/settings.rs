@@ -387,4 +387,49 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
                 }
             });
         });
+
+    #[cfg(windows)]
+    uninstall_section(app, ui);
+}
+
+/// A button at the very bottom to remove SimpleClip (asks first).
+#[cfg(windows)]
+fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
+    ui.add_space(18.0);
+    let _ = app;
+    let exe = crate::update::Updater::uninstall_exe();
+    let id = egui::Id::new("uninstall-confirm");
+    let mut asking: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
+    let mut go = false;
+    section(ui, Some("Uninstall"), |s| {
+        let hint = match (&exe, asking) {
+            (None, _) => "This copy was not installed, so delete its folder to remove it.",
+            (_, true) => {
+                "Your clips, bookmarks and settings are kept. Remove them by hand if you want."
+            }
+            _ => "Removes the app and the background service. Your clips are kept.",
+        };
+        s.row("Uninstall SimpleClip", Some(hint), |ui| {
+            if exe.is_none() {
+                return;
+            }
+            if asking {
+                if widgets::primary_button(ui, None, "Yes, uninstall").clicked() {
+                    go = true;
+                }
+                if widgets::quiet_button(ui, None, "Cancel").clicked() {
+                    asking = false;
+                }
+            } else if widgets::quiet_button(ui, None, "Uninstall{2026}").clicked() {
+                asking = true;
+            }
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(id, asking));
+    if go {
+        if let Some(exe) = exe {
+            crate::update::Updater::start_uninstall(&exe);
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
 }
