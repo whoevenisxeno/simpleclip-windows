@@ -145,8 +145,10 @@ impl Updater {
         let _ = std::fs::create_dir_all(&logs);
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C1F2D7E-4A6B-4C55-9E2B-5D3B8A1F0C11}_is1";
         let script = format!(
-            "ping -n 2 127.0.0.1 >nul & \"{sc}\" quit & ping -n 2 127.0.0.1 >nul & taskkill /f /im scd.exe >nul 2>&1 & robocopy \"{staged}\" \"{dir}\" /E /R:15 /W:1 /XF *.ps1 /NP /NDL > \"{log}\" 2>&1 & reg query \"{key}\" >nul 2>&1 && reg add \"{key}\" /v DisplayVersion /d {version} /f >nul 2>&1 & rmdir /s /q \"{stage_root}\" & start \"\" \"{scd}\" & start \"\" \"{gui}\"",
-            sc = dir.join("sc.exe").display(),
+            // The service is stopped directly (it keeps nothing on disk that a stop could lose).
+            // The "Apps and features" version is only updated for a real installed copy.
+            "ping -n 2 127.0.0.1 >nul & taskkill /f /im scd.exe >nul 2>&1 & ping -n 2 127.0.0.1 >nul & robocopy \"{staged}\" \"{dir}\" /E /R:15 /W:1 /XF *.ps1 /NP /NDL > \"{log}\" 2>&1 & if exist \"{uninstaller}\" reg add \"{key}\" /v DisplayVersion /d {version} /f >nul 2>&1 & rmdir /s /q \"{stage_root}\" & start \"\" \"{scd}\" & start \"\" \"{gui}\"",
+            uninstaller = dir.join("unins000.exe").display(),
             scd = dir.join("scd.exe").display(),
             gui = dir.join("sc-gui.exe").display(),
             dir = dir.display(),
