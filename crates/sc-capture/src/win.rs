@@ -1,4 +1,4 @@
-﻿//! Windows capture: Windows Graphics Capture for video, WASAPI loopback for
+//! Windows capture: Windows Graphics Capture for video, WASAPI loopback for
 //! desktop audio. Both are stamped against one shared `Instant` epoch so audio
 //! and video stay aligned in the replay buffer.
 
