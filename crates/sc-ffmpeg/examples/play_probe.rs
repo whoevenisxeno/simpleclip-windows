@@ -9,11 +9,14 @@ fn main() {
     let info = sc_ffmpeg::media_info(&path).unwrap();
     println!(
         "{}x{} {:.2}s audio={}",
-        info.width, info.height, info.duration, info.has_audio
+        info.width,
+        info.height,
+        info.duration,
+        info.audio_streams > 0
     );
     let stop = Arc::new(AtomicBool::new(false));
     let v = sc_ffmpeg::spawn_video(&path, start, 960, stop.clone());
-    let au = sc_ffmpeg::spawn_audio(&path, start, stop);
+    let au = sc_ffmpeg::spawn_audio(&path, start, 0, stop);
     let (mut n, mut first, mut last) = (0, f64::NAN, 0.0);
     for f in v.iter() {
         if n == 0 {

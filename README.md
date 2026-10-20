@@ -24,14 +24,19 @@ job and does not need an account.
 - **Clip gallery.** Previews, search, and grouping by game, date, folder or bookmark.
 - **Rename, folders, bookmarks, notes.** All inside the app. Bookmarks are labels you create and
   colour yourself. Nothing is ever bookmarked automatically.
-- **Trim.** Pick a start and end with live frame previews, play the result before you commit, then
-  either keep the original and make a trimmed copy, or replace the original (it goes to the Recycle
+- **Trim with a live player.** The player is built into the app. It plays and loops only the part
+  you selected, and follows the handles while you drag them, so you see the cut as you make it.
+  Then either keep the original and make a trimmed copy, or replace the original (it goes to the Recycle
   Bin, not deleted for good). Trimming copies the stream without re-encoding, so it is instant and
   lossless, but cuts land on keyframes.
 - **Trimmed clips stay separate.** They get their own view and a small badge, and they are left out
   of the normal clip list and the Recent row on Home. You can also send them to a folder of your
   choice.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
+- **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
+  an "Update available" button appears at the top right, shows the changelog, and installs the new
+  version when you click Update now. You can turn the check off in Settings. See
+  [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Screenshots
 

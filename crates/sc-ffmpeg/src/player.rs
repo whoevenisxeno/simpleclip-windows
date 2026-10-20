@@ -47,7 +47,8 @@ pub struct MediaInfo {
     pub duration: f64,
     pub width: u32,
     pub height: u32,
-    pub has_audio: bool,
+    /// How many audio streams the clip has (mixed and separate-track clips differ).
+    pub audio_streams: usize,
 }
 
 pub fn media_info(path: &Path) -> Result<MediaInfo> {
@@ -66,7 +67,10 @@ pub fn media_info(path: &Path) -> Result<MediaInfo> {
         duration: ictx.duration() as f64 / ff::ffi::AV_TIME_BASE as f64,
         width: dec.width(),
         height: dec.height(),
-        has_audio: ictx.streams().best(ff::media::Type::Audio).is_some(),
+        audio_streams: ictx
+            .streams()
+            .filter(|s| s.parameters().medium() == ff::media::Type::Audio)
+            .count(),
     })
 }
 
@@ -199,22 +203,37 @@ fn run_video(
 /// Start decoding audio from `start` seconds, resampled to stereo f32 at
 /// [`AUDIO_RATE`]. Each message is a chunk of interleaved samples. The channel
 /// closes at the end of the clip.
-pub fn spawn_audio(path: &Path, start: f64, stop: Arc<AtomicBool>) -> Receiver<Vec<f32>> {
+pub fn spawn_audio(
+    path: &Path,
+    start: f64,
+    nth: usize,
+    stop: Arc<AtomicBool>,
+) -> Receiver<Vec<f32>> {
     let (tx, rx) = bounded(24);
     let path = path.to_path_buf();
     std::thread::spawn(move || {
         let _ = std::panic::catch_unwind(|| {
-            let _ = run_audio(&path, start, &tx, &stop);
+            let _ = run_audio(&path, start, nth, &tx, &stop);
         });
     });
     rx
 }
 
-fn run_audio(path: &PathBuf, start: f64, tx: &Sender<Vec<f32>>, stop: &AtomicBool) -> Result<()> {
+fn run_audio(
+    path: &PathBuf,
+    start: f64,
+    nth: usize,
+    tx: &Sender<Vec<f32>>,
+    stop: &AtomicBool,
+) -> Result<()> {
     crate::init()?;
     let mut ictx = ff::format::input(path).map_err(err)?;
     let (index, params, tb, offset) = {
-        let Some(s) = ictx.streams().best(ff::media::Type::Audio) else {
+        let Some(s) = ictx
+            .streams()
+            .filter(|s| s.parameters().medium() == ff::media::Type::Audio)
+            .nth(nth)
+        else {
             return Ok(());
         };
         let r = s.time_base();

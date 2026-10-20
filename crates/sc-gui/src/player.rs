@@ -1,15 +1,16 @@
 //! A small in-app video player: picture drawn as an egui texture, sound played
 //! through the default output device. Sound is the clock when there is any, so
-//! picture and voice stay together; with no sound (or no output device) a wall
-//! clock drives the picture.
+//! picture and voice stay together; with no sound (or no output device, or a
+//! device that stalls) a wall clock drives the picture.
 //!
 //! Seeking restarts the decoders at the new position. That is quick enough for
-//! short clips and keeps the decode threads simple.
+//! short clips and keeps the decode threads simple. Clips saved with separate
+//! audio tracks (game and microphone) have every track mixed for playback.
 
 use crate::theme::{icon, pal_ui};
 use crate::widgets;
 use crossbeam_channel::{Receiver, TryRecvError};
-use egui::{pos2, vec2, Align2, FontId, Rect, Rounding, Sense, Stroke, Ui};
+use egui::{pos2, vec2, Align2, FontId, Key, Rect, Rounding, Sense, Stroke, Ui};
 use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
 use sc_ffmpeg::{MediaInfo, VideoFrame, AUDIO_RATE};
 use std::path::{Path, PathBuf};
@@ -19,41 +20,67 @@ use std::time::{Duration, Instant};
 
 /// Widest picture the decoder produces.
 const MAX_WIDTH: u32 = 1280;
+/// The output device asks for samples a little before it plays them, so the
+/// count of samples handed over runs ahead of what is audible. Subtract it.
+const AUDIO_LAG: f64 = 0.09;
+/// Seconds skipped by the arrow keys.
+const SKIP: f64 = 5.0;
 
-/// Feeds decoded audio chunks to the output device and counts what was played.
-struct ChanSource {
+/// One decoded audio track being read by the output device.
+struct Track {
     rx: Receiver<Vec<f32>>,
     buf: Vec<f32>,
     i: usize,
+    ended: bool,
+}
+
+/// Mixes the decoded tracks for the output device and counts what it played.
+struct Mix {
+    tracks: Vec<Track>,
     played: Arc<AtomicU64>,
     done: Arc<AtomicBool>,
 }
 
-impl Iterator for ChanSource {
+impl Iterator for Mix {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
-        if self.i >= self.buf.len() {
-            match self.rx.try_recv() {
-                Ok(chunk) => {
-                    self.buf = chunk;
-                    self.i = 0;
-                }
-                // Decoder is behind: play silence rather than stalling the device.
-                Err(TryRecvError::Empty) => return Some(0.0),
-                Err(TryRecvError::Disconnected) => {
-                    self.done.store(true, Ordering::Relaxed);
-                    return None;
+        let mut sum = 0.0;
+        let mut alive = false;
+        for t in &mut self.tracks {
+            if t.ended {
+                continue;
+            }
+            if t.i >= t.buf.len() {
+                match t.rx.try_recv() {
+                    Ok(chunk) => {
+                        t.buf = chunk;
+                        t.i = 0;
+                    }
+                    // Decoder is behind: this track is silent for now.
+                    Err(TryRecvError::Empty) => {
+                        alive = true;
+                        continue;
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        t.ended = true;
+                        continue;
+                    }
                 }
             }
+            alive = true;
+            sum += t.buf.get(t.i).copied().unwrap_or(0.0);
+            t.i += 1;
         }
-        let s = self.buf.get(self.i).copied();
-        self.i += 1;
+        if !alive {
+            self.done.store(true, Ordering::Relaxed);
+            return None;
+        }
         self.played.fetch_add(1, Ordering::Relaxed);
-        s
+        Some(sum.clamp(-1.0, 1.0))
     }
 }
 
-impl Source for ChanSource {
+impl Source for Mix {
     fn current_frame_len(&self) -> Option<usize> {
         None
     }
@@ -78,6 +105,11 @@ struct Run {
     /// Where in the clip this run began, in seconds.
     from: f64,
     began: Instant,
+    /// Pictures shown by this run, to tell "ended" from "failed to decode".
+    shown: u32,
+    /// Last sample count seen and when it last changed (detects a stalled device).
+    last_played: u64,
+    last_change: Instant,
 }
 
 impl Drop for Run {
@@ -92,6 +124,8 @@ impl Drop for Run {
 pub struct Player {
     path: PathBuf,
     info: Result<MediaInfo, String>,
+    /// Set when decoding fails part-way.
+    failed: Option<String>,
     /// Current position in seconds.
     pos: f64,
     playing: bool,
@@ -103,18 +137,44 @@ pub struct Player {
     last_tick: Instant,
     /// Show the first picture of a paused seek even though no time passes.
     want_still: bool,
-    /// Seconds being dragged to on the bar (applied on release).
+    /// Fraction being dragged to on the bar (applied on release).
     scrub: Option<f64>,
     out: Option<(OutputStream, OutputStreamHandle)>,
+    /// Only this part of the clip plays (and loops), as in the trim view.
+    range: Option<(f64, f64)>,
+    /// A paused seek waiting for a handle to stop moving, and when it was asked.
+    focus: Option<(f64, Instant)>,
 }
 
 impl Player {
+    /// Open `path` showing the picture at `at` seconds, paused.
+    pub fn open_paused(path: &Path, at: f64) -> Self {
+        let mut p = Self::open(path);
+        if p.info.is_ok() {
+            p.start_at(at, false);
+        }
+        p
+    }
+
+    /// Limit playback to `start..end` seconds. Playing loops inside it.
+    pub fn set_range(&mut self, start: f64, end: f64) {
+        self.range = Some((start, end.max(start + 0.1)));
+    }
+
+    /// Show the picture at `secs`, paused, once the caller stops asking for a moment
+    /// (so dragging a trim handle follows along without reopening the file per pixel).
+    pub fn focus(&mut self, secs: f64) {
+        self.pause();
+        self.focus = Some((secs, Instant::now()));
+    }
+
     /// Open `path` and start playing it from the beginning.
     pub fn open(path: &Path) -> Self {
         let info = sc_ffmpeg::media_info(path).map_err(|e| e.to_string());
         let mut p = Self {
             path: path.to_path_buf(),
             info,
+            failed: None,
             pos: 0.0,
             playing: false,
             muted: false,
@@ -125,6 +185,8 @@ impl Player {
             want_still: false,
             scrub: None,
             out: None,
+            range: None,
+            focus: None,
         };
         if p.info.is_ok() {
             p.start_at(0.0, true);
@@ -136,10 +198,19 @@ impl Player {
         self.info.as_ref().map(|i| i.duration).unwrap_or(0.0)
     }
 
+    /// The part of the clip being played: the whole clip, or the trim selection.
+    fn span(&self) -> (f64, f64) {
+        match self.range {
+            Some((s, e)) => (s, e.min(self.duration().max(s + 0.1))),
+            None => (0.0, self.duration()),
+        }
+    }
+
     /// Restart decoding at `secs`, playing or paused on the first picture.
     fn start_at(&mut self, secs: f64, play: bool) {
         self.run = None;
         self.pending = None;
+        self.failed = None;
         let secs = secs.clamp(0.0, (self.duration() - 0.05).max(0.0));
         self.pos = secs;
         self.playing = play;
@@ -150,9 +221,9 @@ impl Player {
         let video = sc_ffmpeg::spawn_video(&self.path, secs, MAX_WIDTH, stop.clone());
         let played = Arc::new(AtomicU64::new(0));
         let audio_done = Arc::new(AtomicBool::new(false));
-        let has_audio = self.info.as_ref().map(|i| i.has_audio).unwrap_or(false);
+        let tracks = self.info.as_ref().map(|i| i.audio_streams).unwrap_or(0);
         let mut sink = None;
-        if has_audio {
+        if tracks > 0 {
             if self.out.is_none() {
                 self.out = OutputStream::try_default().ok();
             }
@@ -162,10 +233,15 @@ impl Player {
                         s.pause();
                     }
                     s.set_volume(if self.muted { 0.0 } else { 1.0 });
-                    s.append(ChanSource {
-                        rx: sc_ffmpeg::spawn_audio(&self.path, secs, stop.clone()),
-                        buf: Vec::new(),
-                        i: 0,
+                    s.append(Mix {
+                        tracks: (0..tracks)
+                            .map(|n| Track {
+                                rx: sc_ffmpeg::spawn_audio(&self.path, secs, n, stop.clone()),
+                                buf: Vec::new(),
+                                i: 0,
+                                ended: false,
+                            })
+                            .collect(),
                         played: played.clone(),
                         done: audio_done.clone(),
                     });
@@ -185,6 +261,9 @@ impl Player {
             audio_done,
             from: secs,
             began: Instant::now(),
+            shown: 0,
+            last_played: 0,
+            last_change: Instant::now(),
         });
     }
 
@@ -196,17 +275,36 @@ impl Player {
     }
 
     fn resume(&mut self) {
-        let end = (self.duration() - 0.1).max(0.0);
-        if self.run.is_none() || self.pos >= end {
-            self.start_at(0.0, true);
+        let (lo, hi) = self.span();
+        let end = (hi - 0.1).max(lo);
+        if self.run.is_none() || self.pos >= end || self.pos < lo - 0.05 || self.failed.is_some() {
+            self.start_at(lo, true);
             return;
         }
         self.playing = true;
         self.want_still = false;
         self.last_tick = Instant::now();
-        if let Some(s) = self.run.as_ref().and_then(|r| r.sink.as_ref()) {
-            s.play();
+        if let Some(r) = self.run.as_mut() {
+            r.last_change = Instant::now();
+            if let Some(s) = r.sink.as_ref() {
+                s.play();
+            }
         }
+    }
+
+    pub fn toggle(&mut self) {
+        if self.playing {
+            self.pause();
+        } else {
+            self.resume();
+        }
+    }
+
+    fn skip(&mut self, secs: f64) {
+        let play = self.playing;
+        let (lo, hi) = self.span();
+        let to = (self.pos + secs).clamp(lo, (hi - 0.1).max(lo));
+        self.start_at(to, play);
     }
 
     fn set_muted(&mut self, m: bool) {
@@ -221,15 +319,36 @@ impl Player {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f64().min(0.25);
         self.last_tick = now;
-        let Some(run) = self.run.as_ref() else {
+        // A handle that has stopped moving: show the picture it points at.
+        if let Some((t, at)) = self.focus {
+            if at.elapsed() >= Duration::from_millis(90) {
+                self.focus = None;
+                self.start_at(t, false);
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(30));
+            }
+        }
+        let (lo, hi) = self.span();
+        let looping = self.range.is_some();
+        // Reached the end of the selection: go round again.
+        if self.playing && self.focus.is_none() && self.pos >= hi - 0.02 && looping {
+            self.start_at(lo, true);
+        }
+        let Some(run) = self.run.as_mut() else {
             return;
         };
 
         if self.playing {
             let played = run.played.load(Ordering::Relaxed);
-            let audio_live = !run.audio_done.load(Ordering::Relaxed);
+            if played != run.last_played {
+                run.last_played = played;
+                run.last_change = now;
+            }
+            // A device that stopped taking samples must not freeze the picture.
+            let stalled = now.duration_since(run.last_change) > Duration::from_millis(700);
+            let audio_live = !run.audio_done.load(Ordering::Relaxed) && !stalled;
             if audio_live && played > 0 {
-                let t = run.from + played as f64 / (2.0 * AUDIO_RATE as f64);
+                let t = run.from + played as f64 / (2.0 * AUDIO_RATE as f64) - AUDIO_LAG;
                 self.pos = self.pos.max(t);
             } else if audio_live && run.began.elapsed() < Duration::from_millis(1500) {
                 // Waiting for the first sound; hold the picture.
@@ -262,6 +381,7 @@ impl Player {
             }
         }
         if let Some(f) = show {
+            run.shown += 1;
             let img = egui::ColorImage::from_rgba_unmultiplied(
                 [f.width as usize, f.height as usize],
                 &f.rgba,
@@ -273,13 +393,47 @@ impl Player {
                 }
             }
         }
-        if closed && self.pending.is_none() && self.playing {
-            // End of the clip.
-            self.pos = self.duration();
-            self.pause();
+        if closed && self.pending.is_none() {
+            if run.shown == 0 {
+                // The decoder gave up before producing a single picture.
+                self.failed = Some("this clip could not be decoded".into());
+                self.pause();
+            } else if self.playing {
+                // End of the clip (or of its last picture).
+                if looping {
+                    self.pos = self.pos.max(hi);
+                } else {
+                    self.pos = self.duration();
+                    self.pause();
+                }
+            }
         }
-        if self.playing {
-            ctx.request_repaint_after(Duration::from_millis(8));
+        if self.playing || self.want_still {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Space plays or pauses, the arrow keys skip, as long as no text box has focus.
+    fn keys(&mut self, ui: &Ui) {
+        let ctx = ui.ctx();
+        if ctx.memory(|m| m.focused().is_some()) {
+            return;
+        }
+        let (space, left, right) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::Space),
+                i.key_pressed(Key::ArrowLeft),
+                i.key_pressed(Key::ArrowRight),
+            )
+        });
+        if space {
+            self.toggle();
+        }
+        if left {
+            self.skip(-SKIP);
+        }
+        if right {
+            self.skip(SKIP);
         }
     }
 
@@ -290,6 +444,7 @@ impl Player {
             widgets::notice(ui, p.red, &format!("Couldn't open this clip: {e}"));
             return;
         }
+        self.keys(ui);
         self.tick(ui.ctx());
 
         let (iw, ih) = self
@@ -313,53 +468,50 @@ impl Player {
                 ui.painter().text(
                     rect.center(),
                     Align2::CENTER_CENTER,
-                    "Loading\u{2026}",
+                    self.failed.as_deref().unwrap_or("Loading\u{2026}"),
                     FontId::new(12.0, egui::FontFamily::Proportional),
                     p.text_3,
                 );
             }
         }
         if resp.clicked() {
-            if self.playing {
-                self.pause();
-            } else {
-                self.resume();
-            }
+            self.toggle();
         }
 
         ui.add_space(8.0);
-        let dur = self.duration().max(0.001);
+        let (lo, hi) = self.span();
+        let dur = (hi - lo).max(0.001);
         let mut seek_to = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let (g, tip) = if self.playing {
-                (icon::PAUSE, "Pause")
+                (icon::PAUSE, "Pause (Space)")
             } else {
-                (icon::PLAY, "Play")
+                (icon::PLAY, "Play (Space)")
             };
             if widgets::icon_button(ui, g, tip, tip, false).clicked() {
-                if self.playing {
-                    self.pause();
-                } else {
-                    self.resume();
-                }
+                self.toggle();
             }
-            let shown = self.scrub.unwrap_or(self.pos).clamp(0.0, dur);
+            let shown = self
+                .scrub
+                .map(|f| f * dur)
+                .unwrap_or(self.pos - lo)
+                .clamp(0.0, dur);
             ui.label(
                 egui::RichText::new(format!("{} / {}", clock(shown), clock(dur)))
                     .size(12.0)
                     .color(p.text_2),
             );
             let bar_w = (ui.available_width() - 44.0).max(60.0);
-            if let Some(t) = bar(ui, bar_w, shown / dur, &mut self.scrub) {
-                seek_to = Some(t * dur);
+            if let Some(f) = bar(ui, bar_w, shown / dur, &mut self.scrub) {
+                seek_to = Some(lo + f * dur);
             }
-            let (g, tip, fb) = if self.muted {
-                (icon::MUTE, "Unmute", "Unmute")
+            let (g, tip) = if self.muted {
+                (icon::MUTE, "Unmute")
             } else {
-                (icon::VOLUME, "Mute", "Mute")
+                (icon::VOLUME, "Mute")
             };
-            if widgets::icon_button(ui, g, fb, tip, false).clicked() {
+            if widgets::icon_button(ui, g, tip, tip, false).clicked() {
                 let m = !self.muted;
                 self.set_muted(m);
             }

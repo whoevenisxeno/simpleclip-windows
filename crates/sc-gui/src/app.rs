@@ -56,6 +56,9 @@ pub struct ScApp {
     pub library: crate::library::Library,
     /// The open details / bookmark / new-folder sheet, if any.
     pub sheet: screens::sheet::SheetState,
+    /// Looks for newer releases and installs them.
+    #[cfg(windows)]
+    pub updater: crate::update::Updater,
     shot: Option<Shot>,
 }
 
@@ -134,6 +137,8 @@ impl ScApp {
             thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
             library: crate::library::Library::load(),
             sheet: Default::default(),
+            #[cfg(windows)]
+            updater: Default::default(),
             shot,
         }
     }
@@ -242,6 +247,12 @@ impl eframe::App for ScApp {
                         });
                 });
         }
+        #[cfg(windows)]
+        self.updater.show(
+            ctx,
+            self.cfg.general.update_check && self.shot.is_none(),
+            self.screen == Screen::Wizard,
+        );
         screens::sheet::show(self, ctx);
         // Bookmarks and notes save a moment after the last edit.
         self.library.flush_if_due();
@@ -428,6 +439,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("newfolder", true),
     ("trim", true),
     ("player", true),
+    ("update", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -550,6 +562,7 @@ impl ScApp {
                 "home" => Screen::Dashboard,
                 "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed" | "details"
                 | "bookmarks" | "newfolder" => Screen::Gallery,
+                "update" => Screen::Dashboard,
                 "settings" => Screen::Settings,
                 "trim" | "player" => {
                     let first = self.gallery.first_video();
@@ -572,6 +585,10 @@ impl ScApp {
                     }
                 }
                 "bookmarks" => self.sheet.manage = true,
+                "update" => {
+                    #[cfg(windows)]
+                    self.updater.demo();
+                }
                 "newfolder" => {
                     self.sheet.folder_dialog = Some(screens::sheet::FolderDialog {
                         name: "Best of".into(),
@@ -582,10 +599,12 @@ impl ScApp {
             }
         }
         shot.waited += 1;
-        if name == "player" && shot.waited == 25 {
-            if let Some(p) = self.gallery.first_video() {
-                self.trim.play(&p);
-            }
+        // Pick a selection (as if dragging a handle), then let it play.
+        if name == "player" && shot.waited == 40 {
+            self.trim.demo_select(3.0, 11.0);
+        }
+        if name == "player" && shot.waited == 70 {
+            self.trim.demo_play();
         }
         if shot.step == 0 && shot.waited == 1 {
             // A taller window so long pages (trim, settings) fit in one picture.

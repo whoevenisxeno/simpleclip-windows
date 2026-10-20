@@ -10,6 +10,8 @@ mod player;
 mod screens;
 mod theme;
 mod thumbs;
+#[cfg(windows)]
+mod update;
 mod widgets;
 
 use app::ScApp;

@@ -369,6 +369,22 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
                         );
                     },
                 );
+                #[cfg(windows)]
+                {
+                    s.row(
+                        "Check for updates",
+                        Some("Look on GitHub for a newer version"),
+                        |ui| {
+                            widgets::toggle(ui, &mut app.cfg.general.update_check);
+                        },
+                    );
+                    let status = app.updater.status_text();
+                    s.row("Version", Some(&status), |ui| {
+                        if widgets::quiet_button(ui, None, "Check now").clicked() {
+                            app.updater.check(ui.ctx());
+                        }
+                    });
+                }
             });
         });
 }
