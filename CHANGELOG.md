@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.9.2
+
+### Fixed
+- After an in-place update, SimpleClip could fail to start again when it was running from a folder without an uninstaller (a portable copy). The update steps now run from a small script, and the restart always happens.
+- The leftover update script is cleaned up on the next start.
+
 ## 4.9.1
 
 ### Fixed
