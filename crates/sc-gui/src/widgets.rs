@@ -381,6 +381,21 @@ fn pretty_key(k: &str) -> String {
         "ALT" => "Alt".into(),
         "SHIFT" => "Shift".into(),
         "SUPER" | "WIN" | "META" => "Win".into(),
+        "PAGEUP" => "Page up".into(),
+        "PAGEDOWN" => "Page down".into(),
+        "CAPSLOCK" => "Caps lock".into(),
+        "NUMLOCK" => "Num lock".into(),
+        "SCROLLLOCK" => "Scroll lock".into(),
+        "BACKSPACE" => "Backspace".into(),
+        "APPS" => "Menu".into(),
+        "ESCAPE" => "Esc".into(),
+        "NUMADD" => "Num +".into(),
+        "NUMSUBTRACT" => "Num -".into(),
+        "NUMMULTIPLY" => "Num *".into(),
+        "NUMDIVIDE" => "Num /".into(),
+        "NUMDECIMAL" => "Num .".into(),
+        n if n.len() == 4 && n.starts_with("NUM") => format!("Num {}", &n[3..]),
+        n if n.starts_with("VK_") => format!("Key {}", &n[3..]),
         other => {
             let mut c = other.chars();
             match c.next() {
@@ -410,8 +425,11 @@ pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
         // on combinations like Alt+F10, which Windows treats as a menu key.
         #[cfg(windows)]
         if ui.ctx().input(|i| i.focused) {
-            match keypoll::poll() {
+            let armed_id = rec_id.with("armed");
+            let armed = ui.data(|d| d.get_temp::<bool>(armed_id)).unwrap_or(false);
+            match keypoll::poll(armed) {
                 keypoll::Poll::Waiting => {}
+                keypoll::Poll::Armed => ui.data_mut(|d| d.insert_temp(armed_id, true)),
                 keypoll::Poll::Cancelled => ui.data_mut(|d| d.insert_temp(rec_id, false)),
                 keypoll::Poll::Combo(text) => {
                     *value = text;
@@ -451,7 +469,10 @@ pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
         ui.ctx().request_repaint();
     } else {
         if quiet_button(ui, None, "Change").clicked() {
-            ui.data_mut(|d| d.insert_temp(rec_id, true));
+            ui.data_mut(|d| {
+                d.insert_temp(rec_id, true);
+                d.insert_temp(rec_id.with("armed"), false);
+            });
         }
         // We're inside a right-to-left row: add the caps last-key-first so they
         // read left to right, sitting just left of the button.
@@ -466,36 +487,18 @@ mod keypoll {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
     pub enum Poll {
+        /// Nothing pressed yet.
         Waiting,
+        /// Every key has been let go since "Change" was clicked, so a key that
+        /// started the recording (Enter, Space) is not mistaken for the shortcut.
+        Armed,
         Cancelled,
         Combo(String),
     }
 
     const VK_ESCAPE: i32 = 0x1B;
 
-    /// The key (other than a modifier) that is down, as the name the service
-    /// understands (`parse_key` in scd).
-    fn key_name(vk: i32) -> Option<String> {
-        Some(match vk {
-            0x70..=0x87 => format!("F{}", vk - 0x6F),
-            0x30..=0x39 | 0x41..=0x5A => char::from(vk as u8).to_string(),
-            0x20 => "SPACE".into(),
-            0x2C => "PRINT".into(),
-            0x13 => "PAUSE".into(),
-            0x2D => "INSERT".into(),
-            0x2E => "DELETE".into(),
-            0x24 => "HOME".into(),
-            0x23 => "END".into(),
-            0x21 => "PAGEUP".into(),
-            0x22 => "PAGEDOWN".into(),
-            0x91 => "SCROLLLOCK".into(),
-            _ => return None,
-        })
-    }
-
-    /// Build "CTRL+ALT+F10" from what is down, or `None` if no real key is.
-    pub fn combo(down: impl Fn(i32) -> bool) -> Option<String> {
-        let key = (0x13..=0x91).filter(|&vk| down(vk)).find_map(key_name)?;
+    fn modifier_names(down: &impl Fn(i32) -> bool) -> Vec<String> {
         let mut parts = Vec::new();
         if down(0x11) {
             parts.push("CTRL".to_string());
@@ -509,16 +512,37 @@ mod keypoll {
         if down(0x5B) || down(0x5C) {
             parts.push("WIN".to_string());
         }
+        parts
+    }
+
+    /// Build "CTRL+ALT+F10" from what is down, or `None` if no real key is.
+    /// Every key counts, including punctuation, arrows and keys with no name
+    /// (written `VK_xx`). Escape only counts with a modifier, because on its own
+    /// it cancels the recording.
+    pub fn combo(down: impl Fn(i32) -> bool) -> Option<String> {
+        let mut parts = modifier_names(&down);
+        let key = (0x08..=0xFEu32).find_map(|vk| {
+            let usable = down(vk as i32) && (vk != VK_ESCAPE as u32 || !parts.is_empty());
+            usable.then(|| sc_core::keys::name_from_vk(vk)).flatten()
+        })?;
         parts.push(key);
         Some(parts.join("+"))
     }
 
-    pub fn poll() -> Poll {
+    pub fn poll(armed: bool) -> Poll {
         let down = |vk: i32| unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 };
-        if down(VK_ESCAPE) {
+        let combo = combo(down);
+        if !armed {
+            return if combo.is_none() && !down(VK_ESCAPE) {
+                Poll::Armed
+            } else {
+                Poll::Waiting
+            };
+        }
+        if down(VK_ESCAPE) && modifier_names(&down).is_empty() {
             return Poll::Cancelled;
         }
-        match combo(down) {
+        match combo {
             Some(text) => Poll::Combo(text),
             None => Poll::Waiting,
         }
@@ -540,6 +564,26 @@ mod keypoll {
             assert_eq!(combo(|vk| held.contains(&vk)).unwrap(), "CTRL+ALT+SHIFT+G");
             let win = [0x5B, 0x31];
             assert_eq!(combo(|vk| win.contains(&vk)).unwrap(), "WIN+1");
+        }
+
+        #[test]
+        fn any_key_can_be_recorded() {
+            assert_eq!(combo(|vk| vk == 0xC0).unwrap(), "`");
+            assert_eq!(combo(|vk| vk == 0x25).unwrap(), "LEFT");
+            assert_eq!(
+                combo(|vk| [0x11, 0x6B].contains(&vk)).unwrap(),
+                "CTRL+NUMADD"
+            );
+            assert_eq!(combo(|vk| vk == 0xFA).unwrap(), "VK_FA");
+        }
+
+        #[test]
+        fn escape_is_a_key_only_with_a_modifier() {
+            assert!(combo(|vk| vk == 0x1B).is_none());
+            assert_eq!(
+                combo(|vk| [0x11, 0x1B].contains(&vk)).unwrap(),
+                "CTRL+ESCAPE"
+            );
         }
 
         #[test]
