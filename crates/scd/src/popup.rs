@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
-    DrawTextW, Ellipse, EndPaint, FillRect, GetStockObject, RoundRect, SelectObject, SetBkMode,
-    SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS,
-    DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HGDIOBJ,
-    NULL_BRUSH, PAINTSTRUCT, PS_SOLID, TRANSPARENT,
+    BeginPaint, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
+    CreateRoundRectRgn, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint,
+    FillRect, GetStockObject, RoundRect, SelectObject, SetBkMode, SetBrushOrgEx, SetStretchBltMode,
+    SetTextColor, SetWindowRgn, StretchBlt, CLEARTYPE_QUALITY, DT_CALCRECT, DT_CENTER,
+    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FF_DONTCARE, FW_NORMAL,
+    FW_SEMIBOLD, HALFTONE, HGDIOBJ, NULL_BRUSH, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
@@ -336,7 +337,6 @@ unsafe fn paint(hwnd: HWND) {
     };
     let title_font = font(w!("Segoe UI"), 12.0, FW_SEMIBOLD.0 as i32);
     let body_font = font(w!("Segoe UI"), 10.0, FW_NORMAL.0 as i32);
-    let glyph_font = font(w!("Segoe UI Symbol"), 11.0, FW_SEMIBOLD.0 as i32);
     let flags = DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
 
     let pad = (16.0 * s) as i32;
@@ -349,18 +349,43 @@ unsafe fn paint(hwnd: HWND) {
     } else {
         (14.0 * s) as i32 + (row_h - badge) / 2
     };
+    // The badge is drawn four times larger and scaled down, because plain GDI
+    // shapes and glyphs have hard, jagged edges.
+    let ss = 4;
+    let big = badge * ss;
+    let mem = CreateCompatibleDC(Some(hdc));
+    let bmp = CreateCompatibleBitmap(hdc, big, big);
+    let old_bmp = SelectObject(mem, HGDIOBJ(bmp.0));
+    let bg2 = CreateSolidBrush(rgb(27, 29, 39));
+    FillRect(
+        mem,
+        &RECT {
+            left: 0,
+            top: 0,
+            right: big,
+            bottom: big,
+        },
+        bg2,
+    );
+    let _ = DeleteObject(HGDIOBJ(bg2.0));
     let fill = CreateSolidBrush(color);
     let none = CreatePen(PS_SOLID, 0, color);
-    let ob = SelectObject(hdc, HGDIOBJ(fill.0));
-    let op = SelectObject(hdc, HGDIOBJ(none.0));
-    let _ = Ellipse(hdc, pad, top, pad + badge, top + badge);
-    SelectObject(hdc, ob);
-    SelectObject(hdc, op);
+    let ob = SelectObject(mem, HGDIOBJ(fill.0));
+    let op = SelectObject(mem, HGDIOBJ(none.0));
+    let _ = Ellipse(mem, 0, 0, big, big);
+    SelectObject(mem, ob);
+    SelectObject(mem, op);
     let _ = DeleteObject(HGDIOBJ(fill.0));
     let _ = DeleteObject(HGDIOBJ(none.0));
 
-    let old = SelectObject(hdc, HGDIOBJ(glyph_font.0));
-    SetTextColor(hdc, rgb(18, 20, 28));
+    SetBkMode(mem, TRANSPARENT);
+    let big_font = font(
+        w!("Segoe UI Symbol"),
+        11.0 * ss as f32,
+        FW_SEMIBOLD.0 as i32,
+    );
+    let old_font = SelectObject(mem, HGDIOBJ(big_font.0));
+    SetTextColor(mem, rgb(18, 20, 28));
     let glyph = match p.kind {
         Kind::Saved => "\u{2713}",
         Kind::Error => "\u{2715}",
@@ -368,17 +393,40 @@ unsafe fn paint(hwnd: HWND) {
     };
     let mut g: Vec<u16> = glyph.encode_utf16().collect();
     let mut gr = RECT {
-        left: pad,
-        top,
-        right: pad + badge,
-        bottom: top + badge,
+        left: 0,
+        top: 0,
+        right: big,
+        bottom: big,
     };
     DrawTextW(
-        hdc,
+        mem,
         &mut g,
         &mut gr,
         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
     );
+    SelectObject(mem, old_font);
+    let _ = DeleteObject(HGDIOBJ(big_font.0));
+
+    SetStretchBltMode(hdc, HALFTONE);
+    let _ = SetBrushOrgEx(hdc, 0, 0, None);
+    let _ = StretchBlt(
+        hdc,
+        pad,
+        top,
+        badge,
+        badge,
+        Some(mem),
+        0,
+        0,
+        big,
+        big,
+        SRCCOPY,
+    );
+    SelectObject(mem, old_bmp);
+    let _ = DeleteObject(HGDIOBJ(bmp.0));
+    let _ = DeleteDC(mem);
+
+    let old = SelectObject(hdc, HGDIOBJ(title_font.0));
 
     let text_x = pad + badge + (12.0 * s) as i32;
     if p.compact {
@@ -453,6 +501,5 @@ unsafe fn paint(hwnd: HWND) {
     SelectObject(hdc, old);
     let _ = DeleteObject(HGDIOBJ(title_font.0));
     let _ = DeleteObject(HGDIOBJ(body_font.0));
-    let _ = DeleteObject(HGDIOBJ(glyph_font.0));
     let _ = EndPaint(hwnd, &ps);
 }
