@@ -2,6 +2,15 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.12.0
+
+### Added
+- A shortcut that brings SimpleClip up straight away (`Alt+F8` by default, changeable or switchable off in Settings > Shortcuts). If the window is already open, even minimised, it comes to the front; otherwise it opens.
+- Volume sliders in Settings > Audio for system sound and for the microphone, from 0 to 200%. They apply to a running recorder at once, with no restart, and only to sound recorded after the change (what is already in the buffer keeps its level). Double-click a slider to go back to 100%.
+
+### Fixed
+- Shortcuts with Alt, such as Alt+F10, could fail where plain ones like F10 worked. The shortcut recorder in Settings now reads the keyboard directly, because the window it listened to loses Alt on keys Windows treats as menu keys. After an Alt shortcut fires, SimpleClip also cancels the lone Alt press that Windows would otherwise turn into a menu activation in the program in front. I could not reproduce the failure on a real keyboard, so this is checked only through the Windows hotkey API and the recorder's logic; the service now logs each hotkey press, so a shortcut that still does nothing can be told apart from one that never arrives.
+
 ## 4.11.0
 
 ### Added
