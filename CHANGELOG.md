@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.9.0
+
+### Changed
+- Updating no longer runs the installer. SimpleClip downloads a small package with just the programs (about 15 MB), checks it, and after the window closes it copies only the changed files over the old ones and starts again. Your settings, shortcuts and the uninstaller are untouched. The big FFmpeg libraries are only downloaded when they actually changed. A log of the copy is written to `update.log` in the logs folder.
+
 ## 4.8.0
 
 ### New

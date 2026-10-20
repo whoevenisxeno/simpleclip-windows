@@ -37,8 +37,9 @@ job and does not need an account.
   choice.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
-  an "Update available" button appears at the top right, shows the changelog, and installs the new
-  version when you click Update now. You can turn the check off in Settings. See
+  an "Update available" button appears at the top right, shows the changelog, and updates in place
+  when you click Update now: it downloads a small package, checks it, and swaps only the changed
+  files, with no reinstall. You can turn the check off in Settings. See
   [CHANGELOG.md](CHANGELOG.md) for what changed in each version.
 
 ## Screenshots
