@@ -10,6 +10,29 @@ pub enum Container {
     Mkv,
 }
 
+/// How much the save card shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PopupStyle {
+    /// File name, game, size, resolution, encoder and how long it took.
+    #[default]
+    Detailed,
+    /// One short line.
+    Minimal,
+}
+
+/// Where on the screen the cards appear.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PopupPosition {
+    #[default]
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+    Center,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FolderPolicy {
@@ -89,6 +112,14 @@ pub struct HotkeySettings {
 pub struct GeneralSettings {
     pub update_check: bool,
     pub save_sound: bool,
+    /// Sound file to play on save (`None` plays the built-in one).
+    pub save_sound_file: Option<PathBuf>,
+    /// How much the save card shows.
+    pub popup_style: PopupStyle,
+    /// Where the cards appear.
+    pub popup_position: PopupPosition,
+    /// Slide the cards in and out instead of just showing them.
+    pub popup_animation: bool,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -206,6 +237,10 @@ impl Default for GeneralSettings {
         Self {
             update_check: true,
             save_sound: true,
+            save_sound_file: None,
+            popup_style: PopupStyle::Detailed,
+            popup_position: PopupPosition::TopRight,
+            popup_animation: true,
             notify: true,
             post_save_hook: None,
             autostart: true,

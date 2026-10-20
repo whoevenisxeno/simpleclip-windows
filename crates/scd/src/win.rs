@@ -9,7 +9,9 @@ use std::process::Command;
 use std::time::Duration;
 use windows::core::{w, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
-use windows::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT};
+use windows::Win32::Media::Audio::{
+    PlaySoundW, SND_ASYNC, SND_FILENAME, SND_MEMORY, SND_NODEFAULT,
+};
 use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::{
@@ -290,7 +292,8 @@ pub fn announce_startup(daemon: Daemon) {
                 });
             }
             crate::popup::show(crate::popup::Popup {
-                ok: true,
+                kind: crate::popup::Kind::Info,
+                compact: false,
                 title: "SimpleClip is running".into(),
                 lines,
             });
@@ -300,11 +303,12 @@ pub fn announce_startup(daemon: Daemon) {
 
 /// Show a one-line popup in the top-right corner (errors, hotkey problems).
 pub fn notify(title: &str, body: &str) {
-    crate::popup::show(crate::popup::Popup::simple(
-        !title.to_ascii_lowercase().contains("couldn"),
-        title,
-        body,
-    ));
+    let kind = if title.to_ascii_lowercase().contains("couldn") {
+        crate::popup::Kind::Error
+    } else {
+        crate::popup::Kind::Info
+    };
+    crate::popup::show(crate::popup::Popup::simple(kind, title, body));
 }
 
 /// Opt the process into per-monitor DPI awareness so the popup is crisp on
@@ -318,13 +322,24 @@ pub fn init_dpi() {
     }
 }
 
-/// Short system sound on save (async; returns immediately).
-pub fn play_save_sound() {
+/// The built-in save sound (a camera shutter, see assets/sounds/CREDITS.md).
+static SAVE_WAV: &[u8] = include_bytes!("../../../assets/sounds/save.wav");
+
+/// Play the save sound: the user's own file if one is set and exists, else the
+/// built-in one. Async; returns immediately.
+pub fn play_save_sound(g: &sc_core::config::GeneralSettings) {
+    use windows::core::HSTRING;
     unsafe {
+        if let Some(file) = g.save_sound_file.as_ref().filter(|f| f.exists()) {
+            let name = HSTRING::from(file.as_os_str());
+            if PlaySoundW(&name, None, SND_FILENAME | SND_ASYNC | SND_NODEFAULT).as_bool() {
+                return;
+            }
+        }
         let _ = PlaySoundW(
-            w!("SystemAsterisk"),
+            windows::core::PCWSTR(SAVE_WAV.as_ptr() as *const u16),
             None,
-            SND_ALIAS | SND_ASYNC | SND_NODEFAULT,
+            SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
         );
     }
 }

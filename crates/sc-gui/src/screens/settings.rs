@@ -2,7 +2,7 @@ use crate::app::ScApp;
 use crate::theme::{self, pal_ui};
 use crate::widgets::{self, section};
 use egui::{RichText, Ui};
-use sc_core::config::{AudioTracks, FolderPolicy};
+use sc_core::config::{AudioTracks, FolderPolicy, PopupPosition, PopupStyle};
 use std::time::Duration;
 
 /// Settings are saved automatically a moment after each change (see `ScApp`).
@@ -31,6 +31,8 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     saving(app, ui);
     shortcuts(app, ui);
     general(app, ui);
+    ui.add_space(18.0);
+    notifications(app, ui);
     advanced(app, ui);
 }
 
@@ -318,12 +320,114 @@ fn general(app: &mut ScApp, ui: &mut Ui) {
                 },
             );
         }
+    });
+}
+
+fn position_label(p: PopupPosition) -> &'static str {
+    match p {
+        PopupPosition::TopRight => "Top right",
+        PopupPosition::TopLeft => "Top left",
+        PopupPosition::BottomRight => "Bottom right",
+        PopupPosition::BottomLeft => "Bottom left",
+        PopupPosition::Center => "Center",
+    }
+}
+
+/// The card that slides in when a clip is saved, and the sound that goes with it.
+fn notifications(app: &mut ScApp, ui: &mut Ui) {
+    section(ui, Some("Notifications"), |s| {
         s.row("Show a card when a clip is saved", None, |ui| {
             widgets::toggle(ui, &mut app.cfg.general.notify);
+        });
+        s.row(
+            "Card style",
+            Some("Minimal is one short line, much smaller"),
+            |ui| {
+                widgets::segmented(
+                    ui,
+                    &mut app.cfg.general.popup_style,
+                    &[
+                        (PopupStyle::Detailed, "Detailed"),
+                        (PopupStyle::Minimal, "Minimal"),
+                    ],
+                );
+            },
+        );
+        s.row(
+            "Card position",
+            Some("Where on the screen it appears"),
+            |ui| {
+                egui::ComboBox::from_id_salt("popup-position")
+                    .selected_text(position_label(app.cfg.general.popup_position))
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for p in [
+                            PopupPosition::TopRight,
+                            PopupPosition::TopLeft,
+                            PopupPosition::BottomRight,
+                            PopupPosition::BottomLeft,
+                            PopupPosition::Center,
+                        ] {
+                            ui.selectable_value(
+                                &mut app.cfg.general.popup_position,
+                                p,
+                                position_label(p),
+                            );
+                        }
+                    });
+            },
+        );
+        s.row("Slide in and out", Some("Turn off to just fade"), |ui| {
+            widgets::toggle(ui, &mut app.cfg.general.popup_animation);
         });
         s.row("Play a sound when a clip is saved", None, |ui| {
             widgets::toggle(ui, &mut app.cfg.general.save_sound);
         });
+        if app.cfg.general.save_sound {
+            let name = app
+                .cfg
+                .general
+                .save_sound_file
+                .as_ref()
+                .and_then(|f| f.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Built-in camera shutter".to_string());
+            s.row("Sound", Some(&name), |ui| {
+                #[cfg(windows)]
+                {
+                    if app.cfg.general.save_sound_file.is_some()
+                        && widgets::quiet_button(ui, None, "Use default").clicked()
+                    {
+                        app.cfg.general.save_sound_file = None;
+                    }
+                    if widgets::quiet_button(ui, None, "Choose file\u{2026}").clicked() {
+                        if let Some(f) = rfd::FileDialog::new()
+                            .set_title("Choose a sound for saved clips")
+                            .add_filter("WAV audio", &["wav"])
+                            .pick_file()
+                        {
+                            app.cfg.general.save_sound_file = Some(f);
+                        }
+                    }
+                }
+                #[cfg(not(windows))]
+                let _ = ui;
+            });
+        }
+        s.row(
+            "Preview",
+            Some("Shows a sample card and plays the sound"),
+            |ui| {
+                if widgets::quiet_button(ui, None, "Preview").clicked() {
+                    // Let the daemon see the new settings first.
+                    app.flush_config();
+                    std::thread::spawn(|| {
+                        std::thread::sleep(Duration::from_millis(700));
+                        let _ = crate::daemon::request(sc_core::ipc::Request::TestNotification);
+                    });
+                }
+            },
+        );
     });
 }
 

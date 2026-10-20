@@ -2,6 +2,20 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.4.0
+
+### Added
+- Save card styles: Detailed (the full card, as before) and Minimal (one short line, much smaller). Pick one in Settings, Notifications.
+- Choose where the cards appear: top right (default), top left, bottom right, bottom left or center.
+- Cards slide in and out, with a switch in Settings to turn the slide off and just fade.
+- A new default save sound (a camera shutter). Turn it off or choose your own WAV file in Settings.
+- A Preview button in Settings, and `sc test-notification`, that show a sample card and play the sound with your current settings.
+
+### Changed
+- Redesigned cards: a round icon badge, a hairline border and tidier text, with the same information.
+- The start-up card is blue with a play icon, so it no longer looks like a saved clip.
+- Notification settings moved to their own section in Settings.
+
 ## 4.3.0
 
 ### Changed

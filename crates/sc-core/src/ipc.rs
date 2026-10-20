@@ -31,6 +31,8 @@ pub enum Request {
     ListAudioDevices,
     /// Ask the daemon to exit (used by `sc quit` and the installer).
     Shutdown,
+    /// Show a sample save card (and play the sound) with the current settings.
+    TestNotification,
     /// A small preview image of a saved clip, for the gallery.
     Thumbnail {
         path: PathBuf,

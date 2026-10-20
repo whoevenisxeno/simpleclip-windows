@@ -38,6 +38,8 @@ impl Daemon {
     }
 
     pub fn set_config(&self, config: Config) {
+        #[cfg(windows)]
+        crate::popup::configure(&config.general);
         *self.config.write().unwrap() = config;
     }
 

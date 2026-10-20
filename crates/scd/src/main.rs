@@ -60,6 +60,8 @@ fn main() -> Result<()> {
     };
     let config = load_or_create(&config_path)?;
 
+    #[cfg(windows)]
+    popup::configure(&config.general);
     let daemon = Daemon::new(config);
     reload::spawn_watcher(config_path, daemon.clone());
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "scd starting");

@@ -73,6 +73,11 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             daemon.set_state(CaptureState::Stopped);
             Response::Ok
         }
+        Request::TestNotification => {
+            #[cfg(windows)]
+            crate::notify::test(&daemon.config.read().unwrap());
+            Response::Ok
+        }
         Request::Shutdown => {
             tracing::info!("shutdown requested over IPC");
             // Let the reply reach the client before the process goes away.

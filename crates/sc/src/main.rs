@@ -58,6 +58,8 @@ enum Command {
     Monitors,
     /// List audio output devices whose sound can be captured.
     AudioDevices,
+    /// Show a sample save card and play the save sound (to try your notification settings).
+    TestNotification,
 }
 
 fn main() -> Result<()> {
@@ -91,6 +93,7 @@ fn main() -> Result<()> {
         ),
         Command::Monitors => (Request::ListMonitors, false),
         Command::AudioDevices => (Request::ListAudioDevices, false),
+        Command::TestNotification => (Request::TestNotification, false),
     };
 
     let resp = client::request(req)?;

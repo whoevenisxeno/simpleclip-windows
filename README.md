@@ -19,8 +19,9 @@ job and does not need an account.
   then Media Foundation, and uses the first one that works.
 - **Audio.** Game and app sound, plus an optional microphone. The mic can be mixed into one track
   or kept on its own track so you can edit your voice separately.
-- **Save popup.** A small card in the corner tells you the clip was saved, with its size,
-  resolution, frame rate and encoder.
+- **Save card.** A small card slides in when a clip is saved, with its size, resolution, frame rate
+  and encoder, or a minimal one-line version if you prefer. You choose the corner (or the center),
+  whether it slides, and the sound (a camera shutter by default, or your own WAV file, or none).
 - **Clip gallery.** Previews, search, and grouping by game, date, folder or bookmark.
 - **Rename, folders, bookmarks, notes.** All inside the app. Bookmarks are labels you create and
   colour yourself. Nothing is ever bookmarked automatically.
@@ -84,11 +85,15 @@ Create and recolour bookmarks:
 
 ![Settings](docs/screenshots/settings-dark.png)
 
-### Save popup
+### Save card
 
-![Save popup](docs/screenshots/save-popup.png)
+The detailed card (the default), and the minimal one:
 
-Text on the card from a real save:
+![Save card](docs/screenshots/save-popup.png)
+
+![Minimal save card](docs/screenshots/save-popup-minimal.png)
+
+Text on the detailed card from a real save:
 
 ```
 Clip saved
@@ -193,6 +198,12 @@ screenshot = "ALT+F9"
 [general]
 autostart = true
 setup-complete = false
+# Notifications (these are the defaults)
+popup-style = "detailed"      # or "minimal"
+popup-position = "top-right"  # top-left, bottom-right, bottom-left, center
+popup-animation = true
+save-sound = true
+# save-sound-file = 'C:\path\to\your.wav'
 ```
 
 ## Typical numbers
