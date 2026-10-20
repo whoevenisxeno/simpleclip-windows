@@ -37,7 +37,43 @@ fn window_icon() -> Option<egui::IconData> {
     })
 }
 
+/// Only one SimpleClip window at a time: the first instance keeps an exclusive lock
+/// file open for as long as it runs, and a second one exits straight away.
+/// Returns `false` when another window already holds the lock.
+#[cfg(windows)]
+fn claim_single_instance() -> (bool, Option<std::fs::File>) {
+    use std::os::windows::fs::OpenOptionsExt;
+    let Some(dirs) = directories::ProjectDirs::from("", "", "SimpleClip") else {
+        return (true, None);
+    };
+    let dir = dirs.data_local_dir().to_path_buf();
+    let _ = std::fs::create_dir_all(&dir);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(dir.join("gui.lock"))
+    {
+        Ok(f) => (true, Some(f)),
+        // Sharing violation: another window has it. Any other error: carry on.
+        Err(e) if e.raw_os_error() == Some(32) => (false, None),
+        Err(_) => (true, None),
+    }
+}
+
 fn main() -> eframe::Result<()> {
+    // (The design-review run opens its own windows and must not be blocked.)
+    #[cfg(windows)]
+    let _instance = if std::env::var_os("SC_GUI_SHOTS").is_some() {
+        None
+    } else {
+        let (first, lock) = claim_single_instance();
+        if !first {
+            return Ok(());
+        }
+        lock
+    };
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1080.0, 720.0])
         .with_min_inner_size([820.0, 560.0])
