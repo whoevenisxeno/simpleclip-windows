@@ -406,6 +406,21 @@ pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
             ui.data_mut(|d| d.insert_temp(rec_id, false));
         }
         ui.label(RichText::new("Press the new shortcut…").color(p.orange));
+        // On Windows read the keyboard itself: window events lose the Alt key
+        // on combinations like Alt+F10, which Windows treats as a menu key.
+        #[cfg(windows)]
+        if ui.ctx().input(|i| i.focused) {
+            match keypoll::poll() {
+                keypoll::Poll::Waiting => {}
+                keypoll::Poll::Cancelled => ui.data_mut(|d| d.insert_temp(rec_id, false)),
+                keypoll::Poll::Combo(text) => {
+                    *value = text;
+                    changed = true;
+                    ui.data_mut(|d| d.insert_temp(rec_id, false));
+                }
+            }
+        }
+        #[cfg(not(windows))]
         for ev in ui.input(|i| i.events.clone()) {
             let egui::Event::Key {
                 key,
@@ -443,6 +458,96 @@ pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
         keycaps_rtl(ui, value);
     }
     changed
+}
+
+/// Reads the physical keyboard for the shortcut recorder.
+#[cfg(windows)]
+mod keypoll {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    pub enum Poll {
+        Waiting,
+        Cancelled,
+        Combo(String),
+    }
+
+    const VK_ESCAPE: i32 = 0x1B;
+
+    /// The key (other than a modifier) that is down, as the name the service
+    /// understands (`parse_key` in scd).
+    fn key_name(vk: i32) -> Option<String> {
+        Some(match vk {
+            0x70..=0x87 => format!("F{}", vk - 0x6F),
+            0x30..=0x39 | 0x41..=0x5A => char::from(vk as u8).to_string(),
+            0x20 => "SPACE".into(),
+            0x2C => "PRINT".into(),
+            0x13 => "PAUSE".into(),
+            0x2D => "INSERT".into(),
+            0x2E => "DELETE".into(),
+            0x24 => "HOME".into(),
+            0x23 => "END".into(),
+            0x21 => "PAGEUP".into(),
+            0x22 => "PAGEDOWN".into(),
+            0x91 => "SCROLLLOCK".into(),
+            _ => return None,
+        })
+    }
+
+    /// Build "CTRL+ALT+F10" from what is down, or `None` if no real key is.
+    pub fn combo(down: impl Fn(i32) -> bool) -> Option<String> {
+        let key = (0x13..=0x91).filter(|&vk| down(vk)).find_map(key_name)?;
+        let mut parts = Vec::new();
+        if down(0x11) {
+            parts.push("CTRL".to_string());
+        }
+        if down(0x12) {
+            parts.push("ALT".to_string());
+        }
+        if down(0x10) {
+            parts.push("SHIFT".to_string());
+        }
+        if down(0x5B) || down(0x5C) {
+            parts.push("WIN".to_string());
+        }
+        parts.push(key);
+        Some(parts.join("+"))
+    }
+
+    pub fn poll() -> Poll {
+        let down = |vk: i32| unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 };
+        if down(VK_ESCAPE) {
+            return Poll::Cancelled;
+        }
+        match combo(down) {
+            Some(text) => Poll::Combo(text),
+            None => Poll::Waiting,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::combo;
+
+        #[test]
+        fn alt_f10_keeps_the_alt() {
+            let held = [0x12, 0x79];
+            assert_eq!(combo(|vk| held.contains(&vk)).unwrap(), "ALT+F10");
+        }
+
+        #[test]
+        fn modifiers_come_in_a_fixed_order() {
+            let held = [0x10, 0x12, 0x11, 0x47];
+            assert_eq!(combo(|vk| held.contains(&vk)).unwrap(), "CTRL+ALT+SHIFT+G");
+            let win = [0x5B, 0x31];
+            assert_eq!(combo(|vk| win.contains(&vk)).unwrap(), "WIN+1");
+        }
+
+        #[test]
+        fn modifiers_alone_record_nothing() {
+            let held = [0x11, 0x12, 0x10];
+            assert!(combo(|vk| held.contains(&vk)).is_none());
+        }
+    }
 }
 
 /// A tinted notice bar (success / warning / error).

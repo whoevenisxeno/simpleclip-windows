@@ -2,7 +2,7 @@ use crate::app::ScApp;
 use crate::theme::{self, pal_ui};
 use crate::widgets::{self, section};
 use egui::{RichText, Ui};
-use sc_core::config::{AudioTracks, FolderPolicy, PopupPosition, PopupStyle};
+use sc_core::config::{AudioTracks, FolderPolicy, PopupPosition, PopupStyle, MAX_VOLUME_PERCENT};
 use std::time::Duration;
 
 /// Settings are saved automatically a moment after each change (see `ScApp`).
@@ -155,9 +155,23 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
                 );
             });
         }
+        if app.cfg.audio.desktop_enabled {
+            s.row(
+                "System volume",
+                Some("How loud game and app sound is in clips"),
+                |ui| volume_slider(ui, &mut app.cfg.audio.desktop_volume),
+            );
+        }
         s.row("Microphone", Some("Mix your voice into clips"), |ui| {
             widgets::toggle(ui, &mut app.cfg.audio.mic_enabled);
         });
+        if app.cfg.audio.mic_enabled {
+            s.row(
+                "Microphone volume",
+                Some("How loud your voice is in clips"),
+                |ui| volume_slider(ui, &mut app.cfg.audio.mic_volume),
+            );
+        }
         if cfg!(windows) && app.cfg.audio.mic_enabled {
             s.row("Input device", None, |ui| {
                 let mut id = app.cfg.audio.mic_device.clone().unwrap_or_default();
@@ -190,6 +204,18 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
                 .color(p.text_2),
         );
         ui.add_space(6.0);
+    }
+}
+
+/// A 0 to 200% loudness slider; double-click the knob to go back to 100%.
+fn volume_slider(ui: &mut Ui, percent: &mut u32) {
+    let r = ui.add(
+        egui::Slider::new(percent, 0..=MAX_VOLUME_PERCENT)
+            .suffix("%")
+            .trailing_fill(true),
+    );
+    if r.double_clicked() {
+        *percent = 100;
     }
 }
 
@@ -371,6 +397,17 @@ fn shortcuts(app: &mut ScApp, ui: &mut Ui) {
         s.row("Take screenshot", None, |ui| {
             widgets::hotkey_field(ui, &mut app.cfg.hotkeys.screenshot, "hk-shot");
         });
+        if cfg!(windows) {
+            s.row("Open SimpleClip", Some("Brings this window up"), |ui| {
+                // Right-to-left row: this sits at the far right, the keys to its left.
+                if !app.cfg.hotkeys.open.is_empty()
+                    && widgets::quiet_button(ui, None, "Off").clicked()
+                {
+                    app.cfg.hotkeys.open.clear();
+                }
+                widgets::hotkey_field(ui, &mut app.cfg.hotkeys.open, "hk-open");
+            });
+        }
     });
 }
 
