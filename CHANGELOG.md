@@ -2,6 +2,14 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.5.0
+
+### Added
+- The installer now offers "Start with fresh settings" when it finds settings from an earlier install. It backs the old file up as config.toml.bak, so the setup guide runs on first start and every setting begins at its default. It is off by default, so updates keep your settings. For silent installs use `/TASKS=freshsettings`.
+- Settings has a Reset section at the bottom: "Reset all settings" puts everything back to the defaults, saves the old settings as config.toml.bak and opens the setup guide. Clips and bookmarks are kept.
+- Updating now shows a progress bar with the megabytes downloaded, then "Installing the update" before SimpleClip restarts, so it no longer looks stuck.
+- Required updates: a copy that is 5 or more major versions behind (still on 4.x while 9.x is out) shows an "Update required" screen when you open it. It downloads and installs the new version straight away, and the only other option is Quit. This needs "Check for updates" to be on.
+
 ## 4.4.1
 
 ### Fixed

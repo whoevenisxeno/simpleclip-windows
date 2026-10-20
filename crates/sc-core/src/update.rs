@@ -39,6 +39,12 @@ pub fn is_newer(remote: &str, local: &str) -> bool {
     r > l
 }
 
+/// How many major versions `remote` is ahead of `local` (0 when it is not ahead).
+pub fn major_gap(remote: &str, local: &str) -> u64 {
+    let first = |v: &str| parse(v).first().copied().unwrap_or(0);
+    first(remote).saturating_sub(first(local))
+}
+
 /// Fetch a URL with curl (no console window on Windows).
 pub fn curl(args: &[&str]) -> Result<Vec<u8>, String> {
     let mut cmd = Command::new("curl.exe");
@@ -109,6 +115,13 @@ mod tests {
         assert!(!is_newer("4.0.0", "4.0.0"));
         assert!(!is_newer("v3.9.9", "4.0.0"));
         assert!(is_newer("4.0.0.1", "4.0.0"));
+    }
+
+    #[test]
+    fn major_gap_counts_major_versions() {
+        assert_eq!(major_gap("v9.1.0", "4.7.2"), 5);
+        assert_eq!(major_gap("4.9.9", "4.0.0"), 0);
+        assert_eq!(major_gap("3.0.0", "4.0.0"), 0);
     }
 
     #[test]

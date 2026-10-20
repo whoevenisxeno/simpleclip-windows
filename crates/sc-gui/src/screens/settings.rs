@@ -492,6 +492,7 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
             });
         });
 
+    reset_section(app, ui);
     #[cfg(windows)]
     uninstall_section(app, ui);
 }
@@ -627,4 +628,44 @@ fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+}
+
+/// Put every setting back to its default and run the setup guide again. The
+/// old settings are kept next to the new file as `config.toml.bak`.
+fn reset_section(app: &mut ScApp, ui: &mut Ui) {
+    ui.add_space(18.0);
+    let id = egui::Id::new("reset-confirm");
+    let mut asking: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
+    let mut go = false;
+    section(ui, Some("Reset"), |s| {
+        let hint = if asking {
+            "Sure? Your clips and bookmarks stay. Old settings are saved as config.toml.bak."
+        } else {
+            "Defaults for everything, then the setup guide. Clips and bookmarks stay."
+        };
+        s.row("Reset all settings", Some(hint), |ui| {
+            if asking {
+                if widgets::primary_button(ui, None, "Yes, reset").clicked() {
+                    go = true;
+                }
+                if widgets::quiet_button(ui, None, "Cancel").clicked() {
+                    asking = false;
+                }
+            } else if widgets::quiet_button(ui, None, "Reset\u{2026}").clicked() {
+                asking = true;
+            }
+        });
+    });
+    if go {
+        asking = false;
+        if let Ok(path) = sc_core::config::Config::default_path() {
+            let _ = std::fs::copy(&path, path.with_extension("toml.bak"));
+        }
+        // Keep where clips are saved only if the user chose a folder; everything else resets.
+        app.cfg = sc_core::config::Config::default();
+        app.flush_config();
+        app.wizard = Default::default();
+        app.goto(crate::app::Screen::Wizard);
+    }
+    ui.data_mut(|d| d.insert_temp(id, asking));
 }

@@ -441,6 +441,8 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("player", true),
     ("update", true),
     ("uninstall", true),
+    ("update-download", true),
+    ("update-forced", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -565,6 +567,7 @@ impl ScApp {
                 | "bookmarks" | "newfolder" => Screen::Gallery,
                 "update" => Screen::Dashboard,
                 "uninstall" => Screen::Settings,
+                "update-download" | "update-forced" => Screen::Dashboard,
                 "settings" => Screen::Settings,
                 "trim" | "player" => {
                     let first = self.gallery.first_video();
@@ -589,6 +592,14 @@ impl ScApp {
                 "bookmarks" => self.sheet.manage = true,
                 "uninstall" => {
                     ctx.data_mut(|d| d.insert_temp(egui::Id::new("uninstall-ask"), true))
+                }
+                "update-download" => {
+                    #[cfg(windows)]
+                    self.updater.demo_download("4.9.0");
+                }
+                "update-forced" => {
+                    #[cfg(windows)]
+                    self.updater.demo_download("9.0.0");
                 }
                 "update" => {
                     #[cfg(windows)]

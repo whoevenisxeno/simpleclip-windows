@@ -8,9 +8,9 @@
 use crate::theme::{self, pal};
 use crate::widgets;
 use egui::{Align2, Color32, FontId, RichText, Rounding, Stroke};
-use sc_core::update::curl;
 pub use sc_core::update::Release;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,8 @@ pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const PAGE: &str = "https://github.com/whoevenisxeno/simpleclip-windows/releases/latest";
 /// How often a running app looks again.
 const RECHECK: Duration = Duration::from_secs(6 * 3600);
+/// A copy this many major versions behind (4.x while 9.x is out) must update before it can be used.
+pub const FORCE_AFTER_MAJORS: u64 = 5;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
@@ -38,6 +40,14 @@ pub struct Updater {
     started: Instant,
     /// Whether the details window is open.
     pub open: bool,
+    /// The forced update has been started (so it is only started once).
+    forced_started: bool,
+    /// Bytes of the installer downloaded so far.
+    progress: Arc<AtomicU64>,
+    /// The release being installed, kept for the progress view.
+    installing: Option<Release>,
+    /// When the download finished (the app waits a moment so you can see it).
+    ready_since: Option<Instant>,
 }
 
 impl Default for Updater {
@@ -47,6 +57,10 @@ impl Default for Updater {
             checked: None,
             started: Instant::now(),
             open: false,
+            forced_started: false,
+            progress: Arc::new(AtomicU64::new(0)),
+            installing: None,
+            ready_since: None,
         }
     }
 }
@@ -82,26 +96,56 @@ impl Updater {
     }
 
     /// Download the installer in the background; the state becomes `Ready` when done.
+    /// The size on disk is polled so the dialog can show a progress bar.
     fn download(&mut self, r: Release, ctx: &egui::Context) {
+        use std::os::windows::process::CommandExt;
+        self.progress.store(0, Ordering::Relaxed);
+        self.installing = Some(r.clone());
+        self.ready_since = None;
         Self::set(&self.state, State::Downloading(r.clone()), ctx);
-        let (state, ctx) = (self.state.clone(), ctx.clone());
+        let (state, ctx, progress) = (self.state.clone(), ctx.clone(), self.progress.clone());
         std::thread::spawn(move || {
             let dest = std::env::temp_dir().join(format!("SimpleClip-{}-Setup.exe", r.version));
             let _ = std::fs::remove_file(&dest);
-            let done = curl(&["--retry", "2", "-o", &dest.to_string_lossy(), &r.url])
-                .and_then(|_| {
-                    let got = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-                    if got == 0 || (r.size > 0 && got != r.size) {
-                        Err("the download was incomplete".to_string())
-                    } else {
-                        Ok(())
+            let result = (|| -> Result<(), String> {
+                let mut child = std::process::Command::new("curl.exe")
+                    .args([
+                        "-fsSL",
+                        "--retry",
+                        "2",
+                        "-H",
+                        "User-Agent: SimpleClip",
+                        "-o",
+                    ])
+                    .arg(&dest)
+                    .arg(&r.url)
+                    .creation_flags(0x0800_0000)
+                    .spawn()
+                    .map_err(|e| format!("couldn't run curl: {e}"))?;
+                loop {
+                    progress.store(
+                        std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0),
+                        Ordering::Relaxed,
+                    );
+                    ctx.request_repaint();
+                    match child.try_wait() {
+                        Ok(Some(status)) if status.success() => break,
+                        Ok(Some(_)) => return Err("the download failed".to_string()),
+                        Ok(None) => std::thread::sleep(Duration::from_millis(120)),
+                        Err(e) => return Err(e.to_string()),
                     }
-                })
-                .map(|_| dest);
+                }
+                let got = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+                if got == 0 || (r.size > 0 && got != r.size) {
+                    return Err("the download was incomplete".to_string());
+                }
+                progress.store(got, Ordering::Relaxed);
+                Ok(())
+            })();
             Self::set(
                 &state,
-                match done {
-                    Ok(p) => State::Ready(p),
+                match result {
+                    Ok(()) => State::Ready(dest),
                     Err(e) => State::Failed(e),
                 },
                 &ctx,
@@ -123,7 +167,7 @@ impl Updater {
             })
             .unwrap_or_default();
         let script = format!(
-            "ping -n 3 127.0.0.1 >nul & \"{}\" /SILENT /NORESTART /SUPPRESSMSGBOXES & start \"\" \"{}\" & start \"\" \"{}\"",
+            "ping -n 2 127.0.0.1 >nul & \"{}\" /SILENT /NORESTART /SUPPRESSMSGBOXES & start \"\" \"{}\" & start \"\" \"{}\"",
             setup.display(),
             dir.join("scd.exe").display(),
             dir.join("sc-gui.exe").display()
@@ -185,28 +229,47 @@ impl Updater {
     /// Per-frame work: schedule checks, draw the top-right button and the details window.
     pub fn show(&mut self, ctx: &egui::Context, auto_check: bool, wizard: bool) {
         if auto_check
-            && self.started.elapsed() > Duration::from_secs(3)
+            && self.started.elapsed() > Duration::from_secs(1)
             && self.checked.is_none_or(|t| t.elapsed() > RECHECK)
         {
             self.check(ctx);
         }
         if let State::Ready(p) = self.state() {
-            Self::hand_over(&p);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-        if wizard {
-            return;
+            // Show "installing" for a moment before handing over, so it never looks stuck.
+            let since = *self.ready_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_millis(1400) {
+                Self::hand_over(&p);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            self.open = true;
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
         let state = self.state();
         let release = match &state {
             State::Available(r) | State::Downloading(r) => Some(r.clone()),
+            State::Ready(_) => self.installing.clone(),
+            State::Failed(_) => self.installing.clone(),
             _ => None,
         };
         let Some(r) = release else {
             self.open = false;
             return;
         };
+        // Far behind (several major versions): the update is not optional.
+        let forced = sc_core::update::major_gap(&r.version, CURRENT) >= FORCE_AFTER_MAJORS;
+        if wizard && !forced {
+            return;
+        }
+        if forced {
+            self.open = true;
+            if matches!(state, State::Available(_)) && !self.forced_started {
+                self.forced_started = true;
+                self.download(r, ctx);
+                return;
+            }
+            Self::block_ui(ctx);
+        }
         let p = pal(ctx);
 
         // The small button, top right.
@@ -235,10 +298,13 @@ impl Updater {
         if !self.open {
             return;
         }
-        let downloading = matches!(state, State::Downloading(_));
+        let downloading = matches!(state, State::Downloading(_) | State::Ready(_));
+        let finished = matches!(state, State::Ready(_));
+        let got = self.progress.load(Ordering::Relaxed);
         let mut close = false;
         let mut install = false;
         egui::Window::new("update-window")
+            .order(egui::Order::Foreground)
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
@@ -260,12 +326,26 @@ impl Updater {
             .show(ctx, |ui| {
                 ui.set_width(460.0);
                 ui.label(
-                    RichText::new(format!("SimpleClip {} is available", r.version))
-                        .font(FontId::new(19.0, theme::semibold()))
-                        .color(p.text),
+                    RichText::new(if forced {
+                        "Update required".to_string()
+                    } else {
+                        format!("SimpleClip {} is available", r.version)
+                    })
+                    .font(FontId::new(19.0, theme::semibold()))
+                    .color(p.text),
                 );
                 ui.add_space(2.0);
-                widgets::secondary(ui, format!("You have {CURRENT}. Here is what changed:"));
+                widgets::secondary(
+                    ui,
+                    if forced {
+                        format!(
+                            "Version {CURRENT} is too old to keep using. Installing {} now. Here is what changed:",
+                            r.version
+                        )
+                    } else {
+                        format!("You have {CURRENT}. Here is what changed:")
+                    },
+                );
                 ui.add_space(10.0);
                 egui::Frame::none()
                     .fill(p.card_hi)
@@ -279,30 +359,65 @@ impl Updater {
                             .show(ui, |ui| changelog(ui, &r.notes));
                     });
                 ui.add_space(14.0);
+                if downloading {
+                    let frac = if r.size > 0 {
+                        (got as f32 / r.size as f32).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+                    ui.add(
+                        egui::ProgressBar::new(if finished { 1.0 } else { frac })
+                            .fill(p.accent)
+                            .desired_height(10.0)
+                            .rounding(Rounding::same(5.0)),
+                    );
+                    ui.add_space(6.0);
+                    widgets::secondary(
+                        ui,
+                        if finished {
+                            "Download finished. Installing the update. SimpleClip reopens by itself in a moment.".to_string()
+                        } else if r.size > 0 {
+                            format!(
+                                "Downloading\u{2026} {:.1} of {:.1} MB ({:.0}%)",
+                                mb(got),
+                                mb(r.size),
+                                frac * 100.0
+                            )
+                        } else {
+                            format!("Downloading\u{2026} {:.1} MB", mb(got))
+                        },
+                    );
+                    ui.add_space(12.0);
+                }
                 if let State::Failed(e) = &state {
                     widgets::notice(ui, p.red, e);
                 }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
+                    let failed = matches!(state, State::Failed(_));
                     let label = if downloading {
-                        "Downloading\u{2026}"
+                        "Updating\u{2026}"
+                    } else if failed {
+                        "Try again"
                     } else {
                         "Update now"
                     };
                     if widgets::primary_button(ui, None, label).clicked() && !downloading {
                         install = true;
                     }
-                    if widgets::quiet_button(ui, None, "Later").clicked() {
+                    if forced {
+                        // No "Later": the only other way out is closing the app.
+                        if !downloading && widgets::quiet_button(ui, None, "Quit").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    } else if !downloading && widgets::quiet_button(ui, None, "Later").clicked() {
                         close = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.hyperlink_to("Release page", PAGE);
                     });
                 });
-                if downloading {
-                    ui.add_space(6.0);
-                    widgets::secondary(ui, "SimpleClip will restart by itself when it is done.");
-                }
             });
         if close {
             self.open = false;
@@ -349,5 +464,41 @@ fn changelog(ui: &mut egui::Ui, notes: &str) {
         } else {
             ui.add(egui::Label::new(RichText::new(t).size(13.0).color(p.text_2)).wrap());
         }
+    }
+}
+
+impl Updater {
+    /// Dim the whole window and swallow clicks, so nothing else can be used
+    /// while a required update is on screen.
+    fn block_ui(ctx: &egui::Context) {
+        let screen = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("update-block"))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
+                ui.painter()
+                    .rect_filled(rect, Rounding::ZERO, Color32::from_black_alpha(170));
+            });
+    }
+}
+
+impl Updater {
+    /// Pretend a download is under way (for the design-review run).
+    pub fn demo_download(&mut self, version: &str) {
+        let r = Release {
+            version: version.into(),
+            notes: "## What changed\n\n### Added\n- A lot of things\n\n### Fixed\n- A lot of other things\n".into(),
+            url: String::new(),
+            size: 58 * 1024 * 1024,
+        };
+        self.progress.store(24 * 1024 * 1024, Ordering::Relaxed);
+        self.installing = Some(r.clone());
+        self.forced_started = true;
+        if let Ok(mut s) = self.state.lock() {
+            *s = State::Downloading(r);
+        }
+        self.open = true;
     }
 }

@@ -43,6 +43,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "autostart"; Description: "Start SimpleClip when I sign in (recommended: the replay buffer only works while it runs)"; GroupDescription: "Startup:"
 Name: "addpath"; Description: "Add the sc command to my PATH"; GroupDescription: "Command line:"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
+Name: "freshsettings"; Description: "Start with fresh settings (my old settings are backed up, and the setup guide runs on first start)"; GroupDescription: "Existing settings found:"; Flags: unchecked; Check: HasOldConfig
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "*.ps1"; Flags: ignoreversion recursesubdirs
@@ -88,6 +89,16 @@ begin
   Result := '';
 end;
 
+function ConfigPath: String;
+begin
+  Result := ExpandConstant('{userappdata}SimpleClipnfignfig.toml');
+end;
+
+function HasOldConfig: Boolean;
+begin
+  Result := FileExists(ConfigPath);
+end;
+
 function PathHasDir(const Dir: String): Boolean;
 var
   Paths: String;
@@ -101,6 +112,11 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Paths: String;
 begin
+  if (CurStep = ssInstall) and WizardIsTaskSelected('freshsettings') and HasOldConfig then
+  begin
+    DeleteFile(ConfigPath + '.bak');
+    RenameFile(ConfigPath, ConfigPath + '.bak');
+  end;
   if (CurStep = ssPostInstall) and WizardIsTaskSelected('addpath') then
   begin
     if not PathHasDir(ExpandConstant('{app}')) then
