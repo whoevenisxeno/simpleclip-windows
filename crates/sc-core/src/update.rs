@@ -4,6 +4,8 @@
 
 use std::process::Command;
 
+const DOWNLOAD_PREFIX: &str =
+    "https://github.com/whoevenisxeno/simpleclip-windows/releases/download/";
 const API: &str = "https://api.github.com/repos/whoevenisxeno/simpleclip-windows/releases/latest";
 
 /// A release newer than the running version.
@@ -13,6 +15,8 @@ pub struct Release {
     pub notes: String,
     pub url: String,
     pub size: u64,
+    /// SHA-256 of the installer as GitHub reports it (lowercase hex), when it does.
+    pub sha256: Option<String>,
 }
 
 /// `4.1.0` / `v4.1.0` as numbers.
@@ -86,14 +90,22 @@ pub fn parse_release(json: &[u8], current: &str) -> Result<Option<Release>, Stri
             })
         })
         .ok_or("this release has no installer attached")?;
+    let url = asset["browser_download_url"]
+        .as_str()
+        .ok_or("installer has no download link")?;
+    // Only ever download from this project's own releases.
+    if !url.starts_with(DOWNLOAD_PREFIX) {
+        return Err("the installer is not hosted where SimpleClip expects".into());
+    }
     Ok(Some(Release {
         version: tag.trim_start_matches(['v', 'V']).to_string(),
         notes: v["body"].as_str().unwrap_or("").to_string(),
-        url: asset["browser_download_url"]
-            .as_str()
-            .ok_or("installer has no download link")?
-            .to_string(),
+        url: url.to_string(),
         size: asset["size"].as_u64().unwrap_or(0),
+        sha256: asset["digest"]
+            .as_str()
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .map(|h| h.to_ascii_lowercase()),
     }))
 }
 
@@ -128,11 +140,15 @@ mod tests {
     fn release_json_is_read() {
         let json = br###"{"tag_name":"v99.0.0","body":"## 99.0.0\n- x","assets":[
             {"name":"SimpleClip-99.0.0-win64.zip","browser_download_url":"z","size":1},
-            {"name":"SimpleClip-99.0.0-Setup.exe","browser_download_url":"https://x/setup.exe","size":42}]}"###;
+            {"name":"SimpleClip-99.0.0-Setup.exe","browser_download_url":"https://github.com/whoevenisxeno/simpleclip-windows/releases/download/v99.0.0/SimpleClip-99.0.0-Setup.exe","size":42,"digest":"sha256:ABCDEF"}]}"###;
         let r = parse_release(json, "4.0.0").unwrap().unwrap();
         assert_eq!(r.version, "99.0.0");
-        assert_eq!(r.url, "https://x/setup.exe");
+        assert!(r.url.ends_with("SimpleClip-99.0.0-Setup.exe"));
+        assert_eq!(r.sha256.as_deref(), Some("abcdef"));
         assert_eq!(r.size, 42);
+        // A download from anywhere else is refused.
+        let evil = br###"{"tag_name":"v99.0.0","assets":[{"name":"x-Setup.exe","browser_download_url":"https://evil.example/x-Setup.exe","size":1}]}"###;
+        assert!(parse_release(evil, "4.0.0").is_err());
         let old = br#"{"tag_name":"v0.0.1","assets":[]}"#;
         assert!(parse_release(old, "4.0.0").unwrap().is_none());
     }
