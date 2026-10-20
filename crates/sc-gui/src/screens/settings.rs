@@ -97,14 +97,32 @@ fn recording(app: &mut ScApp, ui: &mut Ui) {
                 );
             },
         );
-        s.row("Frame rate", None, |ui| {
-            choice(
-                ui,
-                &mut app.cfg.capture.target_fps,
-                &[(30, "30"), (60, "60"), (120, "120")],
-                " fps",
-            );
-        });
+        s.row(
+            "Frame rate",
+            Some("Higher is smoother but needs a stronger PC"),
+            |ui| {
+                let before = app.cfg.capture.target_fps;
+                choice(
+                    ui,
+                    &mut app.cfg.capture.target_fps,
+                    &[
+                        (30, "30"),
+                        (60, "60"),
+                        (120, "120"),
+                        (144, "144"),
+                        (165, "165"),
+                        (240, "240"),
+                    ],
+                    " fps",
+                );
+                // Keep the keyframe interval the same length in seconds.
+                let now = app.cfg.capture.target_fps;
+                if now != before && before > 0 {
+                    let g = &mut app.cfg.encode.gop_frames;
+                    *g = ((*g as f32 * now as f32 / before as f32).round() as u32).max(1);
+                }
+            },
+        );
         s.row("Show mouse cursor", None, |ui| {
             widgets::toggle(ui, &mut app.cfg.capture.show_cursor);
         });
@@ -491,14 +509,16 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
                 });
                 s.row(
                     "Keyframe interval",
-                    Some("Frames between full pictures; shorter makes cuts more exact"),
+                    Some("Time between full pictures; shorter makes cuts more exact"),
                     |ui| {
-                        choice(
-                            ui,
-                            &mut app.cfg.encode.gop_frames,
-                            &[(60, "1 s"), (120, "2 s"), (240, "4 s")],
-                            " frames",
-                        );
+                        // Shown in seconds; stored as frames at the current frame rate.
+                        let fps = app.cfg.capture.target_fps.max(1);
+                        let mut secs = ((app.cfg.encode.gop_frames + fps / 2) / fps).max(1);
+                        let before = secs;
+                        choice(ui, &mut secs, &[(1, "1 s"), (2, "2 s"), (4, "4 s")], " s");
+                        if secs != before {
+                            app.cfg.encode.gop_frames = secs * fps;
+                        }
                     },
                 );
                 s.row(
