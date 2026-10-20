@@ -55,7 +55,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
 
 /// A centred card over a dimmed backdrop. Returns true when the user asked to
 /// close it (backdrop click or Esc).
-fn modal(ctx: &egui::Context, id: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
+pub(crate) fn modal(ctx: &egui::Context, id: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
     let p = pal(ctx);
     let screen = ctx.screen_rect();
     let mut close = false;
@@ -668,6 +668,7 @@ fn poll_compress(app: &mut ScApp, ctx: &egui::Context) {
     match rx.try_recv() {
         Ok(Ok((path, _))) => {
             app.sheet.compress_job = None;
+            app.library.set_compressed(&path, true);
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             let name = path
                 .file_name()

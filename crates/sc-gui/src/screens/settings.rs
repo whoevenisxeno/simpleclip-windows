@@ -376,6 +376,13 @@ fn shortcuts(app: &mut ScApp, ui: &mut Ui) {
 
 fn general(app: &mut ScApp, ui: &mut Ui) {
     section(ui, Some("General"), |s| {
+        s.row(
+            "Ask about sharing after trimming",
+            Some("Offers to copy the clip or compress it for Discord"),
+            |ui| {
+                widgets::toggle(ui, &mut app.cfg.general.share_prompt);
+            },
+        );
         if cfg!(windows) {
             s.row(
                 "Open at login",

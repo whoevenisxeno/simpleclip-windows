@@ -136,6 +136,8 @@ pub struct GeneralSettings {
     pub theme: String,
     /// Optional accent colour as `#rrggbb`, drawn over the theme's own.
     pub accent: Option<String>,
+    /// After saving a trim, offer to copy the clip or compress it for Discord.
+    pub share_prompt: bool,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -264,6 +266,7 @@ impl Default for GeneralSettings {
             last_version: None,
             theme: "system".to_string(),
             accent: None,
+            share_prompt: true,
             notify: true,
             post_save_hook: None,
             autostart: true,

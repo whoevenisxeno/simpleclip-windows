@@ -64,6 +64,8 @@ pub struct ScApp {
     applied_look: (String, Option<String>),
     /// The user's own saved presets (the built-in ones live in `presets`).
     pub presets: Vec<crate::presets::Preset>,
+    /// The "share this clip?" prompt after a trim, when open.
+    pub share: Option<crate::screens::share::ShareState>,
     /// Looks for newer releases and installs them.
     #[cfg(windows)]
     pub updater: crate::update::Updater,
@@ -176,6 +178,7 @@ impl ScApp {
             logo: None,
             applied_look,
             presets: crate::presets::load(),
+            share: None,
             #[cfg(windows)]
             updater: Default::default(),
             shot,
@@ -317,6 +320,7 @@ impl eframe::App for ScApp {
             self.screen == Screen::Wizard,
         );
         screens::sheet::show(self, ctx);
+        screens::share::show(self, ctx);
         #[cfg(windows)]
         let update_open = self.updater.open;
         #[cfg(not(windows))]
@@ -505,6 +509,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("clips-bookmarks", true),
     ("clips-folders", true),
     ("clips-trimmed", true),
+    ("clips-compressed", true),
     ("details", true),
     ("bookmarks", true),
     ("newfolder", true),
@@ -525,6 +530,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("update-download", true),
     ("update-forced", true),
     ("star", true),
+    ("share", true),
 ];
 
 impl Shot {
@@ -638,8 +644,10 @@ impl ScApp {
             self.gallery.reset_view();
             self.screen = match name {
                 "home" => Screen::Dashboard,
-                "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed" | "details"
-                | "bookmarks" | "newfolder" => Screen::Gallery,
+                "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed"
+                | "clips-compressed" | "share" | "details" | "bookmarks" | "newfolder" => {
+                    Screen::Gallery
+                }
                 "update" => Screen::Dashboard,
                 "uninstall" => Screen::Settings,
                 "update-download" | "update-forced" => Screen::Dashboard,
@@ -654,6 +662,12 @@ impl ScApp {
             match name {
                 "clips-bookmarks" => self.gallery.show_by(false),
                 "clips-trimmed" => self.gallery.show_trimmed(),
+                "clips-compressed" => self.gallery.show_compressed(),
+                "share" => {
+                    if let Some(p) = self.gallery.first_video() {
+                        self.share = Some(screens::share::ShareState::demo(p));
+                    }
+                }
                 "clips-folders" => self.gallery.show_by(true),
                 "details" => {
                     let first = self

@@ -275,6 +275,9 @@ fn export_trim(app: &mut ScApp, original: &Path) {
 
     if !replace {
         app.library.set_trimmed(&new_path, true);
+        if app.cfg.general.share_prompt {
+            app.share = Some(crate::screens::share::ShareState::new(new_path.clone()));
+        }
         app.trim.result = Some(new_path);
         app.gallery.rescan();
         app.toast(format!("Saved a {secs:.1} s copy"), ToastKind::Ok);
@@ -298,6 +301,9 @@ fn export_trim(app: &mut ScApp, original: &Path) {
     };
     app.library.rekey_if_missing(original, &final_path);
     app.library.set_trimmed(&final_path, true);
+    if app.cfg.general.share_prompt {
+        app.share = Some(crate::screens::share::ShareState::new(final_path.clone()));
+    }
     app.thumbs.forget(original);
     app.thumbs.forget(&final_path);
     app.gallery.rescan();
