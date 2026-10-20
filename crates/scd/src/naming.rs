@@ -33,11 +33,20 @@ fn media_path(cfg: &Config, app: Option<&str>, ext: &str) -> PathBuf {
         .replace("{app}", app.unwrap_or(""));
     let name = clean(&name);
     let path = dir.join(format!("{name}.{ext}"));
-    // Same-day clips without a time in the name would collide; add one if needed.
-    if path.exists() {
-        return path.with_file_name(format!("{name}-{time}.{ext}"));
+    // Same-day clips without a time in the name would collide; add one if needed,
+    // and a counter if even that is taken (saves in the same second must never
+    // overwrite each other).
+    if !path.exists() {
+        return path;
     }
-    path
+    let timed = path.with_file_name(format!("{name}-{time}.{ext}"));
+    if !timed.exists() {
+        return timed;
+    }
+    (2u32..)
+        .map(|n| path.with_file_name(format!("{name}-{time}-{n}.{ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(timed)
 }
 
 /// Collapse anything that isn't alphanumeric or `_` into single dashes, so an
@@ -141,4 +150,26 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_second_saves_get_distinct_names() {
+        let dir = std::env::temp_dir().join(format!("sc-naming-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut cfg = Config::default();
+        cfg.save.directory = Some(dir.clone());
+        cfg.save.folder_policy = FolderPolicy::Flat;
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..6 {
+            let p = media_path(&cfg, Some("game"), "mp4");
+            assert!(seen.insert(p.clone()), "reused {}", p.display());
+            std::fs::write(&p, b"x").unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
