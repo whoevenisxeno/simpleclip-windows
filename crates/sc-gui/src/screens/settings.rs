@@ -427,7 +427,7 @@ fn general(app: &mut ScApp, ui: &mut Ui) {
         if cfg!(windows) {
             s.row(
                 "Discord status",
-                Some("Shows the game you are in and how long you have been clipping"),
+                Some("Shows only the game you’re playing, and for how long"),
                 |ui| {
                     widgets::toggle(ui, &mut app.cfg.general.discord_presence);
                 },
