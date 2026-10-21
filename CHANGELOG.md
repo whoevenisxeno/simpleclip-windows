@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.13.1
+
+### Added
+- The Discord status now has a "Get SimpleClip" button that opens the project page on GitHub, for people looking at your profile. Discord only shows it to others, not to you.
+
 ## 4.13.0
 
 ### Added
