@@ -208,7 +208,7 @@ impl Updater {
                 format!("Version {} is available", r.version)
             }
             State::Ready(_) => "Installing\u{2026}".into(),
-            State::Failed(e) => format!("Couldn't check: {e}"),
+            State::Failed(e) => format!("Couldn’t check: {e}"),
         }
     }
 
@@ -333,15 +333,10 @@ impl Updater {
             .frame(
                 egui::Frame::none()
                     .fill(p.card)
-                    .rounding(Rounding::same(14.0))
+                    .rounding(Rounding::same(theme::radius::SHEET))
                     .stroke(Stroke::new(1.0_f32, p.line))
                     .inner_margin(egui::Margin::same(20.0))
-                    .shadow(egui::Shadow {
-                        offset: egui::vec2(0.0, 8.0),
-                        blur: 28.0,
-                        spread: 0.0,
-                        color: Color32::from_black_alpha(90),
-                    }),
+                    .shadow(theme::float_shadow(&p)),
             )
             .show(ctx, |ui| {
                 ui.set_width(460.0);
@@ -637,7 +632,7 @@ fn download_file(
             .arg(&asset.url)
             .creation_flags(0x0800_0000)
             .spawn()
-            .map_err(|e| format!("couldn't run curl: {e}"))?;
+            .map_err(|e| format!("couldn’t run curl: {e}"))?;
         loop {
             progress.store(
                 std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0),
@@ -685,12 +680,12 @@ fn prepare_update(
     ctx: &egui::Context,
 ) -> Result<PathBuf, String> {
     use std::os::windows::process::CommandExt;
-    let dir = install_dir().ok_or("couldn't find the SimpleClip folder")?;
+    let dir = install_dir().ok_or("couldn’t find the SimpleClip folder")?;
     // The new files are copied over the old ones, so the folder must be writable.
     let probe = dir.join(".update-write-test");
     if std::fs::write(&probe, b"x").is_err() {
         return Err(
-            "SimpleClip can't update itself in this folder. Download the new version from the release page."
+            "SimpleClip can’t update itself in this folder. Download the new version from the release page."
                 .to_string(),
         );
     }
@@ -716,7 +711,7 @@ fn prepare_update(
 
     let stage = update_dir().join(&r.version);
     let _ = std::fs::remove_dir_all(&stage);
-    std::fs::create_dir_all(&stage).map_err(|e| format!("couldn't prepare the update: {e}"))?;
+    std::fs::create_dir_all(&stage).map_err(|e| format!("couldn’t prepare the update: {e}"))?;
     // `tar` ships with Windows 10 and 11 and reads zip files.
     let unpacked = std::process::Command::new("tar")
         .arg("-xf")
@@ -728,7 +723,7 @@ fn prepare_update(
     let _ = std::fs::remove_file(&zip);
     if !unpacked.map(|s| s.success()).unwrap_or(false) {
         let _ = std::fs::remove_dir_all(&stage);
-        return Err("couldn't unpack the update".to_string());
+        return Err("couldn’t unpack the update".to_string());
     }
     // The full package nests everything in a SimpleClip folder.
     let root = if stage.join("sc-gui.exe").exists() {

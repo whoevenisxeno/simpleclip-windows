@@ -81,14 +81,9 @@ pub(crate) fn modal(ctx: &egui::Context, id: &str, width: f32, add: impl FnOnce(
         .show(ctx, |ui| {
             egui::Frame::none()
                 .fill(p.card)
-                .rounding(Rounding::same(16.0))
+                .rounding(Rounding::same(theme::radius::SHEET))
                 .stroke(egui::Stroke::new(1.0_f32, p.line))
-                .shadow(egui::Shadow {
-                    offset: vec2(0.0, 12.0),
-                    blur: 40.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(110),
-                })
+                .shadow(theme::float_shadow(&p))
                 .inner_margin(egui::Margin::same(22.0))
                 .show(ui, |ui| {
                     ui.set_width(width);
@@ -207,9 +202,9 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                 if !clip.is_image {
                     let busy = app.sheet.compress_job.is_some();
                     let label = if busy {
-                        "Compressing..."
+                        "Compressing\u{2026}"
                     } else {
-                        "Compress for Discord..."
+                        "Compress for Discord\u{2026}"
                     };
                     if widgets::quiet_button(ui, Some(icon::SHARE), label).clicked() && !busy {
                         app.sheet.compress_open = !app.sheet.compress_open;
@@ -227,7 +222,7 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                             ui,
                             "Saves a smaller copy that fits the upload limit. The original stays.",
                         );
-                        if widgets::primary_button(ui, None, "Compress").clicked() {
+                        if widgets::quiet_button(ui, None, "Compress").clicked() {
                             start_compress(app, &clip);
                         }
                     }
@@ -390,7 +385,7 @@ pub fn compress_clip(app: &mut ScApp, clip: &Clip, mb: u32) {
     }
     app.sheet.compress_mb = mb;
     start_compress(app, clip);
-    app.toast(format!("Compressing to fit {mb} MB..."), ToastKind::Ok);
+    app.toast(format!("Compressing to fit {mb} MB\u{2026}"), ToastKind::Ok);
 }
 
 /// Move a clip into `dest` from a card's menu.
@@ -421,7 +416,7 @@ pub(crate) fn delete_clip(app: &mut ScApp, clip: &Clip) {
         app.library.forget(&clip.path);
         app.toast("Moved to the Recycle Bin", ToastKind::Ok);
     } else {
-        app.toast("Couldn't delete that file", ToastKind::Error);
+        app.toast("Couldn’t delete that file", ToastKind::Error);
     }
     app.thumbs.forget(&clip.path);
     app.gallery.rescan();

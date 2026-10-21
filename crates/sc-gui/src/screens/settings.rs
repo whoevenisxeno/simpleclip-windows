@@ -207,16 +207,20 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
     }
 }
 
-/// A 0 to 200% loudness slider; double-click the knob to go back to 100%.
+/// A 0 to 200% loudness slider with its value beside it; double-click to go back to 100%.
 fn volume_slider(ui: &mut Ui, percent: &mut u32) {
-    let r = ui.add(
-        egui::Slider::new(percent, 0..=MAX_VOLUME_PERCENT)
-            .suffix("%")
-            .trailing_fill(true),
+    let p = pal_ui(ui);
+    // This sits in a right-to-left row: the slider goes first (far right), then
+    // its value to the left of it.
+    widgets::percent_slider(ui, percent, MAX_VOLUME_PERCENT);
+    ui.add_sized(
+        [44.0, 20.0],
+        egui::Label::new(
+            RichText::new(format!("{percent}%"))
+                .size(13.0)
+                .color(p.text_2),
+        ),
     );
-    if r.double_clicked() {
-        *percent = 100;
-    }
 }
 
 /// A dropdown of audio endpoints; `outputs` picks speakers vs microphones.
@@ -291,7 +295,7 @@ fn quality(app: &mut ScApp, ui: &mut Ui) {
             Some(if app.cfg.encode.max_height.is_some() {
                 "Scaled down on the CPU, so 'Lower CPU use' is skipped"
             } else {
-                "Native keeps your screen's own size"
+                "Native keeps your screen’s own size"
             }),
             |ui| {
                 widgets::segmented(
@@ -654,15 +658,10 @@ fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
             .frame(
                 egui::Frame::none()
                     .fill(p.card)
-                    .rounding(egui::Rounding::same(14.0))
+                    .rounding(egui::Rounding::same(theme::radius::SHEET))
                     .stroke(egui::Stroke::new(1.0_f32, p.line))
                     .inner_margin(egui::Margin::same(20.0))
-                    .shadow(egui::Shadow {
-                        offset: egui::vec2(0.0, 8.0),
-                        blur: 28.0,
-                        spread: 0.0,
-                        color: egui::Color32::from_black_alpha(90),
-                    }),
+                    .shadow(theme::float_shadow(&p)),
             )
             .show(ui.ctx(), |ui| {
                 ui.set_width(440.0);
@@ -844,7 +843,7 @@ fn presets_section(app: &mut ScApp, ui: &mut Ui) {
             Some("Quick recording setups. Choosing one changes the settings below."),
             |ui| {
                 egui::ComboBox::from_id_salt("preset-choice")
-                    .selected_text("Choose...")
+                    .selected_text("Choose\u{2026}")
                     .width(180.0)
                     .show_ui(ui, |ui| {
                         for p in built_in.iter().chain(user.iter()) {
@@ -899,7 +898,7 @@ fn presets_section(app: &mut ScApp, ui: &mut Ui) {
         match presets::save(&app.presets) {
             Ok(()) => app.toast(format!("Saved {name}"), crate::app::ToastKind::Ok),
             Err(e) => app.toast(
-                format!("Couldn't save the preset: {e}"),
+                format!("Couldn’t save the preset: {e}"),
                 crate::app::ToastKind::Error,
             ),
         }

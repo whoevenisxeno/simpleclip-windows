@@ -441,7 +441,7 @@ impl Player {
     pub fn show(&mut self, ui: &mut Ui) {
         let p = pal_ui(ui);
         if let Err(e) = &self.info {
-            widgets::notice(ui, p.red, &format!("Couldn't open this clip: {e}"));
+            widgets::notice(ui, p.red, &format!("Couldn’t open this clip: {e}"));
             return;
         }
         self.keys(ui);

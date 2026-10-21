@@ -212,7 +212,7 @@ fn shortcut(app: &mut ScApp, ui: &mut Ui) {
     });
     ui.add_space(6.0);
     ui.label(
-        RichText::new("Choose something your games don't use. You can change this later.")
+        RichText::new("Choose something your games don’t use. You can change this later.")
             .size(13.0)
             .color(p.text_2),
     );
@@ -222,7 +222,7 @@ fn ready(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     heading(
         ui,
-        "You're all set",
+        "You’re all set",
         "SimpleClip is recording in the background.",
     );
     widgets::section(ui, None, |s| {
@@ -275,8 +275,8 @@ fn finish(app: &mut ScApp) {
     match config_io::save(&app.cfg) {
         Ok(()) => {
             app.screen = Screen::Dashboard;
-            app.toast("You're all set", ToastKind::Ok);
+            app.toast("You’re all set", ToastKind::Ok);
         }
-        Err(e) => app.toast(format!("Couldn't save settings: {e}"), ToastKind::Error),
+        Err(e) => app.toast(format!("Couldn’t save settings: {e}"), ToastKind::Error),
     }
 }

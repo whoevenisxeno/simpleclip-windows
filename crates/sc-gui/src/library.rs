@@ -368,7 +368,7 @@ pub fn rename_clip(path: &Path, new_stem: &str) -> Result<PathBuf, String> {
         return Ok(path.to_path_buf());
     }
     let target = free_path(dir, &stem, ext);
-    std::fs::rename(path, &target).map_err(|e| format!("Couldn't rename: {e}"))?;
+    std::fs::rename(path, &target).map_err(|e| format!("Couldn’t rename: {e}"))?;
     Ok(target)
 }
 
@@ -377,15 +377,15 @@ pub fn move_clip(path: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     if path.parent() == Some(dest_dir) {
         return Ok(path.to_path_buf());
     }
-    std::fs::create_dir_all(dest_dir).map_err(|e| format!("Couldn't create the folder: {e}"))?;
+    std::fs::create_dir_all(dest_dir).map_err(|e| format!("Couldn’t create the folder: {e}"))?;
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("clip");
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
     let target = free_path(dest_dir, stem, ext);
     // rename() fails across drives; fall back to copy + delete.
     if std::fs::rename(path, &target).is_err() {
-        std::fs::copy(path, &target).map_err(|e| format!("Couldn't move: {e}"))?;
+        std::fs::copy(path, &target).map_err(|e| format!("Couldn’t move: {e}"))?;
         std::fs::remove_file(path)
-            .map_err(|e| format!("Moved a copy but couldn't remove the original: {e}"))?;
+            .map_err(|e| format!("Moved a copy but couldn’t remove the original: {e}"))?;
     }
     Ok(target)
 }
@@ -402,7 +402,7 @@ pub fn create_folder(root: &Path, name: &str) -> Result<PathBuf, String> {
             "A folder called \u{201C}{clean}\u{201D} already exists."
         ));
     }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create the folder: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn’t create the folder: {e}"))?;
     Ok(dir)
 }
 

@@ -378,7 +378,7 @@ pub fn copy_file(path: &Path) -> Result<(), String> {
         let _clip = clipboard_win::Clipboard::new_attempts(10)
             .map_err(|_| "the clipboard is busy, try again".to_string())?;
         clipboard_win::raw::set_file_list_with(&[name], clipboard_win::options::DoClear)
-            .map_err(|e| format!("couldn't copy the file: {e}"))
+            .map_err(|e| format!("couldn’t copy the file: {e}"))
     }
     #[cfg(not(windows))]
     {
@@ -584,8 +584,17 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
 
     if app.gallery.clips.is_empty() && app.gallery.folders.is_empty() {
         widgets::card(ui, |ui| {
-            ui.add_space(22.0);
+            ui.add_space(18.0);
             ui.vertical_centered(|ui| {
+                // One quiet icon, one title, one sentence, one action.
+                if theme::has_icons(ui.ctx()) {
+                    ui.label(
+                        RichText::new(icon::CLIPS)
+                            .font(FontId::new(30.0, theme::icons()))
+                            .color(p.text_3),
+                    );
+                    ui.add_space(6.0);
+                }
                 ui.label(
                     RichText::new("No clips yet")
                         .font(FontId::new(20.0, theme::semibold()))
@@ -596,7 +605,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
                     ui,
                     format!(
                         "Press {} during a session to keep the last moments.",
-                        app.cfg.hotkeys.save
+                        widgets::pretty_combo(&app.cfg.hotkeys.save)
                     ),
                 );
                 ui.add_space(14.0);
@@ -821,7 +830,7 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
             }
             ui.label(
                 RichText::new(&g.label)
-                    .font(FontId::new(19.0, theme::semibold()))
+                    .font(FontId::new(20.0, theme::semibold()))
                     .color(p.text),
             );
             if !g.items.is_empty() {
@@ -846,7 +855,7 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
             // An empty folder: say so, and let it be removed.
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("Empty. Move clips here from a clip's details.")
+                    RichText::new("Empty. Move clips here from a clip’s details.")
                         .size(13.0)
                         .color(p.text_2),
                 );
@@ -858,7 +867,7 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
                                 app.toast("Folder removed", ToastKind::Ok);
                             }
                             Err(e) => {
-                                app.toast(format!("Couldn't remove it: {e}"), ToastKind::Error)
+                                app.toast(format!("Couldn’t remove it: {e}"), ToastKind::Error)
                             }
                         }
                     }
@@ -986,7 +995,7 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
         ui.close_menu();
     }
     ui.separator();
-    if item(ui, "Rename, notes and details...") {
+    if item(ui, "Rename, notes and details\u{2026}") {
         app.sheet.open_clip(clip.path.clone());
         ui.close_menu();
     }
@@ -1014,9 +1023,9 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
         if item(
             ui,
             if all.is_empty() {
-                "Create a bookmark..."
+                "Create a bookmark\u{2026}"
             } else {
-                "Edit bookmarks..."
+                "Edit bookmarks\u{2026}"
             },
         ) {
             app.sheet.manage = true;
@@ -1044,7 +1053,7 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
             }
         }
         ui.separator();
-        if item(ui, "New folder...") {
+        if item(ui, "New folder\u{2026}") {
             sheet::move_clip_to_new_folder(app, clip);
             ui.close_menu();
         }
@@ -1143,7 +1152,7 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
                             app.library.forget(&clip.path);
                             app.toast("Moved to the Recycle Bin", ToastKind::Ok);
                         } else {
-                            app.toast("Couldn't delete that file", ToastKind::Error);
+                            app.toast("Couldn’t delete that file", ToastKind::Error);
                         }
                         app.thumbs.forget(&clip.path);
                         app.gallery.rescan();

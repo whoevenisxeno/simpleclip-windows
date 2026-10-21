@@ -290,7 +290,7 @@ fn export_trim(app: &mut ScApp, original: &Path) {
     if !crate::screens::gallery::delete(original) {
         let _ = std::fs::remove_file(&new_path);
         app.toast(
-            "Couldn't move the original to the Recycle Bin, so nothing was changed",
+            "Couldn’t move the original to the Recycle Bin, so nothing was changed",
             ToastKind::Error,
         );
         return;

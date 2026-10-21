@@ -90,15 +90,10 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context, busy: bool) {
         .show(ctx, |ui| {
             egui::Frame::none()
                 .fill(p.card)
-                .rounding(Rounding::same(14.0))
+                .rounding(Rounding::same(theme::radius::CARD))
                 .stroke(Stroke::new(1.0_f32, p.line))
                 .inner_margin(egui::Margin::same(16.0))
-                .shadow(egui::Shadow {
-                    offset: egui::vec2(0.0, 6.0),
-                    blur: 22.0,
-                    spread: 0.0,
-                    color: Color32::from_black_alpha(80),
-                })
+                .shadow(theme::float_shadow(&p))
                 .show(ui, |ui| {
                     ui.set_width(300.0);
                     ui.horizontal(|ui| {
@@ -132,7 +127,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context, busy: bool) {
                     if ui
                         .add(
                             egui::Label::new(
-                                RichText::new("Don't ask again").size(12.0).color(p.text_2),
+                                RichText::new("Don’t ask again").size(12.0).color(p.text_2),
                             )
                             .sense(egui::Sense::click()),
                         )

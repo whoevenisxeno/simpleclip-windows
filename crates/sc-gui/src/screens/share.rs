@@ -118,7 +118,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
         };
         ui.label(
             RichText::new(heading)
-                .font(FontId::new(19.0, theme::semibold()))
+                .font(FontId::new(20.0, theme::semibold()))
                 .color(p.text),
         );
         ui.add_space(2.0);
@@ -154,7 +154,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
                             &mut mb,
                             &[(10, "10 MB"), (25, "25 MB"), (50, "50 MB")],
                         );
-                        if widgets::primary_button(ui, None, "Compress").clicked() {
+                        if widgets::quiet_button(ui, None, "Compress").clicked() {
                             compress_now = true;
                         }
                     });
@@ -164,7 +164,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
                     if ui
                         .add(
                             egui::Label::new(
-                                RichText::new("Don't ask again").size(12.0).color(p.text_2),
+                                RichText::new("Don’t ask again").size(12.0).color(p.text_2),
                             )
                             .sense(egui::Sense::click()),
                         )
@@ -179,7 +179,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add(egui::Spinner::new().color(p.accent));
                     ui.add_space(6.0);
-                    widgets::secondary(ui, format!("Compressing to fit {} MB...", st.mb));
+                    widgets::secondary(ui, format!("Compressing to fit {} MB\u{2026}", st.mb));
                 });
                 ui.add_space(4.0);
                 widgets::secondary(ui, "This takes a few seconds for a short clip.");
@@ -234,7 +234,7 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
     if turn_off {
         app.cfg.general.share_prompt = false;
         app.toast(
-            "You won't be asked again. You can turn this back on in Settings.",
+            "You won’t be asked again. You can turn this back on in Settings.",
             ToastKind::Ok,
         );
         return;

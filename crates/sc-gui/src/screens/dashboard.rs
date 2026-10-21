@@ -21,8 +21,8 @@ fn offline(app: &mut ScApp, ui: &mut Ui) {
         ui.add_space(18.0);
         ui.vertical_centered(|ui| {
             ui.label(
-                RichText::new("SimpleClip isn't running")
-                    .font(FontId::new(22.0, theme::semibold()))
+                RichText::new("SimpleClip isn’t running")
+                    .font(FontId::new(20.0, theme::semibold()))
                     .color(p.text),
             );
             ui.add_space(4.0);
@@ -44,7 +44,7 @@ fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     let paused = s.state == CaptureState::Paused;
     let secs = s.buffer_secs;
 
-    widgets::page_title(ui, if paused { "Paused" } else { "You're covered" }, None);
+    widgets::page_title(ui, if paused { "Paused" } else { "You’re covered" }, None);
     // Subtitle with the hotkey drawn as key caps.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -92,7 +92,7 @@ fn hero(app: &mut ScApp, ui: &mut Ui, s: &StatusReport, paused: bool) {
                 ui.add_space(14.0);
                 ui.label(
                     RichText::new("Save what just happened")
-                        .font(FontId::new(19.0, theme::semibold()))
+                        .font(FontId::new(20.0, theme::semibold()))
                         .color(p.text),
                 );
                 ui.add_space(2.0);
@@ -224,7 +224,7 @@ fn tile(ui: &mut Ui, w: f32, label: &str, value: &str) {
     let p = pal_ui(ui);
     egui::Frame::none()
         .fill(p.card)
-        .rounding(egui::Rounding::same(12.0))
+        .rounding(egui::Rounding::same(theme::radius::TILE))
         .stroke(Stroke::new(1.0_f32, p.line))
         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
         .show(ui, |ui| {
@@ -251,7 +251,7 @@ fn recent(app: &mut ScApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new("Recent clips")
-                .font(FontId::new(18.0, theme::semibold()))
+                .font(FontId::new(20.0, theme::semibold()))
                 .color(p.text),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

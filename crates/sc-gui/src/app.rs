@@ -429,7 +429,7 @@ impl ScApp {
         };
         egui::Frame::none()
             .fill(p.card)
-            .rounding(egui::Rounding::same(10.0))
+            .rounding(egui::Rounding::same(theme::radius::TILE))
             .stroke(egui::Stroke::new(1.0_f32, p.line))
             .inner_margin(egui::Margin::symmetric(12.0, 10.0))
             .show(ui, |ui| {
@@ -473,14 +473,9 @@ impl ScApp {
                     } else {
                         Color32::from_rgb(0x1d, 0x1d, 0x1f)
                     })
-                    .rounding(egui::Rounding::same(14.0))
+                    .rounding(egui::Rounding::same(theme::radius::CARD))
                     .inner_margin(egui::Margin::symmetric(18.0, 12.0))
-                    .shadow(egui::Shadow {
-                        offset: vec2(0.0, 6.0),
-                        blur: 24.0,
-                        spread: 0.0,
-                        color: Color32::from_black_alpha(90),
-                    })
+                    .shadow(theme::float_shadow(&p))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(glyph).color(color).strong());
