@@ -2,6 +2,20 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 5.0.0
+
+A polish of the whole look. The same layout, colours and feel, with the details tightened up.
+
+### Changed
+- One set of corner radii everywhere: cards and lists 16, dialogs 22, tiles 14, buttons and fields 10, with inner shapes (like the segmented control's pill) curved to run parallel to the shape around them.
+- Controls match native proportions: the switch is 51 by 31 with a soft knob shadow, buttons are 32 high, the segmented control's pill glides to the new choice, and buttons, icon buttons and sidebar items ease in on hover instead of flicking.
+- The filled (accent) button is semibold, and there is only one filled button in a view: the inline Compress buttons in the details window and the share prompt are now plain buttons.
+- A proper volume slider for system sound and the microphone: a thin accent track, a white knob, a notch at 100% and the value beside it.
+- One type scale: 30 for page titles, 20 for headings, 14 for body, 12 for captions; section labels are 12 and the quieter grey text is a little lighter so it reads clearly.
+- Proper typography in the words: real apostrophes (You’re covered) and ellipses (Choose…), and shortcuts written the way people say them (Alt+F10).
+- Shadows are soft and wide under dialogs and menus, and a hair of shadow lifts white cards in the light theme.
+- The empty Clips page has a quiet icon above its title.
+
 ## 4.13.1
 
 ### Added
