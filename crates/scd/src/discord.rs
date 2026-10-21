@@ -16,6 +16,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// shows after "Playing").
 const APP_ID: &str = "1562536909262164019";
 
+/// The button on the status: Discord allows 32 characters of label.
+const BUTTON_LABEL: &str = "Get SimpleClip";
+const REPO_URL: &str = "https://github.com/whoevenisxeno/simpleclip-windows";
+
 /// Discord drops presence updates that come faster than this.
 const MIN_GAP: Duration = Duration::from_secs(15);
 /// How often to look for a change, or for Discord to start.
@@ -53,6 +57,9 @@ fn activity_message(presence: Option<&Presence>, pid: u32, nonce: u64) -> String
             },
             "state": if p.paused { "Replay buffer paused" } else { "Clipping with SimpleClip" },
             "timestamps": { "start": p.started },
+            // A button under the status for other people (Discord does not show
+            // your own buttons to you).
+            "buttons": [{ "label": BUTTON_LABEL, "url": REPO_URL }],
         })
     });
     serde_json::json!({
@@ -240,6 +247,22 @@ mod tests {
             v["args"]["activity"]["timestamps"]["start"],
             1_700_000_000u64
         );
+    }
+
+    #[test]
+    fn status_has_one_button_to_the_repo() {
+        let p = Presence {
+            game: None,
+            paused: false,
+            started: 1,
+        };
+        let v: serde_json::Value = serde_json::from_str(&activity_message(Some(&p), 1, 1)).unwrap();
+        let buttons = v["args"]["activity"]["buttons"].as_array().unwrap();
+        assert_eq!(buttons.len(), 1);
+        assert_eq!(buttons[0]["url"], REPO_URL);
+        // Discord's limits: 32 characters of label, 512 of address.
+        assert!(BUTTON_LABEL.chars().count() <= 32);
+        assert!(REPO_URL.len() <= 512 && REPO_URL.starts_with("https://"));
     }
 
     #[test]
