@@ -26,7 +26,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindowVisible, PeekMessageW, PostQuitMessage,
-    SetForegroundWindow, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_RESTORE, WM_HOTKEY,
+    SetForegroundWindow, ShowWindow, TranslateMessage, MSG, PM_REMOVE, SW_MINIMIZE, SW_RESTORE,
+    WM_HOTKEY,
 };
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -425,8 +426,9 @@ fn tray_icon_image(active: bool) -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(px, N, N).expect("valid icon")
 }
 
-/// Show the SimpleClip window that is already open, restoring it if it was
-/// minimised. Returns false when there is no such window.
+/// Handle the open window if there is one: minimise it when it is the window in
+/// front, otherwise restore it and bring it up. Returns false when there is no
+/// such window.
 fn raise_gui() -> bool {
     unsafe extern "system" fn visit(hwnd: HWND, found: LPARAM) -> BOOL {
         let mut title = [0u16; 32];
@@ -449,6 +451,11 @@ fn raise_gui() -> bool {
             LPARAM(&mut found as *mut Option<HWND> as isize),
         );
         let Some(hwnd) = found else { return false };
+        // Already the window in front: pressing the shortcut again tucks it away.
+        if !IsIconic(hwnd).as_bool() && GetForegroundWindow() == hwnd {
+            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+            return true;
+        }
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
@@ -457,7 +464,8 @@ fn raise_gui() -> bool {
     }
 }
 
-/// Bring SimpleClip up: the open window if there is one, otherwise a new one.
+/// The open-window shortcut: bring SimpleClip up (a new window if none is open),
+/// or put it away if it is already in front.
 fn open_gui() {
     if raise_gui() {
         return;
