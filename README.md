@@ -24,6 +24,9 @@ job and does not need an account.
 - **Save card.** A small card slides in when a clip is saved, with its size, resolution, frame rate
   and encoder, or a minimal one-line version if you prefer. You choose the corner (or the center),
   whether it slides, and the sound (a camera shutter by default, or your own WAV file, or none).
+- **Discord status.** While SimpleClip is recording, your Discord profile shows the program you are
+  in and how long you have been clipping. It goes through the Discord app on your PC, not over the
+  network from SimpleClip, and it is on by default. Turn it off in Settings > General.
 - **Clip gallery.** Previews, search, and grouping by game, date, folder or bookmark.
 - **Rename, folders, bookmarks, notes.** All inside the app. Bookmarks are labels you create and
   colour yourself. Nothing is ever bookmarked automatically.
@@ -252,6 +255,7 @@ popup-animation = true
 theme = "system"           # or midnight, graphite, ember, forest, violet, rose, ocean, daylight, sand, mint
 # accent = "#8b5cf6"           # optional accent colour over any theme
 save-sound = true
+discord-presence = true    # show the game and clipping time on your Discord profile
 # save-sound-file = 'C:\path\to\your.wav'
 ```
 
