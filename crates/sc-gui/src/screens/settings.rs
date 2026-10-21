@@ -422,6 +422,13 @@ fn general(app: &mut ScApp, ui: &mut Ui) {
         );
         if cfg!(windows) {
             s.row(
+                "Discord status",
+                Some("Shows the game you are in and how long you have been clipping"),
+                |ui| {
+                    widgets::toggle(ui, &mut app.cfg.general.discord_presence);
+                },
+            );
+            s.row(
                 "Open at login",
                 Some("Runs quietly in the background so the buffer is always ready"),
                 |ui| {
