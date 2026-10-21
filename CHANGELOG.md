@@ -2,6 +2,13 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 5.0.1
+
+### Changed
+- The Discord status now shows only actual games. A browser, the desktop, your editor or any other program shows nothing, and SimpleClip does not even connect to Discord while you are not in a game. A program counts as a game if it sits in a game store's folder (Steam, Epic, GOG, Riot, Ubisoft, Xbox, EA, Rockstar; the folder gives the game's proper name), is a well-known game by its program name, or is running in exclusive full screen (and is not a browser or media player).
+- The timer now counts this game session rather than the whole time SimpleClip has been running. Alt-Tabbing out to chat or a browser for up to a minute and a half keeps the status; a different game, or being away longer, starts a fresh timer.
+- Known limit: a game installed outside the store folders, not on the built-in list and run in a window or borderless, is not recognised. That is deliberate, so that nothing else is ever shown as a game.
+
 ## 5.0.0
 
 A polish of the whole look. The same layout, colours and feel, with the details tightened up.
