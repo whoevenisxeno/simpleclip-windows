@@ -158,6 +158,9 @@ pub struct GeneralSettings {
     pub accent: Option<String>,
     /// After saving a trim, offer to copy the clip or compress it for Discord.
     pub share_prompt: bool,
+    /// Show the game you are in and how long you have been clipping on your Discord
+    /// profile (Windows; only does anything while the Discord app is running).
+    pub discord_presence: bool,
     pub notify: bool,
     pub post_save_hook: Option<PathBuf>,
     /// Start the daemon at sign-in (Windows). On by default; the daemon keeps the
@@ -291,6 +294,7 @@ impl Default for GeneralSettings {
             theme: "system".to_string(),
             accent: None,
             share_prompt: true,
+            discord_presence: true,
             notify: true,
             post_save_hook: None,
             autostart: true,

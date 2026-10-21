@@ -4,6 +4,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod audio_mix;
+#[cfg(windows)]
+mod discord;
 #[cfg(target_os = "linux")]
 mod hypr;
 mod naming;
@@ -99,6 +101,7 @@ fn main() -> Result<()> {
         // so the replay buffer is always running in the background after sign-in.
         win::set_autostart(daemon.config.read().unwrap().general.autostart);
         win::spawn_hotkey(daemon.clone());
+        discord::spawn(daemon.clone());
         let server_daemon = daemon.clone();
         std::thread::Builder::new()
             .name("sc-ipc".into())
