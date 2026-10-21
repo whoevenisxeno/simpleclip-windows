@@ -2,7 +2,7 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
-## 4.12.8
+## 4.13.0
 
 ### Added
 - Discord status (Rich Presence). While SimpleClip is recording, your Discord profile shows "Playing" the program you are in, "Clipping with SimpleClip", and how long you have been clipping; it says "Replay buffer paused" while paused. It is on by default and can be turned off in Settings > General > Discord status. It talks only to the Discord app on your PC (nothing is sent over the network by SimpleClip) and does nothing if Discord is not running. The name shown is the program in front, the same name the Clips page uses for a game, so it can be a non-game program such as a browser if that is what you have open.
