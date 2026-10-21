@@ -276,7 +276,7 @@ mod tests {
         );
     }
 
-    /// Run with `cargo test -p scd -- --ignored discord`: shows the presence on the
+    /// Run with `cargo test -p scd -- --ignored discord` (SC_PRESENCE_TEST_SECS sets how long it stays up, 4 by default): shows the presence on the
     /// real Discord profile for a few seconds, then clears it.
     #[test]
     #[ignore = "talks to the running Discord app"]
@@ -290,7 +290,11 @@ mod tests {
         let reply = conn.set(Some(&p)).expect("presence sent");
         assert!(!reply.contains("\"ERROR\""), "Discord said: {reply}");
         println!("Discord replied: {reply}");
-        std::thread::sleep(Duration::from_secs(4));
+        let secs = std::env::var("SC_PRESENCE_TEST_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(4);
+        std::thread::sleep(Duration::from_secs(secs));
         conn.set(None).expect("presence cleared");
     }
 }
