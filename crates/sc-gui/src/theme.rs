@@ -27,6 +27,21 @@ pub struct Palette {
     pub orange: Color32,
 }
 
+/// Corner radii, so every surface and control curves the same way. A shape set
+/// inside another uses the outer radius minus the gap between them.
+pub mod radius {
+    /// Segments, key caps, chips inside a control.
+    pub const SMALL: f32 = 8.0;
+    /// Buttons, fields, thumbnails.
+    pub const CONTROL: f32 = 10.0;
+    /// Small tiles and the status block.
+    pub const TILE: f32 = 14.0;
+    /// Cards and grouped lists.
+    pub const CARD: f32 = 16.0;
+    /// Dialogs and sheets.
+    pub const SHEET: f32 = 22.0;
+}
+
 pub const DARK: Palette = Palette {
     dark: true,
     bg: Color32::from_rgb(0x1c, 0x1c, 0x1e),
@@ -36,7 +51,7 @@ pub const DARK: Palette = Palette {
     line: Color32::from_rgb(0x3d, 0x3d, 0x40),
     text: Color32::from_rgb(0xf5, 0xf5, 0xf7),
     text_2: Color32::from_rgb(0x9a, 0x9a, 0xa0),
-    text_3: Color32::from_rgb(0x6c, 0x6c, 0x72),
+    text_3: Color32::from_rgb(0x78, 0x78, 0x80),
     accent: Color32::from_rgb(0x0a, 0x84, 0xff),
     green: Color32::from_rgb(0x30, 0xd1, 0x58),
     red: Color32::from_rgb(0xff, 0x45, 0x3a),
@@ -52,7 +67,7 @@ pub const LIGHT: Palette = Palette {
     line: Color32::from_rgb(0xdc, 0xdc, 0xe1),
     text: Color32::from_rgb(0x1d, 0x1d, 0x1f),
     text_2: Color32::from_rgb(0x6e, 0x6e, 0x73),
-    text_3: Color32::from_rgb(0xa1, 0xa1, 0xa6),
+    text_3: Color32::from_rgb(0x8e, 0x8e, 0x93),
     accent: Color32::from_rgb(0x00, 0x7a, 0xff),
     green: Color32::from_rgb(0x34, 0xc7, 0x59),
     red: Color32::from_rgb(0xff, 0x3b, 0x30),
@@ -204,7 +219,10 @@ pub(crate) fn style(s: &mut egui::Style, p: Palette) {
     v.extreme_bg_color = p.card_hi;
     v.faint_bg_color = p.card;
     v.window_stroke = Stroke::new(1.0_f32, p.line);
-    v.window_rounding = Rounding::same(14.0);
+    v.window_rounding = Rounding::same(radius::CARD);
+    v.menu_rounding = Rounding::same(12.0);
+    v.window_shadow = float_shadow(&p);
+    v.popup_shadow = float_shadow(&p);
     v.selection.bg_fill = p.accent.linear_multiply(0.35);
     v.selection.stroke = Stroke::new(1.0_f32, p.accent);
     v.hyperlink_color = p.accent;
@@ -236,4 +254,31 @@ pub(crate) fn style(s: &mut egui::Style, p: Palette) {
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+/// The shadow under something that floats above the page (dialogs, menus): wide,
+/// soft and low, never a hard dark edge. On dark surfaces the lighter fill and
+/// the hairline do most of the separating, so it is kept gentle there.
+pub fn float_shadow(p: &Palette) -> egui::Shadow {
+    egui::Shadow {
+        offset: egui::vec2(0.0, 8.0),
+        blur: 30.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(if p.dark { 96 } else { 32 }),
+    }
+}
+
+/// A hair of shadow under a resting card in the light themes, so white cards
+/// lift off the grey page. Dark themes need none.
+pub fn card_shadow(p: &Palette) -> egui::Shadow {
+    if p.dark {
+        egui::Shadow::NONE
+    } else {
+        egui::Shadow {
+            offset: egui::vec2(0.0, 1.0),
+            blur: 3.0,
+            spread: 0.0,
+            color: Color32::from_black_alpha(15),
+        }
+    }
 }

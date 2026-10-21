@@ -31,8 +31,7 @@ pub fn caption(ui: &mut Ui, text: &str) {
     ui.add_space(6.0);
     ui.label(
         RichText::new(text.to_uppercase())
-            .size(11.5)
-            .font(FontId::new(11.5, theme::semibold()))
+            .font(FontId::new(12.0, theme::semibold()))
             .color(p.text_2),
     );
     ui.add_space(-2.0);
@@ -50,8 +49,9 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     let p = pal_ui(ui);
     egui::Frame::none()
         .fill(p.card)
-        .rounding(Rounding::same(14.0))
+        .rounding(Rounding::same(theme::radius::CARD))
         .stroke(Stroke::new(1.0_f32, p.line))
+        .shadow(theme::card_shadow(&p))
         .inner_margin(egui::Margin::same(18.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -73,8 +73,9 @@ pub fn section<R>(ui: &mut Ui, header: Option<&str>, add: impl FnOnce(&mut Secti
     let p = pal_ui(ui);
     let out = egui::Frame::none()
         .fill(p.card)
-        .rounding(Rounding::same(12.0))
+        .rounding(Rounding::same(theme::radius::CARD))
         .stroke(Stroke::new(1.0_f32, p.line))
+        .shadow(theme::card_shadow(&p))
         .inner_margin(egui::Margin::symmetric(16.0, 0.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -111,7 +112,7 @@ impl Section<'_> {
                     // Centre the text block in the row (the vertical fills its height).
                     let text_h = if hint.is_some() { 36.0 } else { 20.0 };
                     ui.add_space(((h - text_h) / 2.0).max(0.0));
-                    ui.label(RichText::new(label).size(14.5).color(p.text));
+                    ui.label(RichText::new(label).size(14.0).color(p.text));
                     if let Some(h) = hint {
                         ui.label(RichText::new(h).size(12.0).color(p.text_2));
                     }
@@ -134,27 +135,34 @@ impl Section<'_> {
 /// iOS-style on/off switch.
 pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     let p = pal_ui(ui);
-    let (rect, mut resp) = ui.allocate_exact_size(vec2(44.0, 26.0), Sense::click());
+    // The native switch is 51 by 31, with the knob inset 2 from the track.
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(51.0, 31.0), Sense::click());
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
-    let t = ui.ctx().animate_bool_with_time(resp.id, *on, 0.14);
+    let t = ui.ctx().animate_bool_with_time(resp.id, *on, 0.2);
     let off_col = if p.dark {
-        Color32::from_rgb(0x63, 0x63, 0x66)
+        Color32::from_rgb(0x39, 0x39, 0x3d)
     } else {
-        Color32::from_rgb(0xc7, 0xc7, 0xcc)
+        Color32::from_rgb(0xe3, 0xe3, 0xe8)
     };
     let track = mix(off_col, p.green, t);
-    ui.painter().rect_filled(rect, Rounding::same(13.0), track);
-    let knob_x = egui::lerp((rect.left() + 13.0)..=(rect.right() - 13.0), t);
-    ui.painter().circle_filled(
-        pos2(knob_x, rect.center().y + 0.5),
-        10.0,
-        Color32::from_black_alpha(40),
-    );
+    let radius = rect.height() / 2.0;
     ui.painter()
-        .circle_filled(pos2(knob_x, rect.center().y), 10.0, Color32::WHITE);
+        .rect_filled(rect, Rounding::same(radius), track);
+    let knob_r = radius - 2.0;
+    let knob = pos2(
+        egui::lerp((rect.left() + radius)..=(rect.right() - radius), t),
+        rect.center().y,
+    );
+    // A soft, tight shadow, the way the real knob sits above its track.
+    ui.painter().circle_filled(
+        knob + vec2(0.0, 1.5),
+        knob_r + 0.5,
+        Color32::from_black_alpha(34),
+    );
+    ui.painter().circle_filled(knob, knob_r, Color32::WHITE);
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -177,27 +185,45 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         })
         .collect();
     let total: f32 = widths.iter().sum::<f32>() + 4.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(total, 30.0), Sense::hover());
+    // 32 high with the pill inset 2: the pill's corners (8) are the track's (10)
+    // less that gap, so the two curves run parallel.
+    let (rect, _) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
     ui.painter()
-        .rect_filled(rect, Rounding::same(9.0), p.card_hi);
+        .rect_filled(rect, Rounding::same(theme::radius::CONTROL), p.card_hi);
+    // The selected pill glides to its new place instead of jumping.
+    let mut starts = Vec::with_capacity(widths.len());
+    let mut at = rect.left() + 2.0;
+    for w in &widths {
+        starts.push(at);
+        at += w;
+    }
+    if let Some(i) = options.iter().position(|(v, _)| *v == *value) {
+        let id = ui
+            .id()
+            .with(("seg-thumb", options.first().map(|o| o.1).unwrap_or("")));
+        let x = ui.ctx().animate_value_with_time(id, starts[i], 0.18);
+        let w = ui
+            .ctx()
+            .animate_value_with_time(id.with("w"), widths[i], 0.18);
+        let seg = Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(w, 28.0));
+        let fill = if p.dark {
+            Color32::from_rgb(0x63, 0x63, 0x66)
+        } else {
+            Color32::WHITE
+        };
+        let r = Rounding::same(theme::radius::SMALL);
+        ui.painter().rect_filled(
+            seg.translate(vec2(0.0, 1.0)),
+            r,
+            Color32::from_black_alpha(if p.dark { 60 } else { 24 }),
+        );
+        ui.painter().rect_filled(seg, r, fill);
+    }
     let mut x = rect.left() + 2.0;
     for ((val, label), w) in options.iter().zip(widths) {
-        let seg = Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(w, 26.0));
+        let seg = Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(w, 28.0));
         let resp = ui.interact(seg, ui.id().with(label), Sense::click());
         let selected = *val == *value;
-        if selected {
-            let fill = if p.dark {
-                Color32::from_rgb(0x63, 0x63, 0x66)
-            } else {
-                Color32::WHITE
-            };
-            ui.painter().rect_filled(
-                seg.translate(vec2(0.0, 0.5)),
-                Rounding::same(7.0),
-                Color32::from_black_alpha(if p.dark { 60 } else { 22 }),
-            );
-            ui.painter().rect_filled(seg, Rounding::same(7.0), fill);
-        }
         ui.painter().text(
             seg.center(),
             Align2::CENTER_CENTER,
@@ -226,7 +252,15 @@ pub enum Tone {
 /// A rounded button with an optional leading icon.
 pub fn button(ui: &mut Ui, tone: Tone, glyph: Option<&str>, label: &str) -> Response {
     let p = pal_ui(ui);
-    let font = FontId::new(14.0, egui::FontFamily::Proportional);
+    // The one filled button on a screen is semibold; the rest stay regular.
+    let font = FontId::new(
+        14.0,
+        if tone == Tone::Primary {
+            theme::semibold()
+        } else {
+            egui::FontFamily::Proportional
+        },
+    );
     let icon_font = FontId::new(15.0, theme::icons());
     let use_icon = glyph.is_some() && theme::has_icons(ui.ctx());
     let text_w = ui
@@ -235,27 +269,29 @@ pub fn button(ui: &mut Ui, tone: Tone, glyph: Option<&str>, label: &str) -> Resp
         .size()
         .x;
     let w = text_w + 28.0 + if use_icon { 24.0 } else { 0.0 };
-    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(40.0), 34.0), Sense::click());
+    // 32 high: on the 8pt grid, and comfortably above the 28px desktop minimum.
+    let (rect, resp) = ui.allocate_exact_size(vec2(w.max(40.0), 32.0), Sense::click());
     let (bg, fg) = match tone {
         Tone::Primary => (p.accent, Color32::WHITE),
         Tone::Quiet => (p.card_hi, p.text),
     };
+    // Hover is a quiet fill change that eases in; a press goes a step darker.
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
+    let lift = if p.dark {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    let bg = mix(bg, lift, 0.08 * hover);
     let bg = if resp.is_pointer_button_down_on() {
-        mix(bg, Color32::BLACK, 0.18)
-    } else if resp.hovered() {
-        mix(
-            bg,
-            if p.dark {
-                Color32::WHITE
-            } else {
-                Color32::BLACK
-            },
-            0.08,
-        )
+        mix(bg, Color32::BLACK, 0.16)
     } else {
         bg
     };
-    ui.painter().rect_filled(rect, Rounding::same(9.0), bg);
+    ui.painter()
+        .rect_filled(rect, Rounding::same(theme::radius::CONTROL), bg);
     let mut x = rect.left() + 14.0;
     if use_icon {
         ui.painter().text(
@@ -293,25 +329,25 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, fallback: &str, tip: &str, danger: 
     let p = pal_ui(ui);
     let has = theme::has_icons(ui.ctx());
     let size = if has {
-        vec2(30.0, 30.0)
+        vec2(32.0, 32.0)
     } else {
         vec2(54.0, 28.0)
     };
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let bg = if resp.hovered() {
-        mix(
-            p.card_hi,
-            if p.dark {
-                Color32::WHITE
-            } else {
-                Color32::BLACK
-            },
-            0.08,
-        )
-    } else {
-        p.card_hi
-    };
-    ui.painter().rect_filled(rect, Rounding::same(8.0), bg);
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
+    let bg = mix(
+        p.card_hi,
+        if p.dark {
+            Color32::WHITE
+        } else {
+            Color32::BLACK
+        },
+        0.08 * hover,
+    );
+    ui.painter()
+        .rect_filled(rect, Rounding::same(theme::radius::CONTROL - 1.0), bg);
     let fg = if danger { p.red } else { p.text };
     if has {
         ui.painter().text(
@@ -611,12 +647,24 @@ pub fn nav_item(ui: &mut Ui, glyph: &str, label: &str, selected: bool) -> Respon
     let p = pal_ui(ui);
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-    if selected {
+    // The wash eases in and out rather than flicking on.
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
+    let on = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("on"), selected, 0.16);
+    let round = Rounding::same(theme::radius::SMALL);
+    if on < 1.0 {
+        ui.painter().rect_filled(
+            rect,
+            round,
+            p.text.linear_multiply(0.06 * hover * (1.0 - on)),
+        );
+    }
+    if on > 0.0 {
         ui.painter()
-            .rect_filled(rect, Rounding::same(8.0), p.accent.linear_multiply(0.18));
-    } else if resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, Rounding::same(8.0), p.text.linear_multiply(0.06));
+            .rect_filled(rect, round, p.accent.linear_multiply(0.18 * on));
     }
     let fg = if selected { p.accent } else { p.text };
     let mut x = rect.left() + 12.0;
@@ -946,4 +994,69 @@ pub fn accent_picker(ui: &mut Ui, current: &mut Option<String>) -> bool {
         }
     });
     changed
+}
+
+/// A slider from 0 to `max` in whole numbers, with its value written beside it
+/// (for example "100%"). A thin track filled with the accent, a white knob on a
+/// soft shadow, and a small notch where the usual setting (100) is. Double-click
+/// to go back to 100.
+pub fn percent_slider(ui: &mut Ui, value: &mut u32, max: u32) -> Response {
+    let p = pal_ui(ui);
+    let track_w = 180.0;
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(track_w, 32.0), Sense::click_and_drag());
+    let knob_r = 11.0;
+    let left = rect.left() + knob_r;
+    let right = rect.right() - knob_r;
+    let x_of = |v: u32| left + (right - left) * (v as f32 / max.max(1) as f32);
+    if resp.dragged() || resp.clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let t = ((pos.x - left) / (right - left)).clamp(0.0, 1.0);
+            let new = (t * max as f32).round() as u32;
+            if new != *value {
+                *value = new;
+                resp.mark_changed();
+            }
+        }
+    }
+    if resp.double_clicked() && *value != 100 {
+        *value = 100;
+        resp.mark_changed();
+    }
+    let cy = rect.center().y;
+    let track = Rect::from_min_max(pos2(left, cy - 2.0), pos2(right, cy + 2.0));
+    ui.painter()
+        .rect_filled(track, Rounding::same(2.0), p.card_hi);
+    // The usual setting.
+    if *value != 100 && max > 100 {
+        ui.painter()
+            .circle_filled(pos2(x_of(100), cy), 1.5, p.text_3);
+    }
+    let kx = x_of((*value).min(max));
+    ui.painter().rect_filled(
+        Rect::from_min_max(track.min, pos2(kx, track.max.y)),
+        Rounding::same(2.0),
+        p.accent,
+    );
+    let knob = pos2(kx, cy);
+    let lift = if resp.dragged() { 0.5 } else { 0.0 };
+    ui.painter().circle_filled(
+        knob + vec2(0.0, 1.5),
+        knob_r + 1.0 + lift,
+        Color32::from_black_alpha(if p.dark { 70 } else { 36 }),
+    );
+    ui.painter().circle_filled(knob, knob_r, Color32::WHITE);
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
+}
+
+/// A shortcut written for a sentence: "ALT+F10" becomes "Alt+F10".
+pub fn pretty_combo(combo: &str) -> String {
+    combo
+        .split('+')
+        .filter(|s| !s.is_empty())
+        .map(pretty_key)
+        .collect::<Vec<_>>()
+        .join("+")
 }
