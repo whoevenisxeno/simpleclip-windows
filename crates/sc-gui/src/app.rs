@@ -125,6 +125,11 @@ impl ScApp {
             cfg.hotkeys = Default::default();
             cfg.audio.mic_enabled = true;
             cfg.general.setup_complete = true;
+            // ...and the stock look, not whatever theme or accent this PC picked.
+            cfg.general.theme = "system".into();
+            cfg.general.accent = None;
+            cfg.general.discord_presence = true;
+            cfg.buffer.replay_duration_secs = 60;
             // SC_GUI_THEME lets a review run render any theme.
             if let Ok(t) = std::env::var("SC_GUI_THEME") {
                 cfg.general.theme = t;
