@@ -606,6 +606,17 @@ pub fn run_tray(daemon: Daemon) {
     }
 }
 
+/// Whether a program is running in exclusive full screen (Direct3D), the mode
+/// games use and a browser or document never does.
+pub fn exclusive_fullscreen() -> bool {
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN};
+    unsafe {
+        SHQueryUserNotificationState()
+            .map(|s| s == QUNS_RUNNING_D3D_FULL_SCREEN)
+            .unwrap_or(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

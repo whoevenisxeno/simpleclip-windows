@@ -6,6 +6,8 @@
 mod audio_mix;
 #[cfg(windows)]
 mod discord;
+#[cfg(windows)]
+mod games;
 #[cfg(target_os = "linux")]
 mod hypr;
 mod naming;

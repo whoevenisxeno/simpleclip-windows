@@ -24,6 +24,9 @@ const REPO_URL: &str = "https://github.com/whoevenisxeno/simpleclip-windows";
 const MIN_GAP: Duration = Duration::from_secs(15);
 /// How often to look for a change, or for Discord to start.
 const POLL: Duration = Duration::from_secs(5);
+/// How long a game stays on the profile after it leaves the front (an Alt-Tab to
+/// chat or a browser), before it counts as no longer playing.
+const GRACE: Duration = Duration::from_secs(90);
 
 const OP_HANDSHAKE: u32 = 0;
 const OP_FRAME: u32 = 1;
@@ -41,9 +44,9 @@ fn encode(op: u32, json: &str) -> Vec<u8> {
 /// What the profile shows. Two different values mean a new update is due.
 #[derive(Clone, PartialEq, Debug)]
 struct Presence {
-    game: Option<String>,
+    game: String,
     paused: bool,
-    /// Unix seconds when clipping began, for Discord's "elapsed" counter.
+    /// Unix seconds when this game session began, for Discord's "elapsed" counter.
     started: u64,
 }
 
@@ -51,10 +54,7 @@ struct Presence {
 fn activity_message(presence: Option<&Presence>, pid: u32, nonce: u64) -> String {
     let activity = presence.map(|p| {
         serde_json::json!({
-            "details": match &p.game {
-                Some(g) => format!("Playing {g}"),
-                None => "On the desktop".to_string(),
-            },
+            "details": format!("Playing {}", p.game),
             "state": if p.paused { "Replay buffer paused" } else { "Clipping with SimpleClip" },
             "timestamps": { "start": p.started },
             // A button under the status for other people (Discord does not show
@@ -132,15 +132,6 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// "valorant" becomes "Valorant", matching how the Clips page names a game.
-fn game_name(app: &str) -> String {
-    let mut c = app.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
-    }
-}
-
 /// Keep the Discord profile in step with what SimpleClip is doing, until the
 /// process ends.
 pub fn spawn(daemon: Daemon) {
@@ -150,10 +141,41 @@ pub fn spawn(daemon: Daemon) {
         .expect("discord thread");
 }
 
+/// One game being played: its name, when this session began, and when it was
+/// last the program in front.
+struct Session {
+    game: String,
+    started: u64,
+    last_seen: Instant,
+}
+
+/// Move the session on given the game now in front (`None` when what is in front
+/// is not a game). Alt-tabbing out for a minute or two keeps the session; a
+/// different game, or being away longer, starts a fresh one.
+fn next_session(
+    current: Option<Session>,
+    seen: Option<String>,
+    now: Instant,
+    unix: u64,
+) -> Option<Session> {
+    match (current, seen) {
+        (Some(mut s), Some(g)) if s.game == g => {
+            s.last_seen = now;
+            Some(s)
+        }
+        (_, Some(g)) => Some(Session {
+            game: g,
+            started: unix,
+            last_seen: now,
+        }),
+        (Some(s), None) if now.duration_since(s.last_seen) < GRACE => Some(s),
+        (_, None) => None,
+    }
+}
+
 fn run(daemon: Daemon) {
     let mut conn: Option<Conn> = None;
-    let mut started: Option<u64> = None;
-    let mut game: Option<String> = None;
+    let mut session: Option<Session> = None;
     let mut shown: Option<Presence> = None;
     let mut last_sent = Instant::now() - MIN_GAP;
     let mut warned = false;
@@ -162,28 +184,39 @@ fn run(daemon: Daemon) {
         let enabled = daemon.config.read().unwrap().general.discord_presence;
         let state = daemon.capture_state();
         let clipping = matches!(state, CaptureState::Active | CaptureState::Paused);
-        if !clipping {
-            started = None; // the next time it runs, the timer starts again
-        }
 
-        if !enabled || !clipping {
-            // Take the presence down once, then stop talking to Discord.
-            if let Some(mut c) = conn.take() {
-                let _ = c.set(None);
-            }
-            shown = None;
-            continue;
-        }
-
-        // The game is whatever you are in; the desktop and our own windows
-        // leave the last one showing.
-        if let Some(app) = crate::naming::foreground_app() {
-            game = Some(game_name(&app));
-        }
-        let want = Presence {
-            game: game.clone(),
+        // Only a real game counts; the browser, the desktop and every other
+        // program show nothing at all.
+        let seen = if enabled && clipping {
+            crate::win::foreground_exe()
+                .and_then(|exe| crate::games::detect(&exe, crate::win::exclusive_fullscreen()))
+        } else {
+            None
+        };
+        session = if enabled && clipping {
+            next_session(session.take(), seen, Instant::now(), unix_now())
+        } else {
+            None
+        };
+        let want = session.as_ref().map(|s| Presence {
+            game: s.game.clone(),
             paused: state == CaptureState::Paused,
-            started: *started.get_or_insert_with(unix_now),
+            started: s.started,
+        });
+
+        let Some(want) = want else {
+            // Not in a game: take any status down, and do not even talk to Discord.
+            if shown.take().is_some() {
+                if let Some(c) = conn.as_mut() {
+                    if c.set(None).is_err() {
+                        conn = None;
+                    }
+                }
+            }
+            if !enabled {
+                conn = None;
+            }
+            continue;
         };
 
         if conn.is_none() {
@@ -206,6 +239,7 @@ fn run(daemon: Daemon) {
                 if reply.contains("\"ERROR\"") {
                     tracing::warn!(%reply, "discord rejected the presence");
                 }
+                tracing::info!(game = %want.game, "discord status shown");
                 shown = Some(want);
                 last_sent = Instant::now();
             }
@@ -232,7 +266,7 @@ mod tests {
     #[test]
     fn presence_shows_game_and_start_time() {
         let p = Presence {
-            game: Some("Valorant".into()),
+            game: "Valorant".into(),
             paused: false,
             started: 1_700_000_000,
         };
@@ -252,7 +286,7 @@ mod tests {
     #[test]
     fn status_has_one_button_to_the_repo() {
         let p = Presence {
-            game: None,
+            game: "Apex Legends".into(),
             paused: false,
             started: 1,
         };
@@ -266,14 +300,13 @@ mod tests {
     }
 
     #[test]
-    fn desktop_and_paused_read_sensibly() {
+    fn paused_reads_sensibly() {
         let p = Presence {
-            game: None,
+            game: "Apex Legends".into(),
             paused: true,
             started: 1,
         };
         let v: serde_json::Value = serde_json::from_str(&activity_message(Some(&p), 1, 1)).unwrap();
-        assert_eq!(v["args"]["activity"]["details"], "On the desktop");
         assert_eq!(v["args"]["activity"]["state"], "Replay buffer paused");
     }
 
@@ -283,10 +316,60 @@ mod tests {
         assert!(v["args"]["activity"].is_null());
     }
 
+    fn session(game: &str, started: u64, seen: Instant) -> Session {
+        Session {
+            game: game.into(),
+            started,
+            last_seen: seen,
+        }
+    }
+
     #[test]
-    fn game_names_start_with_a_capital() {
-        assert_eq!(game_name("valorant"), "Valorant");
-        assert_eq!(game_name(""), "");
+    fn a_session_starts_when_a_game_appears() {
+        let now = Instant::now();
+        let s = next_session(None, Some("Valorant".into()), now, 100).unwrap();
+        assert_eq!((s.game.as_str(), s.started), ("Valorant", 100));
+        assert!(next_session(None, None, now, 100).is_none());
+    }
+
+    #[test]
+    fn the_timer_keeps_running_while_the_same_game_stays_up() {
+        let t0 = Instant::now();
+        let s = next_session(
+            Some(session("Valorant", 100, t0)),
+            Some("Valorant".into()),
+            t0 + Duration::from_secs(60),
+            160,
+        )
+        .unwrap();
+        assert_eq!(s.started, 100);
+    }
+
+    #[test]
+    fn alt_tabbing_out_briefly_keeps_the_session() {
+        let t0 = Instant::now();
+        let s = next_session(
+            Some(session("Valorant", 100, t0)),
+            None,
+            t0 + Duration::from_secs(30),
+            130,
+        );
+        assert_eq!(s.unwrap().started, 100);
+    }
+
+    #[test]
+    fn being_away_too_long_ends_it_and_a_new_game_restarts_the_timer() {
+        let t0 = Instant::now();
+        let away = t0 + GRACE + Duration::from_secs(1);
+        assert!(next_session(Some(session("Valorant", 100, t0)), None, away, 500).is_none());
+        let other = next_session(
+            Some(session("Valorant", 100, t0)),
+            Some("Minecraft".into()),
+            t0 + Duration::from_secs(5),
+            105,
+        )
+        .unwrap();
+        assert_eq!((other.game.as_str(), other.started), ("Minecraft", 105));
     }
 
     /// Connects and says hello only; nothing shows on the profile.
@@ -306,7 +389,7 @@ mod tests {
     fn discord_accepts_the_presence() {
         let mut conn = Conn::open().expect("Discord is running and accepted the app id");
         let p = Presence {
-            game: Some("Test game".into()),
+            game: "Test game".into(),
             paused: false,
             started: unix_now(),
         };
