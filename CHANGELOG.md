@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 4.12.7
+
+### Changed
+- The open-window shortcut (`Alt+F8` by default) now works both ways: pressing it while SimpleClip is the window in front minimises it. If the window is open but behind something else, or minimised, it still comes to the front.
+
 ## 4.12.6
 
 ### Added
