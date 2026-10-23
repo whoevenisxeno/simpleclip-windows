@@ -174,7 +174,13 @@ fn recording(app: &mut ScApp, ui: &mut Ui) {
         }
         s.row("Keep the last", Some("Length of each saved clip"), |ui| {
             let mut v = app.cfg.buffer.replay_duration_secs;
-            let opts = [(15u32, "15 s"), (30, "30 s"), (60, "1 min"), (120, "2 min")];
+            let opts = [
+                (15u32, "15 s"),
+                (30, "30 s"),
+                (45, "45 s"),
+                (60, "1 min"),
+                (120, "2 min"),
+            ];
             if opts.iter().any(|(o, _)| *o == v) {
                 widgets::segmented(ui, &mut v, &opts);
                 app.cfg.buffer.replay_duration_secs = v;

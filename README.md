@@ -2,7 +2,7 @@
 
 # SimpleClip for Windows
 
-SimpleClip keeps the last 30 seconds (or 15 s, 1 min, 2 min, 5 min) of your screen in memory. When
+SimpleClip keeps the last 30 seconds (or 15 s, 45 s, 1 min, 2 min, 5 min) of your screen in memory. When
 something good happens you press a hotkey and those seconds are written to an MP4. There is no
 record button and nothing to start before you play.
 

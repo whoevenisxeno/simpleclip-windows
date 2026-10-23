@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 5.0.2
+
+### Added
+- A 45 second replay length, between 30 s and 1 min, in Settings and in the first-run setup.
+
 ## 5.0.1
 
 ### Changed

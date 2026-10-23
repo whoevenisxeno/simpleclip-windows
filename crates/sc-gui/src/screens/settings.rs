@@ -91,6 +91,7 @@ fn recording(app: &mut ScApp, ui: &mut Ui) {
                     &[
                         (15, "15 s"),
                         (30, "30 s"),
+                        (45, "45 s"),
                         (60, "1 min"),
                         (120, "2 min"),
                         (300, "5 min"),
