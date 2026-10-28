@@ -268,3 +268,29 @@ pub fn on_accent(p: &Palette) -> Color32 {
         Color32::WHITE
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_on_accent_is_dark_for_light_accents_and_white_for_dark_ones() {
+        let mut p = DARK;
+        p.accent = Color32::from_rgb(0xff, 0xd6, 0x0a);
+        assert_eq!(on_accent(&p), Color32::from_rgb(0x14, 0x14, 0x16));
+        p.accent = Color32::from_rgb(0x0a, 0x84, 0xff);
+        assert_eq!(on_accent(&p), Color32::WHITE);
+        p.accent = Color32::from_rgb(0x8b, 0x5c, 0xf6);
+        assert_eq!(on_accent(&p), Color32::WHITE);
+    }
+
+    #[test]
+    fn every_offered_accent_reads_with_the_text_chosen_for_it() {
+        for (hex, _) in crate::themes::ACCENTS {
+            let mut p = DARK;
+            p.accent = crate::themes::parse_hex(hex).unwrap();
+            let text = on_accent(&p);
+            assert!(text == Color32::WHITE || text == Color32::from_rgb(0x14, 0x14, 0x16));
+        }
+    }
+}

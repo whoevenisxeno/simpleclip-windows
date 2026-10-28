@@ -603,6 +603,13 @@ impl ScApp {
             self.library.toggle_bookmark(p, funny);
             self.library.set_note(p, "Lag spike right before the flick");
         }
+        let all = self.gallery.all_paths();
+        if let Some(p) = all.get(5) {
+            self.library.set_trimmed(p, true);
+        }
+        if let Some(p) = all.get(6) {
+            self.library.set_compressed(p, true);
+        }
     }
 
     fn drive_shot(&mut self, ctx: &egui::Context) {

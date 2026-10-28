@@ -1105,3 +1105,41 @@ pub fn pretty_combo(combo: &str) -> String {
         .collect::<Vec<_>>()
         .join("+")
 }
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_query_matches_everything() {
+        let ctx = egui::Context::default();
+        set_search_query(&ctx, "   ");
+        assert!(search_query(&ctx).is_empty());
+        assert!(matches_query(&ctx, &["Display"]));
+    }
+
+    #[test]
+    fn a_query_matches_label_or_hint_ignoring_case() {
+        let ctx = egui::Context::default();
+        set_search_query(&ctx, " Sound ");
+        assert_eq!(search_query(&ctx), "sound");
+        assert!(matches_query(&ctx, &["System sound", ""]));
+        assert!(matches_query(
+            &ctx,
+            &["Save as a preset", "Keeps the current sound"]
+        ));
+        assert!(!matches_query(&ctx, &["Display", "Which screen to record"]));
+    }
+
+    #[test]
+    fn the_row_counter_starts_over_each_frame() {
+        let ctx = egui::Context::default();
+        reset_rows(&ctx);
+        assert_eq!(rows_drawn(&ctx), 0);
+        bump_rows(&ctx);
+        bump_rows(&ctx);
+        assert_eq!(rows_drawn(&ctx), 2);
+        reset_rows(&ctx);
+        assert_eq!(rows_drawn(&ctx), 0);
+    }
+}
