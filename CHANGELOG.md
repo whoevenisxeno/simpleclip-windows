@@ -2,6 +2,18 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.6.0
+
+### Changed
+- Speed is now set per piece instead of for the whole clip. Split the clip, pick a piece, and give just that part its own speed, for example slow motion on the highlight and normal speed around it. Each piece shows its speed on the timeline, the line under the timeline says which piece is selected, and Apply to all gives every piece the same speed.
+- The preview now plays at the real speed of each piece, with the sound speeding up or slowing down with it, and a badge on the picture shows the speed you are watching. In the saved clip the sound keeps its pitch.
+- Saving moved into a dialog. The Save button is at the top right next to Undo and Redo (or press Ctrl+S). It shows the length, size and what you changed, lets you pick Save as a copy or Replace the original, and shows progress with a Cancel button. The page no longer scrolls to reach it, and the result stays shown after you save.
+
+### Fixed
+- Fades did nothing you could see in the editor. The saved clip was faded correctly, but the preview ignored them, so moving the Fade in and Fade out sliders seemed to have no effect. The preview now darkens the picture and lowers the sound along the fade as you scrub or play, so you can check it before saving.
+- The values beside the Volume and Fade sliders ("100%", "2 s") were drawn outside their box, into the edge of the card, and the sliders sat at slightly different positions. They are now aligned.
+- Replacing the original could fail to move it to the Recycle Bin when the player had only just let go of the file. It now retries for a moment first.
+
 ## 6.5.1
 
 ### Fixed

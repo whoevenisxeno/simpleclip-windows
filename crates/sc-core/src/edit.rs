@@ -9,11 +9,24 @@ pub const FADE_MAX: f64 = 5.0;
 pub struct Segment {
     pub start: f64,
     pub end: f64,
+    pub speed: f64,
 }
 
 impl Segment {
+    pub fn new(start: f64, end: f64) -> Self {
+        Self {
+            start,
+            end,
+            speed: 1.0,
+        }
+    }
+
     pub fn len(&self) -> f64 {
         self.end - self.start
+    }
+
+    pub fn out_len(&self) -> f64 {
+        self.len() / self.speed.clamp(SPEED_MIN, SPEED_MAX)
     }
 }
 
@@ -69,7 +82,6 @@ impl Crop {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     pub segments: Vec<Segment>,
-    pub speed: f64,
     pub volume: f32,
     pub fade_in: f64,
     pub fade_out: f64,
@@ -88,11 +100,7 @@ impl Default for Plan {
 impl Plan {
     pub fn whole(duration: f64) -> Self {
         Self {
-            segments: vec![Segment {
-                start: 0.0,
-                end: duration.max(MIN_SEGMENT),
-            }],
-            speed: 1.0,
+            segments: vec![Segment::new(0.0, duration.max(MIN_SEGMENT))],
             volume: 1.0,
             fade_in: 0.0,
             fade_out: 0.0,
@@ -108,7 +116,29 @@ impl Plan {
     }
 
     pub fn output_secs(&self) -> f64 {
-        self.kept_secs() / self.speed.clamp(SPEED_MIN, SPEED_MAX)
+        self.segments.iter().map(Segment::out_len).sum()
+    }
+
+    pub fn speed_at(&self, t: f64) -> f64 {
+        self.segment_at(t)
+            .map(|i| self.segments[i].speed.clamp(SPEED_MIN, SPEED_MAX))
+            .unwrap_or(1.0)
+    }
+
+    pub fn set_speed(&mut self, index: usize, speed: f64) {
+        if let Some(s) = self.segments.get_mut(index) {
+            s.speed = speed.clamp(SPEED_MIN, SPEED_MAX);
+        }
+    }
+
+    pub fn set_all_speeds(&mut self, speed: f64) {
+        for i in 0..self.segments.len() {
+            self.set_speed(i, speed);
+        }
+    }
+
+    pub fn has_speed_change(&self) -> bool {
+        self.segments.iter().any(|s| (s.speed - 1.0).abs() > 1e-6)
     }
 
     pub fn bounds(&self) -> (f64, f64) {
@@ -141,6 +171,7 @@ impl Plan {
             Segment {
                 start: at,
                 end: s.end,
+                speed: s.speed,
             },
         );
         Some(i + 1)
@@ -179,24 +210,29 @@ impl Plan {
         for s in &mut self.segments {
             s.start = s.start.clamp(0.0, duration);
             s.end = s.end.clamp(0.0, duration);
+            s.speed = s.speed.clamp(SPEED_MIN, SPEED_MAX);
         }
         self.segments.retain(|s| s.len() >= MIN_SEGMENT * 0.5);
         self.segments.sort_by(|a, b| a.start.total_cmp(&b.start));
         let mut merged: Vec<Segment> = Vec::new();
-        for s in self.segments.drain(..) {
+        for mut s in self.segments.drain(..) {
             match merged.last_mut() {
-                Some(last) if s.start <= last.end + 1e-6 => last.end = last.end.max(s.end),
-                _ => merged.push(s),
+                Some(last) if s.start <= last.end + 1e-6 && (s.speed - last.speed).abs() < 1e-9 => {
+                    last.end = last.end.max(s.end)
+                }
+                Some(last) => {
+                    s.start = s.start.max(last.end);
+                    if s.len() >= MIN_SEGMENT * 0.5 {
+                        merged.push(s);
+                    }
+                }
+                None => merged.push(s),
             }
         }
         if merged.is_empty() {
-            merged.push(Segment {
-                start: 0.0,
-                end: duration.max(MIN_SEGMENT),
-            });
+            merged.push(Segment::new(0.0, duration.max(MIN_SEGMENT)));
         }
         self.segments = merged;
-        self.speed = self.speed.clamp(SPEED_MIN, SPEED_MAX);
         self.volume = self.volume.clamp(0.0, VOLUME_MAX);
         self.fade_in = self.fade_in.clamp(0.0, FADE_MAX);
         self.fade_out = self.fade_out.clamp(0.0, FADE_MAX);
@@ -206,13 +242,14 @@ impl Plan {
 
     pub fn output_time(&self, t: f64) -> Option<f64> {
         let i = self.segment_at(t)?;
-        let before: f64 = self.segments[..i].iter().map(Segment::len).sum();
-        Some((before + t - self.segments[i].start) / self.speed.clamp(SPEED_MIN, SPEED_MAX))
+        let before: f64 = self.segments[..i].iter().map(Segment::out_len).sum();
+        let seg = &self.segments[i];
+        Some(before + (t - seg.start) / seg.speed.clamp(SPEED_MIN, SPEED_MAX))
     }
 
     pub fn is_plain_cut(&self) -> bool {
         self.segments.len() == 1
-            && (self.speed - 1.0).abs() < 1e-6
+            && !self.has_speed_change()
             && (self.volume - 1.0).abs() < 1e-6
             && self.fade_in <= 0.0
             && self.fade_out <= 0.0
@@ -356,9 +393,56 @@ mod tests {
         assert_eq!(p.output_time(1.0), Some(1.0));
         assert_eq!(p.output_time(4.0), None);
         assert_eq!(p.output_time(7.0), Some(4.0));
-        p.speed = 2.0;
+        p.set_all_speeds(2.0);
         assert_eq!(p.output_time(7.0), Some(2.0));
         assert_eq!(p.output_secs(), 3.5);
+    }
+
+    #[test]
+    fn each_piece_has_its_own_speed() {
+        let mut p = plan();
+        p.split(4.0);
+        p.split(6.0);
+        p.set_speed(1, 0.5);
+        assert!(p.has_speed_change());
+        assert!(!p.is_plain_cut());
+        assert_eq!(p.speed_at(2.0), 1.0);
+        assert_eq!(p.speed_at(5.0), 0.5);
+        assert_eq!(p.speed_at(8.0), 1.0);
+        assert_eq!(p.speed_at(12.0), 1.0);
+        assert_eq!(p.output_secs(), 4.0 + 4.0 + 4.0);
+        assert_eq!(p.output_time(4.0), Some(4.0));
+        assert_eq!(p.output_time(5.0), Some(6.0));
+        assert_eq!(p.output_time(6.0), Some(8.0));
+        assert_eq!(p.output_time(9.0), Some(11.0));
+    }
+
+    #[test]
+    fn a_split_piece_keeps_its_speed_and_speeds_stay_in_range() {
+        let mut p = plan();
+        p.set_speed(0, 2.0);
+        p.split(5.0);
+        assert_eq!(p.segments[0].speed, 2.0);
+        assert_eq!(p.segments[1].speed, 2.0);
+        p.set_speed(1, 99.0);
+        assert_eq!(p.segments[1].speed, SPEED_MAX);
+        p.set_speed(1, 0.0);
+        assert_eq!(p.segments[1].speed, SPEED_MIN);
+        p.set_speed(7, 3.0);
+        assert_eq!(p.segments.len(), 2);
+    }
+
+    #[test]
+    fn touching_pieces_with_the_same_speed_merge_but_different_speeds_stay_apart() {
+        let mut p = plan();
+        p.split(5.0);
+        p.clamp_to(10.0);
+        assert_eq!(p.segments.len(), 1);
+        p.split(5.0);
+        p.set_speed(1, 2.0);
+        p.clamp_to(10.0);
+        assert_eq!(p.segments.len(), 2);
+        assert_eq!(p.segments[1].speed, 2.0);
     }
 
     #[test]
@@ -379,27 +463,12 @@ mod tests {
     fn clamping_merges_overlaps_and_keeps_something() {
         let mut p = plan();
         p.segments = vec![
-            Segment {
-                start: 5.0,
-                end: 8.0,
-            },
-            Segment {
-                start: 1.0,
-                end: 6.0,
-            },
-            Segment {
-                start: 12.0,
-                end: 14.0,
-            },
+            Segment::new(5.0, 8.0),
+            Segment::new(1.0, 6.0),
+            Segment::new(12.0, 14.0),
         ];
         p.clamp_to(10.0);
-        assert_eq!(
-            p.segments,
-            vec![Segment {
-                start: 1.0,
-                end: 8.0
-            }]
-        );
+        assert_eq!(p.segments, vec![Segment::new(1.0, 8.0)]);
         p.segments.clear();
         p.clamp_to(10.0);
         assert_eq!(p.segments.len(), 1);

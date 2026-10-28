@@ -33,3 +33,6 @@ windows = { version = "0.62.2", features = ["Win32_UI_Input_KeyboardAndMouse", "
 
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1.34"
+
+[target."cfg(windows)".dev-dependencies]
+sc-ffmpeg = { path = "../sc-ffmpeg", features = ["sample"] }

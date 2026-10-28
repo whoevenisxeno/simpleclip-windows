@@ -36,11 +36,13 @@ job and does not need an account.
 - **Edit with a live player and a timeline.** Open a clip and cut it exactly where you want. Split
   it at the playhead, delete any piece (so you can remove a section from the middle), drag the edges
   of a piece, and undo or redo as far back as you like. A strip of pictures shows the whole clip, and
-  the player skips the parts you cut. Then add what you need: speed from 0.25x to 4x with the pitch
-  kept, volume or mute, fade in and fade out, crop to any shape or to 16:9, 9:16, 1:1, 4:5 or 21:9,
-  and turn or flip the picture. Save it as a new clip, or replace the original (it goes to the
-  Recycle Bin, not deleted for good). Edits are re-encoded so cuts are frame accurate. A plain trim
-  can still be done as an instant lossless cut, which snaps to the nearest earlier keyframe.
+  the player skips the parts you cut. Then add what you need: a speed for each piece from 0.25x to
+  4x (slow motion on just the highlight, with the pitch kept), volume or mute, fade in and fade out,
+  crop to any shape or to 16:9, 9:16, 1:1, 4:5 or 21:9, and turn or flip the picture. The preview
+  plays every change as you make it. Press Save (or Ctrl+S) to save it as a new clip, or replace the
+  original (it goes to the Recycle Bin, not deleted for good). Edits are re-encoded so cuts are frame
+  accurate. A plain trim can still be done as an instant lossless cut, which snaps to the nearest
+  earlier keyframe.
 - **Edited clips stay separate.** They get their own view and a small badge, and they are left out
   of the normal clip list and the Recent row on Home. You can also send them to a folder of your
   choice.
@@ -285,8 +287,9 @@ Being straight about this so you don't hit it by surprise:
 - **Quick trims and `sc trim` cut on keyframes.** That is the price of not re-encoding. With the
   default 2 second keyframe spacing at 60 fps, cuts can land up to about 2 seconds early. The editor
   avoids this by default because it re-encodes.
-- **The editor preview plays at normal speed.** A speed change and the fades only show in the saved
-  clip. Several audio tracks are mixed into one when you save an edit.
+- **In the editor preview, a speed change also changes the pitch of the sound.** The saved clip keeps
+  the pitch. Fades, volume, crop, turns and flips show in the preview. Several audio tracks are mixed
+  into one when you save an edit.
 - **Exclusive-fullscreen games** can capture as black with Windows Graphics Capture. Borderless
   or windowed fullscreen works. This is a Windows limitation, not something I can fix here.
 - **Only the AMD (AMF) encoder path has been tested.** The NVENC and QuickSync paths are written

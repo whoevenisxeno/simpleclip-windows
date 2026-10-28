@@ -54,7 +54,7 @@ fn err(e: ff::Error) -> Error {
 }
 
 fn edit_audio(mix: &[f32], plan: &Plan) -> Vec<f32> {
-    let mut joined: Vec<f32> = Vec::new();
+    let mut out: Vec<f32> = Vec::new();
     let last = plan.segments.len().saturating_sub(1);
     for (i, seg) in plan.segments.iter().enumerate() {
         let a = ((seg.start * AUDIO_RATE as f64) as usize * 2).min(mix.len()) & !1;
@@ -74,9 +74,8 @@ fn edit_audio(mix: &[f32], plan: &Plan) -> Vec<f32> {
                 piece[r * 2 + 1] *= g;
             }
         }
-        joined.extend_from_slice(&piece);
+        out.extend_from_slice(&stretch(&piece, seg.speed));
     }
-    let mut out = stretch(&joined, plan.speed);
     let total = out.len() / 2;
     let secs = total as f64 / AUDIO_RATE as f64;
     let gain = plan.volume;
@@ -322,7 +321,6 @@ pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Resul
     let scale = (out.0 as f64 * out.1 as f64) / (info.width as f64 * info.height as f64).max(1.0);
     let kbps = video_kbps(src, info.duration, scale);
     let total_out = plan.output_secs().max(0.1);
-    let speed = plan.speed;
 
     let audio = if info.audio_streams > 0 && plan.volume > 0.001 {
         let mix = decode_audio_mix(src, info.audio_streams);
@@ -380,7 +378,6 @@ pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Resul
     };
     let mut conv = Converter::new(out);
     let pixels = plan.needs_pixels();
-    let min_gap = if speed > 1.0 { 0.9 / fps as f64 } else { 0.0 };
     let mut last_out = f64::NEG_INFINITY;
     let mut first_out: Option<f64> = None;
     let mut frame = ff::frame::Video::empty();
@@ -396,6 +393,11 @@ pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Resul
         }
         let Some(out_t) = plan.output_time(t) else {
             return Ok(true);
+        };
+        let min_gap = if plan.speed_at(t) > 1.0 {
+            0.9 / fps as f64
+        } else {
+            0.0
         };
         if out_t < last_out + min_gap {
             return Ok(true);
@@ -475,48 +477,56 @@ pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sc_core::edit::Segment;
+    use crate::sample::{brightness, luma_at, make_clip};
+    use sc_core::edit::{Crop, Segment};
 
     fn tone(secs: f32) -> Vec<f32> {
         let n = (48_000.0 * secs) as usize;
         (0..n).flat_map(|_| [0.5f32, 0.5f32]).collect()
     }
 
+    fn grey(luma: f64) -> f64 {
+        (luma - 16.0) * 1.164
+    }
+
+    fn workdir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("sc-edit-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn pieces(list: &[(f64, f64, f64)]) -> Plan {
+        let mut plan = Plan::whole(6.0);
+        plan.segments = list
+            .iter()
+            .map(|(a, b, s)| Segment {
+                start: *a,
+                end: *b,
+                speed: *s,
+            })
+            .collect();
+        plan
+    }
+
     #[test]
-    fn audio_follows_the_kept_pieces_and_the_speed() {
+    fn audio_follows_the_kept_pieces_and_their_speeds() {
         let mix = tone(10.0);
-        let mut plan = Plan::whole(10.0);
-        plan.segments = vec![
-            Segment {
-                start: 0.0,
-                end: 2.0,
-            },
-            Segment {
-                start: 6.0,
-                end: 10.0,
-            },
-        ];
+        let mut plan = pieces(&[(0.0, 2.0, 1.0), (6.0, 10.0, 1.0)]);
         let out = edit_audio(&mix, &plan);
         assert_eq!(out.len(), 6 * 48_000 * 2);
-        plan.speed = 2.0;
+        plan.set_all_speeds(2.0);
         let fast = edit_audio(&mix, &plan);
         assert!((fast.len() as f64 - 3.0 * 48_000.0 * 2.0).abs() < 16.0);
+        plan.set_speed(0, 0.5);
+        let mixed = edit_audio(&mix, &plan);
+        assert!((mixed.len() as f64 - (4.0 + 2.0) * 48_000.0 * 2.0).abs() < 16.0);
     }
 
     #[test]
     fn joins_are_faded_so_they_do_not_click() {
         let mix = tone(4.0);
-        let mut plan = Plan::whole(4.0);
-        plan.segments = vec![
-            Segment {
-                start: 0.0,
-                end: 1.0,
-            },
-            Segment {
-                start: 2.0,
-                end: 3.0,
-            },
-        ];
+        let plan = pieces(&[(0.0, 1.0, 1.0), (2.0, 3.0, 1.0)]);
         let out = edit_audio(&mix, &plan);
         let join = 48_000 * 2;
         assert!(out[join - 2].abs() < 0.01);
@@ -540,80 +550,138 @@ mod tests {
         assert!((loud[mid] - 1.0).abs() < 0.001);
     }
 
-    fn make_clip(path: &Path, secs: u32, w: u32, h: u32) -> bool {
-        let fps = 30;
-        let Ok(mut enc) = Encoder::new(w, h, fps, 3_000, fps * 2, false) else {
-            return false;
-        };
-        let Ok(vparams) = enc.codec_params() else {
-            return false;
-        };
-        let Ok(mut aac) = AacEncoder::new(AUDIO_RATE, 2, 96) else {
-            return false;
-        };
-        let Ok(aparams) = aac.codec_params() else {
-            return false;
-        };
-        let Ok(mut mux) = Mp4Muxer::with_audio(path, &vparams, &aparams, aac.rate()) else {
-            return false;
-        };
-        let frames = secs * fps;
-        for n in 0..frames {
-            let mut nv12 = vec![0u8; (w * h * 3 / 2) as usize];
-            let luma = 40 + (n * 160 / frames) as u8;
-            nv12[..(w * h) as usize].fill(luma);
-            nv12[(w * h) as usize..].fill(128);
-            let ns = n as i64 * 1_000_000_000 / fps as i64;
-            for p in enc.push_nv12(&nv12, ns).unwrap() {
-                mux.write(&p).unwrap();
-            }
+    #[test]
+    fn fade_out_quietens_the_end_of_the_sound() {
+        let mix = tone(4.0);
+        let mut plan = Plan::whole(4.0);
+        plan.fade_out = 2.0;
+        let out = edit_audio(&mix, &plan);
+        let at = |secs: f64| out[(secs * 48_000.0) as usize * 2].abs();
+        assert!((at(1.0) - 0.5).abs() < 0.001);
+        assert!((at(3.0) - 0.25).abs() < 0.01);
+        assert!(at(3.99) < 0.01);
+    }
+
+    #[test]
+    fn fades_darken_the_start_and_the_end_of_the_picture() {
+        let dir = workdir("fade");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 6, 320, 180, true) {
+            return;
         }
-        for p in enc.flush().unwrap() {
-            mux.write(&p).unwrap();
+        let mut plan = Plan::whole(6.0);
+        plan.fade_in = 2.0;
+        plan.fade_out = 2.0;
+        let dst = dir.join("faded.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let first = brightness(&dst, 0.0);
+        let early = brightness(&dst, 1.0);
+        let middle = brightness(&dst, 3.0);
+        let late = brightness(&dst, 5.0);
+        let last = brightness(&dst, 5.9);
+        assert!(first < 30.0, "first {first}");
+        assert!(early < middle - 20.0, "early {early} middle {middle}");
+        assert!(late < middle - 20.0, "late {late} middle {middle}");
+        assert!(last < early, "last {last} early {early}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cut_lands_exactly_where_it_was_placed() {
+        let dir = workdir("exact");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 6, 320, 180, true) {
+            return;
         }
-        let samples = tone(secs as f32);
-        for (i, chunk) in samples.chunks(2048).enumerate() {
-            let t = (i * 2048 / 2) as f64 / AUDIO_RATE as f64;
-            let buf = AudioBuffer {
-                role: AudioRole::Desktop,
-                sample_rate: AUDIO_RATE,
-                channels: 2,
-                timestamp: Timestamp::from_nanos((t * 1e9) as i64),
-                samples: chunk.to_vec(),
-            };
-            for p in aac.push(&buf).unwrap() {
-                mux.write_audio(&p).unwrap();
-            }
+        let plan = pieces(&[(1.2, 3.0, 1.0)]);
+        let dst = dir.join("cut.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let info = crate::media_info(&dst).unwrap();
+        assert!((info.duration - 1.8).abs() < 0.15, "{}", info.duration);
+        let start = brightness(&dst, 0.0);
+        let want = grey(luma_at(1.2, 6.0));
+        assert!((start - want).abs() < 8.0, "start {start} want {want}");
+        let end = brightness(&dst, 1.7);
+        let want = grey(luma_at(2.9, 6.0));
+        assert!((end - want).abs() < 8.0, "end {end} want {want}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removing_the_middle_joins_the_two_ends() {
+        let dir = workdir("middle");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 6, 320, 180, true) {
+            return;
         }
-        for p in aac.flush().unwrap() {
-            mux.write_audio(&p).unwrap();
+        let plan = pieces(&[(0.0, 2.0, 1.0), (4.0, 6.0, 1.0)]);
+        let dst = dir.join("joined.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let info = crate::media_info(&dst).unwrap();
+        assert!((info.duration - 4.0).abs() < 0.2, "{}", info.duration);
+        assert_eq!(info.audio_streams, 1);
+        let before = brightness(&dst, 1.8);
+        let after = brightness(&dst, 2.3);
+        assert!((before - grey(luma_at(1.8, 6.0))).abs() < 8.0, "{before}");
+        assert!((after - grey(luma_at(4.3, 6.0))).abs() < 8.0, "{after}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fast_piece_plays_quicker_and_a_slow_piece_slower() {
+        let dir = workdir("speed");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 6, 320, 180, true) {
+            return;
         }
-        mux.finish().unwrap();
-        true
+        let plan = pieces(&[(0.0, 2.0, 1.0), (2.0, 4.0, 2.0)]);
+        let dst = dir.join("fast.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let info = crate::media_info(&dst).unwrap();
+        assert!((info.duration - 3.0).abs() < 0.2, "{}", info.duration);
+        assert_eq!(info.audio_streams, 1);
+        let normal = brightness(&dst, 1.0);
+        assert!((normal - grey(luma_at(1.0, 6.0))).abs() < 8.0, "{normal}");
+        let fast = brightness(&dst, 2.5);
+        assert!((fast - grey(luma_at(3.0, 6.0))).abs() < 8.0, "{fast}");
+
+        let plan = pieces(&[(0.0, 2.0, 0.5)]);
+        let slow = dir.join("slow.mp4");
+        render(&src, &slow, &plan, &Progress::default()).unwrap();
+        let info = crate::media_info(&slow).unwrap();
+        assert!((info.duration - 4.0).abs() < 0.25, "{}", info.duration);
+        let mid = brightness(&slow, 2.0);
+        assert!((mid - grey(luma_at(1.0, 6.0))).abs() < 8.0, "{mid}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_clip_without_sound_can_still_be_edited() {
+        let dir = workdir("silent-source");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 4, 320, 180, false) {
+            return;
+        }
+        let mut plan = pieces(&[(0.5, 3.5, 2.0)]);
+        plan.fade_in = 0.5;
+        let dst = dir.join("out.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let info = crate::media_info(&dst).unwrap();
+        assert_eq!(info.audio_streams, 0);
+        assert!((info.duration - 1.5).abs() < 0.2, "{}", info.duration);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn rendering_applies_the_cuts_crop_and_turn() {
-        let dir = std::env::temp_dir().join("sc-edit-render-test");
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = workdir("render");
         let src = dir.join("source.mp4");
-        if !make_clip(&src, 6, 320, 180) {
+        if !make_clip(&src, 6, 320, 180, true) {
             return;
         }
-        let mut plan = Plan::whole(6.0);
-        plan.segments = vec![
-            Segment {
-                start: 0.5,
-                end: 2.0,
-            },
-            Segment {
-                start: 4.0,
-                end: 5.5,
-            },
-        ];
-        plan.speed = 1.5;
+        let mut plan = pieces(&[(0.5, 2.0, 1.5), (4.0, 5.5, 1.5)]);
         plan.turn = 90;
-        plan.crop = Some(sc_core::edit::Crop {
+        plan.crop = Some(Crop {
             x: 0.0,
             y: 0.0,
             w: 1.0,

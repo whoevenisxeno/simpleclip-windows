@@ -24,14 +24,14 @@ const SPEEDS: [(f64, &str); 7] = [
     (4.0, "4\u{d7}"),
 ];
 
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
 enum SaveMode {
     #[default]
     Copy,
     Replace,
 }
 
-#[derive(Clone, Copy, PartialEq, Default)]
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
 pub enum Tool {
     #[default]
     Speed,
@@ -41,7 +41,7 @@ pub enum Tool {
     Rotate,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Shape {
     Free,
     Wide,
@@ -64,7 +64,7 @@ impl Shape {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Grip {
     TopLeft,
     TopRight,
@@ -81,6 +81,7 @@ struct Strip {
     tiles: Vec<Option<egui::TextureHandle>>,
 }
 
+#[derive(Debug)]
 struct Done {
     path: PathBuf,
     secs: f64,
@@ -109,6 +110,7 @@ pub struct EditorState {
     shape: Option<Shape>,
     mode: SaveMode,
     precise: bool,
+    save_open: bool,
     result: Option<PathBuf>,
     scrub: Option<f64>,
     last_seek: Option<Instant>,
@@ -132,14 +134,26 @@ impl EditorState {
             self.plan.split(d * 0.3);
             self.plan.split(d * 0.55);
             self.plan.remove(1);
-            self.plan.speed = 1.5;
+            self.plan.set_speed(0, 0.5);
+            self.plan.set_speed(1, 2.0);
         }
         self.selected = 0;
         self.plan.crop = None;
         self.plan.turn = 0;
         self.plan.flip_h = false;
+        self.plan.fade_in = 0.0;
+        self.plan.fade_out = 0.0;
         self.tool = Tool::Speed;
+        self.save_open = false;
         match name {
+            "editor-save" => {
+                self.save_open = true;
+            }
+            "editor-fades" => {
+                self.tool = Tool::Fades;
+                self.plan.fade_in = 2.0;
+                self.plan.fade_out = 1.5;
+            }
             "editor-crop" => {
                 self.tool = Tool::Crop;
                 self.shape = Some(Shape::Square);
@@ -172,7 +186,7 @@ impl EditorState {
                 self.duration = i.duration;
                 self.has_audio = i.audio_streams > 0;
                 self.plan = Plan::whole(i.duration);
-                player.set_segments(vec![(0.0, i.duration)]);
+                player.set_segments(vec![(0.0, i.duration, 1.0)]);
                 self.strip = Some(spawn_strip(path, i.duration));
                 self.player = Some(player);
             }
@@ -247,6 +261,17 @@ impl EditorState {
             turn: self.plan.turn,
             flip_h: self.plan.flip_h,
             flip_v: self.plan.flip_v,
+            dim: 1.0 - self.fade_now(),
+        }
+    }
+
+    fn fade_now(&self) -> f32 {
+        if self.plan.fade_in <= 0.0 && self.plan.fade_out <= 0.0 {
+            return 1.0;
+        }
+        match self.plan.output_time(self.position()) {
+            Some(t) => self.plan.fade_gain(t, self.plan.output_secs()),
+            None => 1.0,
         }
     }
 
@@ -292,8 +317,18 @@ impl EditorState {
         if pieces > 1 {
             out.push(format!("{pieces} pieces"));
         }
-        if (self.plan.speed - 1.0).abs() > 1e-6 {
-            out.push(format!("{}\u{d7} speed", trim_num(self.plan.speed)));
+        if self.plan.has_speed_change() {
+            let changed = self
+                .plan
+                .segments
+                .iter()
+                .filter(|s| (s.speed - 1.0).abs() > 1e-6)
+                .count();
+            out.push(if pieces == 1 {
+                format!("{}\u{d7} speed", trim_num(self.plan.segments[0].speed))
+            } else {
+                format!("speed changed on {changed} of {pieces}")
+            });
         }
         if self.has_audio {
             if self.plan.volume < 0.001 {
@@ -404,7 +439,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         .to_string();
     let busy = app.editor.job.is_some();
     let mut leave = false;
-    let (mut undo, mut redo, mut reset) = (false, false, false);
+    let (mut undo, mut redo, mut reset, mut save) = (false, false, false, false);
     ui.horizontal(|ui| {
         if widgets::quiet_button(ui, Some(icon::BACK), "Clips").clicked() {
             leave = true;
@@ -412,6 +447,8 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let st = &app.editor;
             ui.add_enabled_ui(!busy && st.error.is_none(), |ui| {
+                save = widgets::primary_button(ui, Some(icon::SAVE), "Save\u{2026}").clicked();
+                ui.add_space(6.0);
                 reset = widgets::quiet_button(ui, None, "Reset").clicked();
                 redo = ui
                     .add_enabled_ui(!st.redo.is_empty(), |ui| {
@@ -445,8 +482,11 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         return;
     }
 
+    if save {
+        app.editor.save_open = true;
+    }
     let before = app.editor.plan.clone();
-    if !busy {
+    if !busy && !app.editor.save_open {
         if undo {
             app.editor.undo();
         }
@@ -462,8 +502,12 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
     let (segs, gain) = {
         let st = &app.editor;
         (
-            st.plan.segments.iter().map(|s| (s.start, s.end)).collect(),
-            st.plan.volume,
+            st.plan
+                .segments
+                .iter()
+                .map(|s| (s.start, s.end, s.speed))
+                .collect(),
+            st.plan.volume * st.fade_now(),
         )
     };
     let view_state = app.editor.view();
@@ -484,8 +528,9 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         } else if resp.clicked() {
             toggle_play = true;
         }
-        if (st.plan.speed - 1.0).abs() > 1e-6 {
-            speed_badge(ui, rect, st.plan.speed);
+        let rate = st.player.as_ref().map(Player::rate).unwrap_or(1.0);
+        if (rate - 1.0).abs() > 1e-6 {
+            speed_badge(ui, rect, rate);
         }
     }
     if toggle_play {
@@ -495,10 +540,20 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
     }
     ui.add_space(10.0);
 
-    transport(app, ui);
+    if let Some(message) = transport(&mut app.editor, ui) {
+        app.toast(message, ToastKind::Warn);
+    }
     ui.add_space(8.0);
-    tools(app, ui);
-    export_card(app, ui);
+    tools(&mut app.editor, ui);
+    if result_notice(&mut app.editor, ui) {
+        app.gallery.show_trimmed();
+        app.goto(Screen::Gallery);
+        return;
+    }
+    let trim_dir = app.cfg.save.trim_directory.clone();
+    if save_dialog(&mut app.editor, &trim_dir, &ctx) == SaveAction::Start {
+        start_export(app, trim_dir);
+    }
 
     let st = &mut app.editor;
     st.commit(&before, &ctx);
@@ -508,17 +563,24 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
 }
 
 fn keys(app: &mut ScApp, ctx: &egui::Context) {
-    if ctx.wants_keyboard_input() {
-        return;
+    if let Some(message) = handle_keys(&mut app.editor, ctx) {
+        app.toast(message, ToastKind::Warn);
     }
-    let st = &mut app.editor;
-    let (undo, redo, space, split, delete, left, right, shift) = ctx.input_mut(|i| {
+}
+
+fn handle_keys(st: &mut EditorState, ctx: &egui::Context) -> Option<&'static str> {
+    if ctx.wants_keyboard_input() {
+        return None;
+    }
+    let (undo, redo, save, space, split, delete, left, right, shift) = ctx.input_mut(|i| {
         let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
             || i.consume_key(Modifiers::COMMAND, Key::Y);
         let undo = i.consume_key(Modifiers::COMMAND, Key::Z);
+        let save = i.consume_key(Modifiers::COMMAND, Key::S);
         (
             undo,
             redo,
+            save,
             i.key_pressed(Key::Space),
             i.key_pressed(Key::S) && !i.modifiers.any(),
             i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace),
@@ -533,27 +595,26 @@ fn keys(app: &mut ScApp, ctx: &egui::Context) {
     if redo {
         st.redo();
     }
+    if save {
+        st.save_open = true;
+    }
     if space {
         if let Some(p) = st.player.as_mut() {
             p.toggle();
         }
     }
     if split && !st.do_split() {
-        app.toast(
-            "Move the playhead inside a piece to split it",
-            ToastKind::Warn,
-        );
-        return;
+        return Some("Move the playhead inside a piece to split it");
     }
     if delete && !st.do_delete() {
-        app.toast("A clip needs at least one piece", ToastKind::Warn);
-        return;
+        return Some("A clip needs at least one piece");
     }
     let step = if shift { 5.0 } else { 1.0 };
     if left || right {
         let to = (st.position() + if left { -step } else { step }).clamp(0.0, st.duration);
         st.seek(to);
     }
+    None
 }
 
 fn speed_badge(ui: &Ui, rect: Rect, speed: f64) {
@@ -574,12 +635,11 @@ fn speed_badge(ui: &Ui, rect: Rect, speed: f64) {
         .galley(pill.center() - galley.size() / 2.0, galley, p.text);
 }
 
-fn transport(app: &mut ScApp, ui: &mut Ui) {
+fn transport(st: &mut EditorState, ui: &mut Ui) -> Option<&'static str> {
     let p = pal_ui(ui);
     let mut play = false;
     let mut split = false;
     let mut delete = false;
-    let st = &mut app.editor;
     let pos = st.scrub.unwrap_or_else(|| st.position());
     let playing = st.player.as_ref().is_some_and(Player::is_playing);
     let can_delete = st.plan.segments.len() > 1;
@@ -615,15 +675,35 @@ fn transport(app: &mut ScApp, ui: &mut Ui) {
         ui.add_space(2.0);
         let kept = st.plan.kept_secs();
         let out = st.plan.output_secs();
-        let msg = if (kept - st.duration).abs() < 0.05 && (out - kept).abs() < 0.05 {
-            "Click to move the playhead. S splits, Delete removes the selected piece.".to_string()
-        } else {
-            format!(
-                "Result {} from {} kept of {}.",
+        let pieces = st.plan.segments.len();
+        let sel = st.selected.min(pieces.saturating_sub(1));
+        let mut parts: Vec<String> = Vec::new();
+        if pieces > 1 {
+            let seg = st.plan.segments[sel];
+            let mut line = format!(
+                "Piece {} of {}: {} to {}",
+                sel + 1,
+                pieces,
+                clock(seg.start),
+                clock(seg.end)
+            );
+            if (seg.speed - 1.0).abs() > 1e-6 {
+                line.push_str(&format!(" at {}\u{d7}", trim_num(seg.speed)));
+            }
+            parts.push(line);
+        }
+        if (kept - st.duration).abs() >= 0.05 || (out - kept).abs() >= 0.05 {
+            parts.push(format!(
+                "Result {} from {} kept of {}",
                 clock(out),
                 clock(kept),
                 clock(st.duration)
-            )
+            ));
+        }
+        let msg = if parts.is_empty() {
+            "Click to move the playhead. S splits, Delete removes the selected piece.".to_string()
+        } else {
+            format!("{}.", parts.join(". "))
         };
         ui.label(RichText::new(msg).size(12.0).color(p.text_3));
     });
@@ -633,12 +713,11 @@ fn transport(app: &mut ScApp, ui: &mut Ui) {
         }
     }
     if split && !st.do_split() {
-        app.toast(
-            "Move the playhead inside a piece to split it",
-            ToastKind::Warn,
-        );
+        Some("Move the playhead inside a piece to split it")
     } else if delete && !st.do_delete() {
-        app.toast("A clip needs at least one piece", ToastKind::Warn);
+        Some("A clip needs at least one piece")
+    } else {
+        None
     }
 }
 
@@ -814,6 +893,23 @@ impl EditorState {
                 Stroke::new(1.5_f32, Color32::from_white_alpha(120))
             };
             painter.rect_stroke(r.shrink(1.0), Rounding::same(5.0), stroke);
+            if (seg.speed - 1.0).abs() > 1e-6 && r.width() > 46.0 {
+                let galley = painter.layout_no_wrap(
+                    format!("{}\u{d7}", trim_num(seg.speed)),
+                    egui::FontId::new(11.0, theme::semibold()),
+                    Color32::WHITE,
+                );
+                let pill = Rect::from_min_size(
+                    r.left_top() + vec2(8.0, 6.0),
+                    galley.size() + vec2(10.0, 4.0),
+                );
+                painter.rect_filled(
+                    pill,
+                    Rounding::same(pill.height() / 2.0),
+                    Color32::from_black_alpha(170),
+                );
+                painter.galley(pill.center() - galley.size() / 2.0, galley, Color32::WHITE);
+            }
         }
         if let Some(seg) = self.plan.segments.get(sel) {
             for is_start in [true, false] {
@@ -859,8 +955,7 @@ impl EditorState {
     }
 }
 
-fn tools(app: &mut ScApp, ui: &mut Ui) {
-    let st = &mut app.editor;
+fn tools(st: &mut EditorState, ui: &mut Ui) {
     let busy = st.job.is_some();
     ui.horizontal(|ui| {
         widgets::segmented(
@@ -886,20 +981,49 @@ fn tools(app: &mut ScApp, ui: &mut Ui) {
 }
 
 fn speed_tool(st: &mut EditorState, ui: &mut Ui) {
+    let pieces = st.plan.segments.len();
+    let sel = st.selected.min(pieces.saturating_sub(1));
+    let current = st.plan.segments[sel].speed;
+    let uneven = st
+        .plan
+        .segments
+        .iter()
+        .any(|s| (s.speed - current).abs() > 1e-9);
+    let title = if pieces > 1 {
+        format!("Speed of piece {} of {}", sel + 1, pieces)
+    } else {
+        "Speed".to_string()
+    };
+    let hint = if pieces > 1 {
+        "Pick a piece on the timeline, then its speed. Sound keeps its pitch."
+    } else {
+        "Split the clip to slow down or speed up just one part. Sound keeps its pitch."
+    };
+    let mut apply_all = false;
     widgets::section(ui, None, |s| {
-        s.row(
-            "Playback speed",
-            Some("Sound keeps its pitch. The preview plays at normal speed."),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                widgets::segmented(ui, &mut st.plan.speed, &SPEEDS);
-            },
-        );
+        s.row(&title, Some(hint), |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let mut value = current;
+            if widgets::segmented(ui, &mut value, &SPEEDS) {
+                st.plan.set_speed(sel, value);
+            }
+        });
+        if pieces > 1 && uneven {
+            s.row(
+                "All pieces",
+                Some("Give every piece the speed of the selected one."),
+                |ui| {
+                    apply_all = widgets::quiet_button(ui, None, "Apply to all").clicked();
+                },
+            );
+        }
     });
+    if apply_all {
+        st.plan.set_all_speeds(current);
+    }
 }
 
 fn sound_tool(st: &mut EditorState, ui: &mut Ui) {
-    let p = pal_ui(ui);
     if !st.has_audio {
         widgets::section(ui, None, |s| {
             s.row(
@@ -918,14 +1042,13 @@ fn sound_tool(st: &mut EditorState, ui: &mut Ui) {
             Some("100% keeps the sound as recorded. Double click the slider to reset it."),
             |ui| {
                 let mut pct = (st.plan.volume * 100.0).round() as u32;
-                ui.label(
-                    RichText::new(if pct == 0 {
+                value_label(
+                    ui,
+                    &if pct == 0 {
                         "Muted".to_string()
                     } else {
                         format!("{pct}%")
-                    })
-                    .size(13.0)
-                    .color(p.text_2),
+                    },
                 );
                 if widgets::percent_slider(ui, &mut pct, 200).changed() {
                     st.plan.volume = pct as f32 / 100.0;
@@ -957,8 +1080,25 @@ fn sound_tool(st: &mut EditorState, ui: &mut Ui) {
     }
 }
 
-fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
+fn value_label(ui: &mut Ui, text: &str) {
     let p = pal_ui(ui);
+    let galley = ui.painter().layout_no_wrap(
+        text.to_string(),
+        egui::FontId::new(13.0, egui::FontFamily::Proportional),
+        p.text_2,
+    );
+    let (rect, _) = ui.allocate_exact_size(vec2(56.0, 24.0), Sense::hover());
+    ui.painter().galley(
+        pos2(
+            rect.right() - galley.size().x,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        p.text_2,
+    );
+}
+
+fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
     let label = |secs: f64| {
         if secs <= 0.0 {
             "Off".to_string()
@@ -972,11 +1112,7 @@ fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
             Some("Starts from black and silence. Double click the slider to turn it off."),
             |ui| {
                 let mut tenths = (st.plan.fade_in * 10.0).round() as u32;
-                ui.label(
-                    RichText::new(label(st.plan.fade_in))
-                        .size(13.0)
-                        .color(p.text_2),
-                );
+                value_label(ui, &label(st.plan.fade_in));
                 if widgets::step_slider(ui, &mut tenths, 50, 0).changed() {
                     st.plan.fade_in = tenths as f64 / 10.0;
                 }
@@ -984,11 +1120,7 @@ fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
         );
         s.row("Fade out", Some("Ends in black and silence."), |ui| {
             let mut tenths = (st.plan.fade_out * 10.0).round() as u32;
-            ui.label(
-                RichText::new(label(st.plan.fade_out))
-                    .size(13.0)
-                    .color(p.text_2),
-            );
+            value_label(ui, &label(st.plan.fade_out));
             if widgets::step_slider(ui, &mut tenths, 50, 0).changed() {
                 st.plan.fade_out = tenths as f64 / 10.0;
             }
@@ -1283,38 +1415,73 @@ fn drag_grip(c: Crop, grip: Grip, px: f64, py: f64, locked: Option<f64>) -> Crop
     .clamped()
 }
 
-fn export_card(app: &mut ScApp, ui: &mut Ui) {
+fn result_notice(st: &mut EditorState, ui: &mut Ui) -> bool {
+    let Some(path) = st.result.clone() else {
+        return false;
+    };
     let p = pal_ui(ui);
-    let mut save = false;
-    let mut cancel = false;
-    let trim_dir = app.cfg.save.trim_directory.clone();
-    let st = &mut app.editor;
+    let mut see = false;
+    ui.add_space(10.0);
+    widgets::card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!(
+                    "Saved {}",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("copy")
+                ))
+                .color(p.text),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                see = widgets::quiet_button(ui, None, "See edited clips").clicked();
+            });
+        });
+    });
+    see
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SaveAction {
+    Idle,
+    Start,
+}
+
+fn save_dialog(
+    st: &mut EditorState,
+    trim_dir: &Option<PathBuf>,
+    ctx: &egui::Context,
+) -> SaveAction {
+    if !st.save_open {
+        return SaveAction::Idle;
+    }
+    let p = crate::theme::pal(ctx);
+    let (mut start, mut cancel_job, mut close) = (false, false, false);
     let plain = st.plan.is_plain_cut();
     let notes = st.summary();
     let running = st.job.as_ref().map(|j| j.progress.fraction());
-    ui.add_space(10.0);
-    widgets::card(ui, |ui| {
-        let (sw, sh) = st.player.as_ref().map(Player::size).unwrap_or((16, 9));
-        let (ow, oh) = st.plan.output_size(sw, sh);
+    let (sw, sh) = st.player.as_ref().map(Player::size).unwrap_or((16, 9));
+    let (ow, oh) = st.plan.output_size(sw, sh);
+    let length = clock(st.plan.output_secs());
+    let closed = crate::screens::sheet::modal(ctx, "edit-save", 520.0, |ui| {
+        ui.label(
+            RichText::new("Save your edit")
+                .font(egui::FontId::new(20.0, theme::semibold()))
+                .color(p.text),
+        );
+        ui.add_space(2.0);
         let line = if notes.is_empty() {
-            format!(
-                "No changes yet. {} \u{b7} {ow} \u{d7} {oh}",
-                clock(st.plan.output_secs())
-            )
+            format!("{length} \u{b7} {ow} \u{d7} {oh} \u{b7} no changes yet")
         } else {
             format!(
-                "{} \u{b7} {ow} \u{d7} {oh} \u{b7} {}",
-                clock(st.plan.output_secs()),
+                "{length} \u{b7} {ow} \u{d7} {oh} \u{b7} {}",
                 notes.join(", ")
             )
         };
-        ui.label(RichText::new(line).size(13.0).color(p.text));
-        ui.add_space(10.0);
+        widgets::secondary(ui, line);
+        ui.add_space(14.0);
         if let Some(f) = running {
             let precise = st.job.as_ref().is_some_and(|j| j.precise);
-            let replace = st.job.as_ref().is_some_and(|j| j.replace);
             ui.horizontal(|ui| {
-                let w = (ui.available_width() - 110.0).max(80.0);
+                let w = (ui.available_width() - 70.0).max(80.0);
                 let (bar, _) = ui.allocate_exact_size(vec2(w, 8.0), Sense::hover());
                 ui.painter()
                     .rect_filled(bar, Rounding::same(4.0), p.card_hi);
@@ -1327,21 +1494,20 @@ fn export_card(app: &mut ScApp, ui: &mut Ui) {
                         .size(13.0)
                         .color(p.text_2),
                 );
-                cancel = widgets::quiet_button(ui, None, "Cancel").clicked();
             });
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             widgets::secondary(
                 ui,
                 if precise {
-                    if replace {
-                        "Rendering the edit. The original stays until it is done."
-                    } else {
-                        "Rendering the edit."
-                    }
+                    "Rendering your edit. Nothing in your library changes until it is done."
                 } else {
                     "Cutting the clip."
                 },
             );
+            ui.add_space(12.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cancel_job = widgets::quiet_button(ui, None, "Cancel").clicked();
+            });
             ui.ctx().request_repaint_after(Duration::from_millis(100));
             return;
         }
@@ -1353,27 +1519,25 @@ fn export_card(app: &mut ScApp, ui: &mut Ui) {
                     ui.label(RichText::new("Frame accurate").size(14.0).color(p.text));
                     ui.label(
                         RichText::new(if st.precise {
-                            "Re-encodes the clip so the cut lands exactly where you put it."
+                            "Re-encodes so the cut lands exactly where you put it."
                         } else {
-                            "An instant lossless cut. It can start up to about 2 s early, on the nearest keyframe."
+                            "An instant lossless cut. It can start up to about 2 s early."
                         })
                         .size(12.0)
                         .color(p.text_2),
                     );
                 });
             });
-            ui.add_space(10.0);
+            ui.add_space(12.0);
         }
-        ui.horizontal(|ui| {
-            widgets::segmented(
-                ui,
-                &mut st.mode,
-                &[
-                    (SaveMode::Copy, "Save as a copy"),
-                    (SaveMode::Replace, "Replace the original"),
-                ],
-            );
-        });
+        widgets::segmented(
+            ui,
+            &mut st.mode,
+            &[
+                (SaveMode::Copy, "Save as a copy"),
+                (SaveMode::Replace, "Replace the original"),
+            ],
+        );
         ui.add_space(4.0);
         widgets::secondary(
             ui,
@@ -1384,53 +1548,40 @@ fn export_card(app: &mut ScApp, ui: &mut Ui) {
                 }
             },
         );
-        ui.add_space(10.0);
-        let label = match st.mode {
-            SaveMode::Copy => "Save edited clip",
-            SaveMode::Replace => "Replace original",
-        };
-        save = widgets::primary_button(ui, Some(icon::CUT), label).clicked();
-    });
-    if cancel {
-        if let Some(j) = &app.editor.job {
-            j.progress.cancel();
-        }
-    }
-    if save {
-        start_export(app, trim_dir);
-    }
-
-    if let Some(r) = app.editor.result.clone() {
-        ui.add_space(10.0);
-        let mut see = false;
-        widgets::card(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "Saved {}",
-                        r.file_name().and_then(|n| n.to_str()).unwrap_or("copy")
-                    ))
-                    .color(p.text),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    see = widgets::quiet_button(ui, None, "See edited clips").clicked();
-                });
-            });
+        ui.add_space(4.0);
+        widgets::secondary(
+            ui,
+            match (trim_dir, st.mode) {
+                (Some(d), SaveMode::Copy) => format!("Saved to {}.", d.display()),
+                _ => "Saved next to the original.".to_string(),
+            },
+        );
+        ui.add_space(14.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = match st.mode {
+                SaveMode::Copy => "Save edited clip",
+                SaveMode::Replace => "Replace original",
+            };
+            start = widgets::primary_button(ui, Some(icon::CUT), label).clicked();
+            close = widgets::quiet_button(ui, None, "Cancel").clicked();
         });
-        if see {
-            app.gallery.show_trimmed();
-            app.goto(Screen::Gallery);
+    });
+    if running.is_some() {
+        if cancel_job {
+            if let Some(j) = &st.job {
+                j.progress.cancel();
+            }
         }
+        return SaveAction::Idle;
     }
-    ui.add_space(8.0);
-    widgets::secondary(
-        ui,
-        match &app.cfg.save.trim_directory {
-            Some(d) => format!("Edited clips are saved to {}.", d.display()),
-            None => "Edited clips are saved next to the original. Pick a folder in Settings."
-                .to_string(),
-        },
-    );
+    if closed || close {
+        st.save_open = false;
+    }
+    if start {
+        SaveAction::Start
+    } else {
+        SaveAction::Idle
+    }
 }
 
 fn unique_output(dir: &Path, stem: &str) -> PathBuf {
@@ -1443,50 +1594,37 @@ fn unique_output(dir: &Path, stem: &str) -> PathBuf {
     out
 }
 
+fn output_path(src: &Path, trim_dir: &Option<PathBuf>, replace: bool) -> Result<PathBuf, String> {
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "That file name can’t be edited".to_string())?;
+    let beside = src.parent().map(Path::to_path_buf).unwrap_or_default();
+    let dir = match (trim_dir, replace) {
+        (Some(d), false) => {
+            std::fs::create_dir_all(d)
+                .map_err(|e| format!("Can’t create the folder {}: {e}", d.display()))?;
+            d.clone()
+        }
+        _ => beside,
+    };
+    Ok(unique_output(&dir, stem))
+}
+
 fn start_export(app: &mut ScApp, trim_dir: Option<PathBuf>) {
     let replace = app.editor.mode == SaveMode::Replace;
     let src = app.editor.path.clone();
-    let Some(stem) = src.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
-        app.toast("That file name can’t be edited", ToastKind::Error);
-        return;
+    let dst = match output_path(&src, &trim_dir, replace) {
+        Ok(p) => p,
+        Err(message) => {
+            app.toast(message, ToastKind::Error);
+            return;
+        }
     };
-    let beside = src.parent().map(Path::to_path_buf).unwrap_or_default();
-    let dir = match (&trim_dir, replace) {
-        (Some(d), false) => match std::fs::create_dir_all(d) {
-            Ok(()) => d.clone(),
-            Err(e) => {
-                app.toast(
-                    format!("Can’t create the folder {}: {e}", d.display()),
-                    ToastKind::Error,
-                );
-                return;
-            }
-        },
-        _ => beside,
-    };
-    let dst = unique_output(&dir, &stem);
     let mut plan = app.editor.plan.clone();
     plan.clamp_to(app.editor.duration);
     let precise = app.editor.precise || !plan.is_plain_cut();
-    let progress = Arc::new(EditProgress::default());
-    let (tx, rx) = crossbeam_channel::bounded(1);
-    let worker = progress.clone();
-    let out = dst.clone();
-    std::thread::spawn(move || {
-        let result = if precise {
-            sc_ffmpeg::render_edit(&src, &out, &plan, &worker).map(|r| Done {
-                path: out.clone(),
-                secs: r.secs,
-            })
-        } else {
-            let (a, b) = plan.bounds();
-            sc_ffmpeg::trim_copy(&src, &out, a, b).map(|secs| Done {
-                path: out.clone(),
-                secs,
-            })
-        };
-        let _ = tx.send(result.map_err(|e| e.to_string()));
-    });
+    let (rx, progress) = spawn_render(src, dst, plan, precise);
     app.editor.result = None;
     app.editor.job = Some(Job {
         rx,
@@ -1494,6 +1632,33 @@ fn start_export(app: &mut ScApp, trim_dir: Option<PathBuf>) {
         replace,
         precise,
     });
+}
+
+fn spawn_render(
+    src: PathBuf,
+    dst: PathBuf,
+    plan: Plan,
+    precise: bool,
+) -> (Receiver<Result<Done, String>>, Arc<EditProgress>) {
+    let progress = Arc::new(EditProgress::default());
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let worker = progress.clone();
+    std::thread::spawn(move || {
+        let result = if precise {
+            sc_ffmpeg::render_edit(&src, &dst, &plan, &worker).map(|r| Done {
+                path: dst.clone(),
+                secs: r.secs,
+            })
+        } else {
+            let (a, b) = plan.bounds();
+            sc_ffmpeg::trim_copy(&src, &dst, a, b).map(|secs| Done {
+                path: dst.clone(),
+                secs,
+            })
+        };
+        let _ = tx.send(result.map_err(|e| e.to_string()));
+    });
+    (rx, progress)
 }
 
 fn poll_job(app: &mut ScApp, ctx: &egui::Context) {
@@ -1509,7 +1674,9 @@ fn poll_job(app: &mut ScApp, ctx: &egui::Context) {
         }
         Ok(Err(message)) => {
             app.editor.job = None;
-            if !message.contains(sc_ffmpeg::CANCELLED) {
+            if message.contains(sc_ffmpeg::CANCELLED) {
+                app.editor.save_open = false;
+            } else {
                 app.toast(message, ToastKind::Warn);
             }
         }
@@ -1523,6 +1690,7 @@ fn finish(app: &mut ScApp, original: &Path, done: Done, replace: bool) {
         path: new_path,
         secs,
     } = done;
+    app.editor.save_open = false;
     if !replace {
         app.library.set_trimmed(&new_path, true);
         if app.cfg.general.share_prompt {
@@ -1535,7 +1703,15 @@ fn finish(app: &mut ScApp, original: &Path, done: Done, replace: bool) {
     }
 
     app.editor.stop_player();
-    if !crate::screens::gallery::delete(original) {
+    let mut moved = false;
+    for _ in 0..8 {
+        if crate::screens::gallery::delete(original) {
+            moved = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    if !moved {
         let _ = std::fs::remove_file(&new_path);
         app.toast(
             "Couldn’t move the original to the Recycle Bin, so nothing was changed",
@@ -1567,6 +1743,9 @@ fn finish(app: &mut ScApp, original: &Path, done: Done, replace: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::epaint::Shape as Paint;
+    use egui::{Event, PointerButton, Pos2, RawInput};
+    use sc_ffmpeg::sample::make_clip;
 
     fn square() -> Crop {
         Crop {
@@ -1623,43 +1802,43 @@ mod tests {
         assert_eq!(trim_num(0.25), "0.25");
     }
 
-    #[test]
-    fn history_steps_back_and_forth() {
-        let mut st = EditorState {
-            duration: 10.0,
-            plan: Plan::whole(10.0),
-            ..Default::default()
-        };
-        let ctx = egui::Context::default();
-        let before = st.plan.clone();
-        st.plan.speed = 2.0;
-        st.commit(&before, &ctx);
-        assert_eq!(st.undo.len(), 1);
-        st.undo();
-        assert_eq!(st.plan.speed, 1.0);
-        st.redo();
-        assert_eq!(st.plan.speed, 2.0);
-        st.reset();
-        assert_eq!(st.plan, Plan::whole(10.0));
-        st.undo();
-        assert_eq!(st.plan.speed, 2.0);
-    }
-
     fn frame(st: &mut EditorState, ctx: &egui::Context, act: impl FnOnce(&mut EditorState)) {
         let before = st.plan.clone();
         act(st);
         st.commit(&before, ctx);
     }
 
+    fn bare(duration: f64) -> EditorState {
+        EditorState {
+            duration,
+            plan: Plan::whole(duration),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn history_steps_back_and_forth() {
+        let mut st = bare(10.0);
+        let ctx = egui::Context::default();
+        let before = st.plan.clone();
+        st.plan.volume = 0.5;
+        st.commit(&before, &ctx);
+        assert_eq!(st.undo.len(), 1);
+        st.undo();
+        assert_eq!(st.plan.volume, 1.0);
+        st.redo();
+        assert_eq!(st.plan.volume, 0.5);
+        st.reset();
+        assert_eq!(st.plan, Plan::whole(10.0));
+        st.undo();
+        assert_eq!(st.plan.volume, 0.5);
+    }
+
     #[test]
     fn undo_keeps_going_back_one_edit_at_a_time() {
-        let mut st = EditorState {
-            duration: 10.0,
-            plan: Plan::whole(10.0),
-            ..Default::default()
-        };
+        let mut st = bare(10.0);
         let ctx = egui::Context::default();
-        frame(&mut st, &ctx, |s| s.plan.speed = 2.0);
+        frame(&mut st, &ctx, |s| s.plan.set_speed(0, 2.0));
         frame(&mut st, &ctx, |s| s.plan.volume = 0.5);
         frame(&mut st, &ctx, |s| {
             s.do_split_at(4.0);
@@ -1674,7 +1853,7 @@ mod tests {
         assert_eq!(st.plan.segments.len(), 1);
         frame(&mut st, &ctx, EditorState::undo);
         assert_eq!(st.plan.volume, 1.0);
-        assert_eq!(st.plan.speed, 2.0);
+        assert_eq!(st.plan.segments[0].speed, 2.0);
         frame(&mut st, &ctx, EditorState::undo);
         assert_eq!(st.plan, Plan::whole(10.0));
         assert!(st.undo.is_empty());
@@ -1691,18 +1870,931 @@ mod tests {
 
     #[test]
     fn reset_is_one_undo_step() {
-        let mut st = EditorState {
-            duration: 10.0,
-            plan: Plan::whole(10.0),
-            ..Default::default()
-        };
+        let mut st = bare(10.0);
         let ctx = egui::Context::default();
-        frame(&mut st, &ctx, |s| s.plan.speed = 3.0);
+        frame(&mut st, &ctx, |s| s.plan.set_speed(0, 3.0));
         frame(&mut st, &ctx, EditorState::reset);
         assert_eq!(st.undo.len(), 2);
         frame(&mut st, &ctx, EditorState::undo);
-        assert_eq!(st.plan.speed, 3.0);
+        assert_eq!(st.plan.segments[0].speed, 3.0);
         frame(&mut st, &ctx, EditorState::undo);
         assert_eq!(st.plan, Plan::whole(10.0));
+    }
+
+    #[test]
+    fn the_fade_preview_follows_the_playhead() {
+        let mut st = bare(10.0);
+        st.plan.fade_in = 2.0;
+        st.plan.fade_out = 2.0;
+        assert_eq!(st.fade_now(), 0.0);
+        assert_eq!(st.view().dim, 1.0);
+        st.plan.fade_in = 0.0;
+        st.plan.fade_out = 0.0;
+        assert_eq!(st.fade_now(), 1.0);
+        assert_eq!(st.view().dim, 0.0);
+    }
+
+    #[test]
+    fn the_summary_lists_what_was_changed() {
+        let mut st = bare(10.0);
+        st.has_audio = true;
+        assert!(st.summary().is_empty());
+        st.plan.split(4.0);
+        st.plan.set_speed(1, 2.0);
+        st.plan.volume = 0.0;
+        st.plan.fade_in = 1.5;
+        st.plan.crop = Some(Crop::with_ratio(1920.0, 1080.0, 1.0));
+        st.plan.turn = 90;
+        st.plan.flip_h = true;
+        let notes = st.summary().join(", ");
+        for part in [
+            "2 pieces",
+            "speed changed on 1 of 2",
+            "muted",
+            "1.5s fade in",
+            "cropped",
+            "turned 90",
+            "flipped sideways",
+        ] {
+            assert!(notes.contains(part), "{notes} is missing {part}");
+        }
+    }
+
+    #[test]
+    fn output_names_never_overwrite_an_existing_clip() {
+        let dir = std::env::temp_dir().join("sc-editor-names");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = unique_output(&dir, "sc-apex-1");
+        assert_eq!(first.file_name().unwrap(), "sc-apex-1-trim.mp4");
+        std::fs::write(&first, b"x").unwrap();
+        let second = unique_output(&dir, "sc-apex-1");
+        assert_eq!(second.file_name().unwrap(), "sc-apex-1-trim2.mp4");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_output_goes_beside_the_clip_or_into_the_chosen_folder() {
+        let dir = std::env::temp_dir().join("sc-editor-paths");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("sc-apex-1.mp4");
+        let beside = output_path(&src, &None, false).unwrap();
+        assert_eq!(beside, dir.join("sc-apex-1-trim.mp4"));
+        let chosen = dir.join("Edited");
+        let into = output_path(&src, &Some(chosen.clone()), false).unwrap();
+        assert_eq!(into, chosen.join("sc-apex-1-trim.mp4"));
+        assert!(chosen.is_dir());
+        let replace = output_path(&src, &Some(chosen), true).unwrap();
+        assert_eq!(replace, dir.join("sc-apex-1-trim.mp4"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct Harness {
+        ctx: egui::Context,
+        time: f64,
+        texts: Vec<(String, Rect)>,
+        right: f32,
+    }
+
+    fn collect(shape: &Paint, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            Paint::Text(t) => out.push((
+                t.galley.text().to_string(),
+                Rect::from_min_size(t.pos, t.galley.size()),
+            )),
+            Paint::Vec(list) => list.iter().for_each(|s| collect(s, out)),
+            _ => {}
+        }
+    }
+
+    fn ctrl() -> Modifiers {
+        Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        }
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let ctx = egui::Context::default();
+            theme::apply(&ctx);
+            let mut h = Self {
+                ctx,
+                time: 0.0,
+                texts: Vec::new(),
+                right: 0.0,
+            };
+            h.frame(Vec::new(), Modifiers::NONE, &mut |_| {});
+            h
+        }
+
+        fn frame(
+            &mut self,
+            events: Vec<Event>,
+            modifiers: Modifiers,
+            add: &mut dyn FnMut(&mut Ui),
+        ) {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1600.0))),
+                time: Some(self.time),
+                modifiers,
+                events,
+                ..Default::default()
+            };
+            let mut right = 0.0;
+            let out = self.ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    right = ui.available_rect_before_wrap().right();
+                    add(ui);
+                });
+            });
+            self.right = right;
+            self.texts.clear();
+            for clipped in &out.shapes {
+                collect(&clipped.shape, &mut self.texts);
+            }
+        }
+
+        fn at(&self, text: &str, nth: usize) -> Option<Rect> {
+            self.texts
+                .iter()
+                .filter(|(t, _)| t.trim() == text)
+                .nth(nth)
+                .map(|(_, r)| *r)
+        }
+
+        fn has(&self, text: &str) -> bool {
+            self.at(text, 0).is_some()
+        }
+
+        fn press(at: Pos2, pressed: bool) -> Event {
+            Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            }
+        }
+
+        fn click(&mut self, at: Pos2, add: &mut dyn FnMut(&mut Ui)) {
+            self.time += 0.6;
+            for events in [
+                vec![Event::PointerMoved(at)],
+                vec![Self::press(at, true)],
+                vec![Self::press(at, false)],
+                Vec::new(),
+                Vec::new(),
+            ] {
+                self.frame(events, Modifiers::NONE, add);
+            }
+        }
+
+        fn click_text(&mut self, text: &str, add: &mut dyn FnMut(&mut Ui)) {
+            let at = self
+                .at(text, 0)
+                .unwrap_or_else(|| panic!("no \"{text}\" on screen"))
+                .center();
+            self.click(at, add);
+        }
+
+        fn drag(&mut self, from: Pos2, to: Pos2, add: &mut dyn FnMut(&mut Ui)) {
+            self.time += 0.6;
+            let mid = from + (to - from) * 0.5;
+            for events in [
+                vec![Event::PointerMoved(from)],
+                vec![Self::press(from, true)],
+                vec![Event::PointerMoved(mid)],
+                vec![Event::PointerMoved(to)],
+                vec![Self::press(to, false)],
+                Vec::new(),
+                Vec::new(),
+            ] {
+                self.frame(events, Modifiers::NONE, add);
+            }
+        }
+
+        fn key(&mut self, key: Key, modifiers: Modifiers, add: &mut dyn FnMut(&mut Ui)) {
+            let down = Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            };
+            let up = Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: false,
+                repeat: false,
+                modifiers,
+            };
+            self.frame(vec![down], modifiers, add);
+            self.frame(vec![up], Modifiers::NONE, add);
+        }
+    }
+
+    fn loaded(name: &str, secs: u32) -> Option<EditorState> {
+        let dir = std::env::temp_dir().join(format!("sc-editor-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.mp4");
+        if !make_clip(&path, secs, 320, 180, true) {
+            return None;
+        }
+        let mut st = EditorState::default();
+        st.load(&path);
+        assert!(st.error.is_none(), "{:?}", st.error);
+        Some(st)
+    }
+
+    struct Geo {
+        left: f32,
+        width: f32,
+        y: f32,
+        duration: f64,
+    }
+
+    impl Geo {
+        fn x(&self, t: f64) -> f32 {
+            self.left + (t / self.duration) as f32 * self.width
+        }
+        fn at(&self, t: f64) -> Pos2 {
+            pos2(self.x(t), self.y)
+        }
+    }
+
+    fn timeline_geo(h: &mut Harness, st: &mut EditorState) -> Geo {
+        let mut origin = None;
+        let mut width = 0.0;
+        h.frame(Vec::new(), Modifiers::NONE, &mut |ui| {
+            origin = Some(ui.available_rect_before_wrap().min);
+            width = ui.available_width();
+            st.timeline(ui, 0.0);
+        });
+        let o = origin.unwrap();
+        Geo {
+            left: o.x + 9.0,
+            width: width - 18.0,
+            y: o.y + RULER + TRACK / 2.0,
+            duration: st.duration,
+        }
+    }
+
+    fn timeline_gesture(h: &mut Harness, st: &mut EditorState, steps: Vec<Vec<Event>>) -> Vec<f64> {
+        let mut seeks = Vec::new();
+        for events in steps {
+            h.frame(events, Modifiers::NONE, &mut |ui| {
+                if let Some(t) = st.timeline(ui, 0.0) {
+                    seeks.push(t);
+                }
+            });
+        }
+        seeks
+    }
+
+    fn click_steps(at: Pos2) -> Vec<Vec<Event>> {
+        vec![
+            vec![Event::PointerMoved(at)],
+            vec![Harness::press(at, true)],
+            vec![Harness::press(at, false)],
+            Vec::new(),
+        ]
+    }
+
+    fn drag_steps(from: Pos2, to: Pos2) -> Vec<Vec<Event>> {
+        let mid = from + (to - from) * 0.5;
+        vec![
+            vec![Event::PointerMoved(from)],
+            vec![Harness::press(from, true)],
+            vec![Event::PointerMoved(mid)],
+            vec![Event::PointerMoved(to)],
+            vec![Harness::press(to, false)],
+            Vec::new(),
+        ]
+    }
+
+    #[test]
+    fn clicking_the_timeline_moves_the_playhead_and_picks_the_piece() {
+        let mut st = bare(12.0);
+        st.plan.split(6.0);
+        st.selected = 0;
+        let mut h = Harness::new();
+        let geo = timeline_geo(&mut h, &mut st);
+        let seeks = timeline_gesture(&mut h, &mut st, click_steps(geo.at(9.0)));
+        assert!(
+            seeks.iter().any(|t| (t - 9.0).abs() < 0.2),
+            "seeks {seeks:?}"
+        );
+        assert_eq!(st.selected, 1);
+        let seeks = timeline_gesture(&mut h, &mut st, click_steps(geo.at(2.0)));
+        assert!(seeks.iter().any(|t| (t - 2.0).abs() < 0.2));
+        assert_eq!(st.selected, 0);
+    }
+
+    #[test]
+    fn dragging_across_the_timeline_scrubs_and_lands_on_release() {
+        let mut st = bare(12.0);
+        let mut h = Harness::new();
+        let geo = timeline_geo(&mut h, &mut st);
+        let seeks = timeline_gesture(&mut h, &mut st, drag_steps(geo.at(2.0), geo.at(8.0)));
+        let last = *seeks.last().expect("a seek");
+        assert!((last - 8.0).abs() < 0.3, "{seeks:?}");
+        assert!(st.scrub.is_none());
+        assert_eq!(st.plan.segments.len(), 1);
+    }
+
+    #[test]
+    fn dragging_a_handle_moves_the_edge_of_the_selected_piece() {
+        let mut st = bare(12.0);
+        st.plan.split(6.0);
+        st.selected = 0;
+        let mut h = Harness::new();
+        let geo = timeline_geo(&mut h, &mut st);
+        let seeks = timeline_gesture(&mut h, &mut st, drag_steps(geo.at(6.0), geo.at(4.0)));
+        let seg = st.plan.segments[0];
+        assert!((seg.end - 4.0).abs() < 0.3, "{seg:?}");
+        assert_eq!(seg.start, 0.0);
+        assert_eq!(st.plan.segments[1].start, 6.0);
+        assert!(seeks.last().is_some_and(|t| (t - seg.end).abs() < 0.3));
+
+        let start_edge = geo.at(seg.start);
+        let _ = timeline_gesture(
+            &mut h,
+            &mut st,
+            drag_steps(start_edge + vec2(2.0, 0.0), geo.at(2.0)),
+        );
+        assert!((st.plan.segments[0].start - 2.0).abs() < 0.4);
+        assert!(st.plan.segments[0].end > 3.5);
+    }
+
+    #[test]
+    fn a_handle_cannot_cross_its_neighbour() {
+        let mut st = bare(12.0);
+        st.plan.split(6.0);
+        st.selected = 1;
+        let mut h = Harness::new();
+        let geo = timeline_geo(&mut h, &mut st);
+        let _ = timeline_gesture(&mut h, &mut st, drag_steps(geo.at(6.0), geo.at(2.0)));
+        assert_eq!(st.plan.segments[0].end, 6.0);
+        assert!(st.plan.segments[1].start >= 6.0);
+        assert_eq!(st.plan.segments.len(), 2);
+    }
+
+    #[test]
+    fn the_split_and_delete_buttons_work() {
+        let Some(mut st) = loaded("transport", 12) else {
+            return;
+        };
+        let mut h = Harness::new();
+        st.seek(4.0);
+        let run = |h: &mut Harness, st: &mut EditorState| {
+            h.frame(Vec::new(), Modifiers::NONE, &mut |ui| {
+                transport(st, ui);
+            });
+        };
+        run(&mut h, &mut st);
+        assert!(h.has("Split here") && h.has("Delete piece"));
+
+        let mut message = None;
+        h.click_text("Split here", &mut |ui| {
+            message = message.or(transport(&mut st, ui));
+        });
+        assert_eq!(st.plan.segments.len(), 2);
+        assert_eq!(st.plan.segments[0].end, st.plan.segments[1].start);
+        assert!((st.plan.segments[0].end - 4.0).abs() < 0.05);
+        assert_eq!(st.selected, 1);
+        assert!(message.is_none());
+
+        let mut message = None;
+        h.click_text("Split here", &mut |ui| {
+            message = message.or(transport(&mut st, ui));
+        });
+        assert_eq!(
+            st.plan.segments.len(),
+            2,
+            "no second split at the same spot"
+        );
+        assert!(message.is_some());
+
+        h.click_text("Delete piece", &mut |ui| {
+            transport(&mut st, ui);
+        });
+        assert_eq!(st.plan.segments.len(), 1);
+        assert_eq!(st.plan.segments[0].end, 4.0);
+        assert_eq!(st.selected, 0);
+    }
+
+    #[test]
+    fn the_keyboard_shortcuts_work() {
+        let Some(mut st) = loaded("keys", 12) else {
+            return;
+        };
+        let mut h = Harness::new();
+        let ctx = h.ctx.clone();
+        let press = |h: &mut Harness, st: &mut EditorState, key: Key, m: Modifiers| {
+            let mut note = None;
+            h.key(key, m, &mut |_| {
+                note = note.or(handle_keys(st, &ctx));
+            });
+            note
+        };
+
+        st.seek(4.0);
+        assert!(press(&mut h, &mut st, Key::S, Modifiers::NONE).is_none());
+        assert_eq!(st.plan.segments.len(), 2);
+        assert!(press(&mut h, &mut st, Key::S, Modifiers::NONE).is_some());
+
+        press(&mut h, &mut st, Key::ArrowRight, Modifiers::NONE);
+        assert!((st.position() - 5.0).abs() < 0.05, "{}", st.position());
+        press(&mut h, &mut st, Key::ArrowRight, Modifiers::SHIFT);
+        assert!((st.position() - 10.0).abs() < 0.05, "{}", st.position());
+        press(&mut h, &mut st, Key::ArrowLeft, Modifiers::NONE);
+        assert!((st.position() - 9.0).abs() < 0.05);
+
+        assert!(!st.player.as_ref().unwrap().is_playing());
+        press(&mut h, &mut st, Key::Space, Modifiers::NONE);
+        assert!(st.player.as_ref().unwrap().is_playing());
+        press(&mut h, &mut st, Key::Space, Modifiers::NONE);
+        assert!(!st.player.as_ref().unwrap().is_playing());
+
+        assert_eq!(st.selected, 1);
+        assert!(press(&mut h, &mut st, Key::Delete, Modifiers::NONE).is_none());
+        assert_eq!(st.plan.segments.len(), 1);
+        assert!(press(&mut h, &mut st, Key::Delete, Modifiers::NONE).is_some());
+
+        st.undo.push(st.plan.clone());
+        st.plan.volume = 0.3;
+        press(&mut h, &mut st, Key::Z, ctrl());
+        assert_eq!(st.plan.volume, 1.0);
+        press(&mut h, &mut st, Key::Y, ctrl());
+        assert_eq!(st.plan.volume, 0.3);
+        press(&mut h, &mut st, Key::Z, ctrl());
+        assert_eq!(st.plan.volume, 1.0);
+        let shift_ctrl = Modifiers {
+            shift: true,
+            ..ctrl()
+        };
+        press(&mut h, &mut st, Key::Z, shift_ctrl);
+        assert_eq!(st.plan.volume, 0.3);
+
+        assert!(!st.save_open);
+        press(&mut h, &mut st, Key::S, ctrl());
+        assert!(st.save_open);
+    }
+
+    fn run_tools(h: &mut Harness, st: &mut EditorState) {
+        h.frame(Vec::new(), Modifiers::NONE, &mut |ui| tools(st, ui));
+    }
+
+    fn choose_tool(h: &mut Harness, st: &mut EditorState, tab: &str) {
+        run_tools(h, st);
+        h.click_text(tab, &mut |ui| tools(st, ui));
+    }
+
+    fn slider_centre(label: Rect) -> Pos2 {
+        pos2(label.right() - 56.0 - 8.0 - 90.0, label.center().y)
+    }
+
+    #[test]
+    fn speed_is_set_per_piece_from_the_chips() {
+        let mut st = bare(12.0);
+        st.plan.split(4.0);
+        st.plan.split(8.0);
+        st.selected = 1;
+        let mut h = Harness::new();
+        run_tools(&mut h, &mut st);
+        assert!(h.has("Speed of piece 2 of 3"));
+
+        h.click_text("2\u{d7}", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.segments[1].speed, 2.0);
+        assert_eq!(st.plan.segments[0].speed, 1.0);
+        assert_eq!(st.plan.segments[2].speed, 1.0);
+
+        st.selected = 2;
+        run_tools(&mut h, &mut st);
+        assert!(h.has("Speed of piece 3 of 3"));
+        h.click_text("0.5\u{d7}", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.segments[2].speed, 0.5);
+        assert_eq!(st.plan.segments[1].speed, 2.0);
+
+        assert!(h.has("Apply to all"));
+        h.click_text("Apply to all", &mut |ui| tools(&mut st, ui));
+        assert!(st.plan.segments.iter().all(|s| s.speed == 0.5));
+        run_tools(&mut h, &mut st);
+        assert!(!h.has("Apply to all"));
+    }
+
+    #[test]
+    fn a_single_piece_clip_has_one_speed() {
+        let mut st = bare(12.0);
+        let mut h = Harness::new();
+        run_tools(&mut h, &mut st);
+        assert!(h.has("Speed") && !h.has("Apply to all"));
+        h.click_text("4\u{d7}", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.segments[0].speed, 4.0);
+        h.click_text("1\u{d7}", &mut |ui| tools(&mut st, ui));
+        assert!(!st.plan.has_speed_change());
+    }
+
+    #[test]
+    fn the_sound_tool_sets_volume_and_mutes() {
+        let mut st = bare(12.0);
+        st.has_audio = true;
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Sound");
+        assert_eq!(st.tool, Tool::Sound);
+        assert!(h.has("Volume") && h.has("Mute") && h.has("100%"));
+
+        let label = h.at("100%", 0).unwrap();
+        let centre = slider_centre(label);
+        h.drag(
+            centre + vec2(10.0, 0.0),
+            centre + vec2(-80.0, 0.0),
+            &mut |ui| tools(&mut st, ui),
+        );
+        assert!(
+            st.plan.volume > 0.0 && st.plan.volume < 0.5,
+            "{}",
+            st.plan.volume
+        );
+        assert_eq!(st.saved_volume, st.plan.volume);
+
+        let label = h.at(&format!("{:.0}%", st.plan.volume * 100.0), 0).unwrap();
+        let centre = slider_centre(label);
+        h.drag(
+            centre + vec2(-60.0, 0.0),
+            centre + vec2(140.0, 0.0),
+            &mut |ui| tools(&mut st, ui),
+        );
+        assert!((st.plan.volume - 2.0).abs() < 1e-6, "{}", st.plan.volume);
+
+        let loud = st.plan.volume;
+        let toggle = pos2(h.right - 16.0 - 25.5, h.at("Mute", 0).unwrap().center().y);
+        h.click(toggle, &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.volume, 0.0);
+        run_tools(&mut h, &mut st);
+        assert!(h.has("Muted"));
+        h.click(toggle, &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.volume, loud);
+    }
+
+    #[test]
+    fn a_clip_without_sound_says_so() {
+        let mut st = bare(12.0);
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Sound");
+        assert!(h.has("No sound"));
+        assert!(!h.has("Volume"));
+    }
+
+    #[test]
+    fn the_fade_sliders_set_both_ends() {
+        let mut st = bare(12.0);
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Fades");
+        assert_eq!(st.tool, Tool::Fades);
+        assert!(h.has("Fade in") && h.has("Fade out"));
+
+        let first = h.at("Off", 0).unwrap();
+        let centre = slider_centre(first);
+        h.click(centre + vec2(-20.0, 0.0), &mut |ui| tools(&mut st, ui));
+        h.click(centre + vec2(-20.0, 0.0), &mut |ui| tools(&mut st, ui));
+        assert!(
+            st.plan.fade_in > 1.0 && st.plan.fade_in < 3.0,
+            "{}",
+            st.plan.fade_in
+        );
+        assert_eq!(st.plan.fade_out, 0.0);
+
+        let second = h.at("Off", 0).unwrap();
+        let centre = slider_centre(second);
+        h.click(centre + vec2(60.0, 0.0), &mut |ui| tools(&mut st, ui));
+        assert!(st.plan.fade_out > 3.0, "{}", st.plan.fade_out);
+
+        let at = h
+            .at(&format!("{} s", trim_num(st.plan.fade_in)), 0)
+            .unwrap();
+        let centre = slider_centre(at);
+        h.drag(
+            centre + vec2(-20.0, 0.0),
+            centre + vec2(-120.0, 0.0),
+            &mut |ui| tools(&mut st, ui),
+        );
+        assert_eq!(st.plan.fade_in, 0.0);
+    }
+
+    #[test]
+    fn opening_the_crop_tab_does_not_crop_anything() {
+        let mut st = bare(12.0);
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Crop");
+        assert_eq!(st.tool, Tool::Crop);
+        for _ in 0..3 {
+            run_tools(&mut h, &mut st);
+        }
+        assert!(st.plan.crop.is_none());
+        assert!(st.shape.is_none());
+    }
+
+    #[test]
+    fn the_crop_shapes_and_clear_work() {
+        let Some(mut st) = loaded("crop", 6) else {
+            return;
+        };
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Crop");
+
+        h.click_text("1:1", &mut |ui| tools(&mut st, ui));
+        let c = st.plan.crop.expect("a crop");
+        assert!((c.w - 0.5625).abs() < 1e-6 && c.h == 1.0, "{c:?}");
+        assert_eq!(st.shape, Some(Shape::Square));
+
+        h.click_text("9:16", &mut |ui| tools(&mut st, ui));
+        let c = st.plan.crop.unwrap();
+        assert!(
+            (c.w * 320.0 / (c.h * 180.0) - 9.0 / 16.0).abs() < 1e-6,
+            "{c:?}"
+        );
+
+        let locked = st.plan.crop.unwrap();
+        h.click_text("Free", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.crop, Some(locked), "unlocking keeps the same frame");
+        assert_eq!(st.shape, Some(Shape::Free));
+
+        assert!(h.has("Clear"));
+        h.click_text("Clear", &mut |ui| tools(&mut st, ui));
+        assert!(st.plan.crop.is_none());
+        assert!(st.shape.is_none());
+        run_tools(&mut h, &mut st);
+        assert!(!h.has("Clear"));
+
+        h.click_text("Free", &mut |ui| tools(&mut st, ui));
+        let c = st.plan.crop.expect("a free crop to start from");
+        assert!(c.w < 1.0 && c.h < 1.0 && c.x > 0.0 && c.y > 0.0, "{c:?}");
+    }
+
+    #[test]
+    fn the_rotate_tool_turns_and_flips() {
+        let mut st = bare(12.0);
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Rotate");
+        assert_eq!(st.tool, Tool::Rotate);
+
+        h.click_text("Turn right", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.turn, 90);
+        h.click_text("Turn right", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.turn, 180);
+        h.click_text("Turn left", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.turn, 90);
+        h.click_text("Turn left", &mut |ui| tools(&mut st, ui));
+        h.click_text("Turn left", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.turn, 270);
+
+        h.click_text("Sideways", &mut |ui| tools(&mut st, ui));
+        assert!(st.plan.flip_h && !st.plan.flip_v);
+        assert!(h.has("Sideways: on"));
+        h.click_text("Upside down", &mut |ui| tools(&mut st, ui));
+        assert!(st.plan.flip_v);
+        h.click_text("Sideways: on", &mut |ui| tools(&mut st, ui));
+        assert!(!st.plan.flip_h);
+        assert_eq!(st.view().turn, 270);
+        assert!(st.view().flip_v);
+    }
+
+    #[test]
+    fn turning_clears_a_crop_that_no_longer_fits() {
+        let mut st = bare(12.0);
+        st.plan.crop = Some(square());
+        st.shape = Some(Shape::Free);
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Rotate");
+        h.click_text("Turn right", &mut |ui| tools(&mut st, ui));
+        assert!(st.plan.crop.is_none());
+        assert!(st.shape.is_none());
+    }
+
+    #[test]
+    fn every_tool_tab_shows_its_own_controls() {
+        let mut st = bare(12.0);
+        st.has_audio = true;
+        let mut h = Harness::new();
+        for (tab, tool, marker) in [
+            ("Sound", Tool::Sound, "Volume"),
+            ("Fades", Tool::Fades, "Fade in"),
+            ("Crop", Tool::Crop, "Shape"),
+            ("Rotate", Tool::Rotate, "Flip"),
+            (
+                "Speed",
+                Tool::Speed,
+                "Split the clip to slow down or speed up just one part. Sound keeps its pitch.",
+            ),
+        ] {
+            choose_tool(&mut h, &mut st, tab);
+            assert_eq!(st.tool, tool);
+            assert!(h.has(marker), "{tab} is missing {marker}");
+        }
+    }
+
+    #[test]
+    fn the_save_dialog_offers_the_choices_and_starts() {
+        let mut st = bare(12.0);
+        st.precise = true;
+        st.save_open = true;
+        let mut h = Harness::new();
+        let mut act = SaveAction::Idle;
+        let run = |h: &mut Harness, st: &mut EditorState, act: &mut SaveAction| {
+            h.frame(Vec::new(), Modifiers::NONE, &mut |ui| {
+                *act = save_dialog(st, &None, ui.ctx());
+            });
+        };
+        run(&mut h, &mut st, &mut act);
+        run(&mut h, &mut st, &mut act);
+        for text in [
+            "Save your edit",
+            "Frame accurate",
+            "Save as a copy",
+            "Replace the original",
+            "Save edited clip",
+            "Cancel",
+        ] {
+            assert!(h.has(text), "dialog is missing {text}");
+        }
+
+        h.click_text("Replace the original", &mut |ui| {
+            act = save_dialog(&mut st, &None, ui.ctx());
+        });
+        assert_eq!(st.mode, SaveMode::Replace);
+        assert!(h.has("Replace original"));
+
+        h.click_text("Save as a copy", &mut |ui| {
+            act = save_dialog(&mut st, &None, ui.ctx());
+        });
+        assert_eq!(st.mode, SaveMode::Copy);
+
+        let mut started = false;
+        h.click_text("Save edited clip", &mut |ui| {
+            started |= save_dialog(&mut st, &None, ui.ctx()) == SaveAction::Start;
+        });
+        assert!(started);
+        assert!(st.save_open);
+
+        h.click_text("Cancel", &mut |ui| {
+            act = save_dialog(&mut st, &None, ui.ctx());
+        });
+        assert!(!st.save_open);
+    }
+
+    #[test]
+    fn the_save_dialog_hides_the_accuracy_switch_for_real_edits() {
+        let mut st = bare(12.0);
+        st.has_audio = true;
+        st.save_open = true;
+        st.plan.volume = 0.5;
+        let mut h = Harness::new();
+        for _ in 0..2 {
+            h.frame(Vec::new(), Modifiers::NONE, &mut |ui| {
+                save_dialog(&mut st, &None, ui.ctx());
+            });
+        }
+        assert!(h.has("Save your edit"));
+        assert!(!h.has("Frame accurate"));
+        assert!(h.texts.iter().any(|(t, _)| t.contains("50% volume")));
+    }
+
+    #[test]
+    fn escape_closes_the_save_dialog() {
+        let mut st = bare(12.0);
+        st.save_open = true;
+        let mut h = Harness::new();
+        h.key(Key::Escape, Modifiers::NONE, &mut |ui| {
+            save_dialog(&mut st, &None, ui.ctx());
+        });
+        assert!(!st.save_open);
+    }
+
+    fn wait_for(rx: &Receiver<Result<Done, String>>) -> Result<Done, String> {
+        rx.recv_timeout(Duration::from_secs(60)).expect("a result")
+    }
+
+    #[test]
+    fn saving_a_plain_cut_exactly_gives_the_chosen_length() {
+        let Some(st) = loaded("save-plain", 8) else {
+            return;
+        };
+        let dst = st.path.with_file_name("exact.mp4");
+        let mut plan = Plan::whole(8.0);
+        plan.segments = vec![sc_core::edit::Segment::new(1.2, 4.2)];
+        assert!(plan.is_plain_cut());
+        let (rx, progress) = spawn_render(st.path.clone(), dst.clone(), plan, true);
+        let done = wait_for(&rx).expect("saved");
+        assert_eq!(done.path, dst);
+        assert!((done.secs - 3.0).abs() < 0.2, "{}", done.secs);
+        let info = sc_ffmpeg::media_info(&dst).unwrap();
+        assert!((info.duration - 3.0).abs() < 0.25, "{}", info.duration);
+        assert_eq!(progress.fraction(), 1.0);
+    }
+
+    #[test]
+    fn saving_a_plain_cut_without_re_encoding_still_works() {
+        let Some(st) = loaded("save-lossless", 8) else {
+            return;
+        };
+        let dst = st.path.with_file_name("fast.mp4");
+        let mut plan = Plan::whole(8.0);
+        plan.segments = vec![sc_core::edit::Segment::new(2.0, 6.0)];
+        let (rx, _) = spawn_render(st.path.clone(), dst.clone(), plan, false);
+        let done = wait_for(&rx).expect("saved");
+        assert!(done.path.exists());
+        let info = sc_ffmpeg::media_info(&dst).unwrap();
+        assert!(
+            info.duration > 3.5 && info.duration < 6.1,
+            "{}",
+            info.duration
+        );
+        assert_eq!(info.audio_streams, 1);
+    }
+
+    #[test]
+    fn saving_every_kind_of_edit_at_once_works() {
+        let Some(st) = loaded("save-everything", 8) else {
+            return;
+        };
+        let dst = st.path.with_file_name("all.mp4");
+        let mut plan = Plan::whole(8.0);
+        plan.segments = vec![
+            sc_core::edit::Segment {
+                start: 0.5,
+                end: 3.0,
+                speed: 0.5,
+            },
+            sc_core::edit::Segment {
+                start: 4.0,
+                end: 8.0,
+                speed: 2.0,
+            },
+        ];
+        plan.volume = 1.5;
+        plan.fade_in = 0.5;
+        plan.fade_out = 0.5;
+        plan.turn = 270;
+        plan.flip_h = true;
+        plan.crop = Some(Crop::with_ratio(180.0, 320.0, 1.0));
+        let want = plan.output_secs();
+        let (w, h) = plan.output_size(320, 180);
+        let (rx, _) = spawn_render(st.path.clone(), dst.clone(), plan, true);
+        let done = wait_for(&rx).expect("saved");
+        assert!((done.secs - want).abs() < 0.01);
+        let info = sc_ffmpeg::media_info(&dst).unwrap();
+        assert_eq!((info.width, info.height), (w, h));
+        assert!(
+            (info.duration - want).abs() < 0.4,
+            "{} vs {want}",
+            info.duration
+        );
+        assert_eq!(info.audio_streams, 1);
+    }
+
+    #[test]
+    fn a_failed_save_reports_the_problem() {
+        let dir = std::env::temp_dir().join("sc-editor-missing");
+        let _ = std::fs::create_dir_all(&dir);
+        let (rx, _) = spawn_render(
+            dir.join("gone.mp4"),
+            dir.join("out.mp4"),
+            Plan::whole(5.0),
+            true,
+        );
+        let err = wait_for(&rx).expect_err("an error");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn loading_something_that_is_not_a_video_shows_an_error() {
+        let dir = std::env::temp_dir().join("sc-editor-bad");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("not-a-video.mp4");
+        std::fs::write(&path, b"nothing to see").unwrap();
+        let mut st = EditorState::default();
+        st.load(&path);
+        assert!(st.error.is_some());
+        assert!(st.player.is_none() || st.error.is_some());
+    }
+
+    #[test]
+    fn a_loaded_clip_starts_whole_and_untouched() {
+        let Some(st) = loaded("fresh", 6) else {
+            return;
+        };
+        assert!(st.error.is_none());
+        assert!((st.duration - 6.0).abs() < 0.2);
+        assert!(st.has_audio);
+        assert_eq!(st.plan.segments.len(), 1);
+        assert!(st.plan.is_plain_cut());
+        assert!(st.precise);
+        assert!(st.undo.is_empty() && st.redo.is_empty());
+        assert!(st.summary().is_empty());
     }
 }

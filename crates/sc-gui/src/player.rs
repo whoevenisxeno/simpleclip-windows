@@ -18,6 +18,7 @@ pub struct View {
     pub turn: u16,
     pub flip_h: bool,
     pub flip_v: bool,
+    pub dim: f32,
 }
 
 struct Track {
@@ -121,7 +122,8 @@ pub struct Player {
     last_tick: Instant,
     want_still: bool,
     out: Option<(OutputStream, OutputStreamHandle)>,
-    segments: Vec<(f64, f64)>,
+    segments: Vec<(f64, f64, f64)>,
+    rate: f64,
 }
 
 impl Player {
@@ -133,8 +135,27 @@ impl Player {
         p
     }
 
-    pub fn set_segments(&mut self, segments: Vec<(f64, f64)>) {
+    pub fn set_segments(&mut self, segments: Vec<(f64, f64, f64)>) {
         self.segments = segments;
+    }
+
+    pub fn rate(&self) -> f64 {
+        self.rate
+    }
+
+    fn speed_at(&self, t: f64) -> f64 {
+        self.segments
+            .iter()
+            .find(|s| t >= s.0 && t < s.1 - 0.02)
+            .map(|s| s.2)
+            .unwrap_or(1.0)
+    }
+
+    fn set_rate(&mut self, rate: f64) {
+        self.rate = rate;
+        if let Some(s) = self.run.as_ref().and_then(|r| r.sink.as_ref()) {
+            s.set_speed(rate as f32);
+        }
     }
 
     pub fn set_gain(&mut self, gain: f32) {
@@ -160,6 +181,7 @@ impl Player {
             want_still: false,
             out: None,
             segments: Vec::new(),
+            rate: 1.0,
         };
         if p.info.is_ok() {
             p.start_at(0.0, true);
@@ -197,6 +219,7 @@ impl Player {
         self.failed = None;
         let secs = secs.clamp(0.0, (self.duration() - 0.05).max(0.0));
         self.pos = secs;
+        self.rate = self.speed_at(secs);
         self.playing = play;
         self.want_still = !play;
         self.last_tick = Instant::now();
@@ -217,6 +240,7 @@ impl Player {
                         s.pause();
                     }
                     s.set_volume(self.gain);
+                    s.set_speed(self.rate as f32);
                     s.append(Mix {
                         tracks: (0..tracks)
                             .map(|n| Track {
@@ -301,6 +325,10 @@ impl Player {
                 self.start_at(to, true);
             }
         }
+        let want = self.speed_at(self.pos);
+        if (want - self.rate).abs() > 1e-6 {
+            self.set_rate(want);
+        }
         let Some(run) = self.run.as_mut() else {
             return;
         };
@@ -318,7 +346,7 @@ impl Player {
                 self.pos = self.pos.max(t);
             } else if audio_live && run.began.elapsed() < Duration::from_millis(1500) {
             } else {
-                self.pos += dt;
+                self.pos += dt * self.rate;
             }
         }
 
@@ -434,5 +462,143 @@ impl Player {
             img = img.rotate((view.turn as f32).to_radians(), vec2(0.5, 0.5));
         }
         img.paint_at(ui, upright);
+        if view.dim > 0.004 {
+            ui.painter().rect_filled(
+                rect,
+                Rounding::same(10.0),
+                egui::Color32::from_black_alpha((view.dim.clamp(0.0, 1.0) * 255.0).round() as u8),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sc_ffmpeg::sample::make_clip;
+
+    fn clip(name: &str, secs: u32) -> Option<PathBuf> {
+        let dir = std::env::temp_dir().join(format!("sc-player-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.mp4");
+        make_clip(&path, secs, 320, 180, false).then_some(path)
+    }
+
+    fn play_for(p: &mut Player, ctx: &egui::Context, secs: f64) {
+        let end = Instant::now() + Duration::from_secs_f64(secs);
+        while Instant::now() < end {
+            p.tick(ctx);
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    }
+
+    fn started(path: &Path, segments: Vec<(f64, f64, f64)>) -> Player {
+        let mut p = Player::open_paused(path, 0.0);
+        p.set_segments(segments);
+        p.toggle();
+        p
+    }
+
+    #[test]
+    fn normal_playback_follows_the_clock() {
+        let Some(path) = clip("normal", 8) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = started(&path, vec![(0.0, 8.0, 1.0)]);
+        play_for(&mut p, &ctx, 1.0);
+        assert!(p.is_playing());
+        assert!(
+            p.position() > 0.8 && p.position() < 1.35,
+            "{}",
+            p.position()
+        );
+        assert_eq!(p.rate(), 1.0);
+    }
+
+    #[test]
+    fn a_fast_piece_plays_at_its_speed() {
+        let Some(path) = clip("fast", 8) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = started(&path, vec![(0.0, 8.0, 2.0)]);
+        play_for(&mut p, &ctx, 1.0);
+        assert_eq!(p.rate(), 2.0);
+        assert!(p.position() > 1.6 && p.position() < 2.7, "{}", p.position());
+    }
+
+    #[test]
+    fn a_slow_piece_plays_slower() {
+        let Some(path) = clip("slow", 8) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = started(&path, vec![(0.0, 8.0, 0.5)]);
+        play_for(&mut p, &ctx, 1.2);
+        assert_eq!(p.rate(), 0.5);
+        assert!(p.position() > 0.4 && p.position() < 0.8, "{}", p.position());
+    }
+
+    #[test]
+    fn the_speed_changes_when_playback_enters_another_piece() {
+        let Some(path) = clip("pieces", 8) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = started(&path, vec![(0.0, 1.0, 1.0), (1.0, 8.0, 4.0)]);
+        play_for(&mut p, &ctx, 0.5);
+        assert_eq!(p.rate(), 1.0);
+        play_for(&mut p, &ctx, 1.2);
+        assert_eq!(p.rate(), 4.0);
+        assert!(p.position() > 1.5, "{}", p.position());
+    }
+
+    #[test]
+    fn playback_jumps_over_a_cut() {
+        let Some(path) = clip("cut", 8) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = started(&path, vec![(0.0, 1.0, 1.0), (3.0, 4.0, 1.0)]);
+        play_for(&mut p, &ctx, 1.6);
+        assert!(
+            p.position() >= 3.0 && p.position() < 4.0,
+            "{}",
+            p.position()
+        );
+    }
+
+    #[test]
+    fn playback_loops_back_to_the_first_piece() {
+        let Some(path) = clip("loop", 8) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = started(&path, vec![(2.0, 3.0, 1.0)]);
+        play_for(&mut p, &ctx, 2.8);
+        assert!(p.is_playing());
+        assert!(
+            p.position() >= 2.0 && p.position() < 3.0,
+            "{}",
+            p.position()
+        );
+    }
+
+    #[test]
+    fn the_picture_shows_the_frame_at_the_playhead() {
+        let Some(path) = clip("frame", 6) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = Player::open_paused(&path, 0.0);
+        p.set_segments(vec![(0.0, 6.0, 1.0)]);
+        play_for(&mut p, &ctx, 0.6);
+        p.seek(4.0);
+        play_for(&mut p, &ctx, 0.8);
+        assert!(!p.is_playing());
+        assert!((p.position() - 4.0).abs() < 0.2, "{}", p.position());
+        assert!(p.tex.is_some());
     }
 }

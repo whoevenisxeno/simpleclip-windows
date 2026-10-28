@@ -10,6 +10,8 @@ mod hw;
 mod mux;
 mod player;
 mod recorder;
+#[cfg(any(test, feature = "sample"))]
+pub mod sample;
 mod stretch;
 mod thumb;
 mod trim;
