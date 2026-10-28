@@ -450,6 +450,7 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>> {
         .into_iter()
         .map(|m| {
             let index = m.index().map_err(werr)?;
+            let origin = monitor_origin(&m);
             Ok(MonitorInfo {
                 id: index.to_string(),
                 name: m.name().unwrap_or_else(|_| format!("Display {index}")),
@@ -457,6 +458,8 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>> {
                 height: m.height().unwrap_or(0),
                 refresh_mhz: m.refresh_rate().unwrap_or(0) * 1000,
                 primary: primary == Some(m),
+                x: origin.0,
+                y: origin.1,
             })
         })
         .collect()
@@ -479,4 +482,18 @@ pub fn list_audio_devices() -> Result<Vec<AudioDevice>> {
         }
     }
     Ok(out)
+}
+
+fn monitor_origin(m: &Monitor) -> (i32, i32) {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let ok = unsafe { GetMonitorInfoW(HMONITOR(m.as_raw_hmonitor()), &mut info) }.as_bool();
+    if ok {
+        (info.rcMonitor.left, info.rcMonitor.top)
+    } else {
+        (0, 0)
+    }
 }

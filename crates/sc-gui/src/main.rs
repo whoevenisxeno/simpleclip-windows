@@ -9,6 +9,8 @@ mod library;
 mod player;
 mod presets;
 mod screens;
+#[cfg(windows)]
+mod screenshot;
 mod star;
 mod theme;
 mod themes;

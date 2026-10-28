@@ -10,6 +10,10 @@ pub struct MonitorInfo {
     pub height: u32,
     pub refresh_mhz: u32,
     pub primary: bool,
+    #[serde(default)]
+    pub x: i32,
+    #[serde(default)]
+    pub y: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

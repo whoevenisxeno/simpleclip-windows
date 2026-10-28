@@ -15,7 +15,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     app.devices.ensure(&app.link);
 
     let avail = ui.available_size();
-    let w = 540.0_f32.min(avail.x - 48.0);
+    let w = 600.0_f32.min(avail.x - 48.0);
     ui.vertical_centered(|ui| {
         ui.add_space(((avail.y - 520.0) / 2.0).clamp(18.0, 80.0));
         ui.allocate_ui_with_layout(vec2(w, 520.0), Layout::top_down(Align::Min), |ui| {
@@ -142,30 +142,16 @@ fn recording(app: &mut ScApp, ui: &mut Ui) {
     );
     widgets::section(ui, None, |s| {
         if cfg!(windows) && app.devices.monitors.len() > 1 {
-            s.row("Display", None, |ui| {
-                let label = app
-                    .devices
-                    .monitors
-                    .iter()
-                    .find(|m| m.id == app.cfg.capture.monitor_id)
-                    .map(|m| m.name.clone())
-                    .unwrap_or_else(|| "Main display".to_string());
-                egui::ComboBox::from_id_salt("wiz-monitor")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut app.cfg.capture.monitor_id,
-                            String::new(),
-                            "Main display",
-                        );
-                        for m in &app.devices.monitors {
-                            ui.selectable_value(
-                                &mut app.cfg.capture.monitor_id,
-                                m.id.clone(),
-                                m.name.clone(),
-                            );
-                        }
-                    });
+            s.full("", |ui| {
+                let p = pal_ui(ui);
+                ui.label(RichText::new("Which screen?").size(14.0).color(p.text));
+                ui.label(
+                    RichText::new("The pictures show what each screen looks like right now.")
+                        .size(12.0)
+                        .color(p.text_2),
+                );
+                ui.add_space(10.0);
+                widgets::monitor_picker(ui, &mut app.devices, &mut app.cfg.capture.monitor_id);
             });
         }
         s.row("Keep the last", Some("Length of each saved clip"), |ui| {

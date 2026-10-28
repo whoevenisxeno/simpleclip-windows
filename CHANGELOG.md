@@ -2,6 +2,14 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.0.1
+
+### Added
+- Pick the screen to record from live pictures. Settings > Capture and the setup guide now show a picture of each screen as it looks right now, with its name, size and refresh rate, and a "Recording this screen" marker on the one that is chosen. Click a picture to choose that screen; the main display stays the default. The service now also reports where each screen sits, so each picture matches its screen. (The pictures update every few seconds while you look at them, and are never saved.)
+
+### Fixed
+- The setup guide, and Settings in a small window, drew each row far too tall, with the switch or buttons floating far below their name. Rows are back to their normal height, and the setup guide is a little wider.
+
 ## 6.0.0
 
 A new Settings and a more refined finish across the window. Everything works the same; it is laid out and drawn more carefully.

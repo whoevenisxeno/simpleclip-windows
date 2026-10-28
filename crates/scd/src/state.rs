@@ -211,6 +211,8 @@ impl Daemon {
                 height: p.height,
                 refresh_mhz: 0,
                 primary: true,
+                x: 0,
+                y: 0,
             };
             return (p.buffer_fill(), Some(p.encoder), Some(mon));
         }

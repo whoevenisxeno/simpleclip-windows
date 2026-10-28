@@ -358,8 +358,20 @@ fn choice(ui: &mut Ui, value: &mut u32, options: &[(u32, &str)], suffix: &str) {
 }
 
 fn recording(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
     section(ui, Some("Recording"), |s| {
-        if cfg!(windows) {
+        if cfg!(windows) && !app.devices.monitors.is_empty() {
+            s.full("display monitor screen record preview", |ui| {
+                ui.label(RichText::new("Display").size(14.0).color(p.text));
+                ui.label(
+                    RichText::new("Which screen to record. The pictures show what each screen looks like right now.")
+                        .size(12.0)
+                        .color(p.text_2),
+                );
+                ui.add_space(10.0);
+                widgets::monitor_picker(ui, &mut app.devices, &mut app.cfg.capture.monitor_id);
+            });
+        } else if cfg!(windows) {
             s.row("Display", Some("Which screen to record"), |ui| {
                 let current = app.cfg.capture.monitor_id.clone();
                 let label = app

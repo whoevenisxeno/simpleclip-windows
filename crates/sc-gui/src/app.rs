@@ -67,6 +67,8 @@ pub struct Devices {
     pub monitors: Vec<sc_core::capture::MonitorInfo>,
     pub audio: Vec<sc_core::audio::AudioDevice>,
     pub loaded: bool,
+    previews: std::collections::HashMap<String, egui::TextureHandle>,
+    previewed_at: Option<Instant>,
 }
 
 impl Devices {
@@ -80,7 +82,48 @@ impl Devices {
         {
             self.audio = a;
         }
+        self.previewed_at = None;
         self.loaded = true;
+    }
+
+    pub fn refresh_previews(&mut self, ctx: &egui::Context) {
+        let stale = self
+            .previewed_at
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(4));
+        if !stale {
+            return;
+        }
+        self.previewed_at = Some(Instant::now());
+        let positions_known =
+            self.monitors.len() < 2 || self.monitors.iter().any(|m| m.x != 0 || m.y != 0);
+        if !positions_known {
+            return;
+        }
+        #[cfg(windows)]
+        for m in &self.monitors {
+            let Some(img) =
+                crate::screenshot::capture_region(m.x, m.y, m.width as i32, m.height as i32, 480)
+            else {
+                continue;
+            };
+            match self.previews.get_mut(&m.id) {
+                Some(tex) => tex.set(img, egui::TextureOptions::LINEAR),
+                None => {
+                    let tex = ctx.load_texture(
+                        format!("monitor-{}", m.id),
+                        img,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    self.previews.insert(m.id.clone(), tex);
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = ctx;
+    }
+
+    pub fn preview(&self, id: &str) -> Option<&egui::TextureHandle> {
+        self.previews.get(id)
     }
 
     pub fn ensure(&mut self, link: &Link) {

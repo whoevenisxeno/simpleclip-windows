@@ -155,8 +155,11 @@ impl Section<'_> {
                 self.ui.label(RichText::new(h).size(12.0).color(p.text_2));
             }
             self.ui.add_space(8.0);
-            self.ui
-                .with_layout(Layout::right_to_left(Align::Center), |ui| control(ui));
+            self.ui.allocate_ui_with_layout(
+                vec2(w, 36.0),
+                Layout::right_to_left(Align::Center),
+                |ui| control(ui),
+            );
             self.ui.add_space(12.0);
             return;
         }
@@ -1104,6 +1107,148 @@ pub fn pretty_combo(combo: &str) -> String {
         .map(pretty_key)
         .collect::<Vec<_>>()
         .join("+")
+}
+
+pub fn monitor_picker(
+    ui: &mut Ui,
+    devices: &mut crate::app::Devices,
+    selected: &mut String,
+) -> bool {
+    let p = pal_ui(ui);
+    devices.refresh_previews(ui.ctx());
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs(4));
+    let monitors = devices.monitors.clone();
+    let primary_id = monitors
+        .iter()
+        .find(|m| m.primary)
+        .map(|m| m.id.clone())
+        .unwrap_or_default();
+    let active = if selected.is_empty() || !monitors.iter().any(|m| m.id == *selected) {
+        primary_id
+    } else {
+        selected.clone()
+    };
+    let gap = 12.0;
+    let avail = ui.available_width();
+    let cols = (((avail + gap) / (190.0 + gap)).floor() as usize).clamp(1, monitors.len().max(1));
+    let tw = ((avail - gap * (cols as f32 - 1.0)) / cols as f32)
+        .floor()
+        .min(270.0);
+    let th = (tw * 9.0 / 16.0).round();
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(gap, 14.0);
+        for m in &monitors {
+            let (rect, resp) = ui.allocate_exact_size(vec2(tw, th + 44.0), Sense::click());
+            let frame = Rect::from_min_size(rect.min, vec2(tw, th));
+            let on = m.id == active;
+            let hover =
+                ui.ctx()
+                    .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
+            ui.painter()
+                .rect_filled(frame, Rounding::same(10.0), Color32::from_gray(14));
+            let (mw, mh) = (m.width.max(1) as f32, m.height.max(1) as f32);
+            let fit = (tw / mw).min(th / mh);
+            let image = Rect::from_center_size(frame.center(), vec2(mw * fit, mh * fit));
+            match devices.preview(&m.id) {
+                Some(tex) => {
+                    egui::Image::new(egui::load::SizedTexture::new(tex.id(), image.size()))
+                        .rounding(Rounding::same(8.0))
+                        .paint_at(ui, image);
+                }
+                None => {
+                    ui.painter().text(
+                        frame.center(),
+                        Align2::CENTER_CENTER,
+                        "Preview unavailable",
+                        FontId::new(12.0, egui::FontFamily::Proportional),
+                        p.text_3,
+                    );
+                }
+            }
+            if !on && hover < 1.0 {
+                ui.painter().rect_filled(
+                    frame,
+                    Rounding::same(10.0),
+                    Color32::from_black_alpha((70.0 * (1.0 - hover)) as u8),
+                );
+            }
+            let (stroke, width) = if on {
+                (p.accent, 2.5)
+            } else if resp.hovered() {
+                (p.text_3, 1.5)
+            } else {
+                (p.line, 1.0_f32)
+            };
+            ui.painter()
+                .rect_stroke(frame, Rounding::same(10.0), Stroke::new(width, stroke));
+            let badge = Rect::from_min_size(frame.left_top() + vec2(8.0, 8.0), vec2(22.0, 22.0));
+            ui.painter()
+                .rect_filled(badge, Rounding::same(7.0), Color32::from_black_alpha(170));
+            ui.painter().text(
+                badge.center(),
+                Align2::CENTER_CENTER,
+                &m.id,
+                FontId::new(12.0, theme::semibold()),
+                Color32::WHITE,
+            );
+            if on {
+                let tag = "Recording this screen";
+                let galley = ui.painter().layout_no_wrap(
+                    tag.to_string(),
+                    FontId::new(11.0, theme::semibold()),
+                    theme::on_accent(&p),
+                );
+                let pill = Rect::from_min_size(
+                    pos2(frame.left() + 8.0, frame.bottom() - 28.0),
+                    galley.size() + vec2(16.0, 8.0),
+                );
+                ui.painter()
+                    .rect_filled(pill, Rounding::same(pill.height() / 2.0), p.accent);
+                ui.painter().galley(
+                    pill.center() - galley.size() / 2.0,
+                    galley,
+                    theme::on_accent(&p),
+                );
+            }
+            let hz = (m.refresh_mhz as f32 / 1000.0).round();
+            let mut line = format!("{}\u{00D7}{}", m.width, m.height);
+            if hz > 0.0 {
+                line.push_str(&format!(" \u{00B7} {hz:.0} Hz"));
+            }
+            if m.primary {
+                line.push_str(" \u{00B7} Main");
+            }
+            ui.painter().text(
+                pos2(rect.left() + 2.0, frame.bottom() + 8.0),
+                Align2::LEFT_TOP,
+                &m.name,
+                FontId::new(13.0, theme::semibold()),
+                p.text,
+            );
+            ui.painter().text(
+                pos2(rect.left() + 2.0, frame.bottom() + 26.0),
+                Align2::LEFT_TOP,
+                line,
+                FontId::new(12.0, egui::FontFamily::Proportional),
+                p.text_2,
+            );
+            if resp
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+                && !on
+            {
+                *selected = if m.primary {
+                    String::new()
+                } else {
+                    m.id.clone()
+                };
+                changed = true;
+            }
+        }
+    });
+    changed
 }
 
 #[cfg(test)]

@@ -25,3 +25,4 @@ sc-ffmpeg = { path = "../sc-ffmpeg" }
 [target."cfg(windows)".dependencies]
 wasapi = "0.26.0"
 windows-capture = "2.0.1"
+windows = { version = "0.62.2", features = ["Win32_Graphics_Gdi", "Win32_Foundation"] }

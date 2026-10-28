@@ -52,6 +52,7 @@ job and does not need an account.
   in the setup guide and can change it, and add an accent colour, in Settings.
 - **Frame rates** of 30, 60, 120, 144, 165 and 240.
 - **Settings in tabs.** Capture, Sound, Quality, Storage, Hotkeys, Save card, Look and System, with a search box that finds any setting and a badge that shows when your changes are saved.
+- **Screen picker.** Choose which display to record from live pictures of your screens, in Settings and in the setup guide.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
   an "Update available" button appears at the top right, shows the changelog, and updates in place
