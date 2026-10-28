@@ -2,6 +2,23 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.0.0
+
+A new Settings and a more refined finish across the window. Everything works the same; it is laid out and drawn more carefully.
+
+### Changed
+- Settings is now a set of tabs: Capture, Sound, Quality, Storage, Hotkeys, Save card, Look and System. A search box at the top finds a setting in any tab, and an "All changes saved" badge shows when your changes are written. On a narrow window the tabs run along the top and each setting puts its control under its name.
+- The sidebar marks the page you are on with a card and an accent bar, shows how many clips you have beside Clips, shows the buffer filling in the status block, and shows the version at the bottom.
+- Home: tick marks round the buffer ring, small captions on the four info tiles, and a strip at the bottom with your three shortcuts.
+- The Trim screen centres the video above its controls instead of leaving it to the left.
+- Rows in Settings have more room, and a row's controls no longer run over its name in a small window.
+- Setup guide: the theme tiles fit six to a row.
+- The settings that used to be under General now live in System, the shortcuts are under Hotkeys, and the save card options are under Save card.
+
+### Fixed
+- The theme tiles in Settings and the setup guide ignored the accent colour you had picked, so changing the accent looked like it did nothing there. They now show your accent.
+- Text on an accent-coloured button, chip or the Update available button is now dark when the accent is a light colour, so it stays readable.
+
 ## 5.0.2
 
 ### Added
