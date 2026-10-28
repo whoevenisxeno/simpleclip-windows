@@ -148,6 +148,18 @@ impl Section<'_> {
         let p = pal_ui(self.ui);
         let h = if hint.is_some() { 60.0 } else { 50.0 };
         let w = self.ui.available_width();
+        if w < 560.0 {
+            self.ui.add_space(12.0);
+            self.ui.label(RichText::new(label).size(14.0).color(p.text));
+            if let Some(h) = hint {
+                self.ui.label(RichText::new(h).size(12.0).color(p.text_2));
+            }
+            self.ui.add_space(8.0);
+            self.ui
+                .with_layout(Layout::right_to_left(Align::Center), |ui| control(ui));
+            self.ui.add_space(12.0);
+            return;
+        }
         self.ui
             .allocate_ui_with_layout(vec2(w, h), Layout::left_to_right(Align::Center), |ui| {
                 ui.set_min_height(h);

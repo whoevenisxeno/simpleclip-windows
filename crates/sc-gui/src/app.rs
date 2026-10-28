@@ -764,7 +764,10 @@ impl ScApp {
         }
         if shot.step == 0 && shot.waited == 1 {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
-                1080.0,
+                std::env::var("SC_GUI_SHOT_WIDTH")
+                    .ok()
+                    .and_then(|w| w.parse().ok())
+                    .unwrap_or(1080.0),
                 std::env::var("SC_GUI_SHOT_HEIGHT")
                     .ok()
                     .and_then(|h| h.parse().ok())

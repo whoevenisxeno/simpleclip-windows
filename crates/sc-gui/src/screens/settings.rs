@@ -85,6 +85,26 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let searching = !widgets::search_query(ui.ctx()).is_empty();
 
     let height = (ui.available_height() - 12.0).max(200.0);
+    if ui.available_width() < 700.0 {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            for (tab, label, _) in TABS {
+                let selected = !searching && app.settings.tab == tab;
+                if tab_chip(ui, label, selected).clicked() {
+                    app.settings.tab = tab;
+                    app.settings.query.clear();
+                }
+            }
+            if tab_chip(ui, "Setup guide", false).clicked() {
+                app.wizard = Default::default();
+                app.goto(crate::app::Screen::Wizard);
+            }
+        });
+        ui.add_space(8.0);
+        let pane_height = (ui.available_height() - 12.0).max(160.0);
+        pane_scroll(app, ui, pane_height, searching);
+        return;
+    }
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 28.0;
         ui.allocate_ui_with_layout(vec2(168.0, height), Layout::top_down(Align::Min), |ui| {
@@ -105,35 +125,70 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
                 app.goto(crate::app::Screen::Wizard);
             }
         });
-        ui.vertical(|ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("settings-pane")
-                .auto_shrink([false, false])
-                .max_height(height)
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width() - 8.0);
-                    if searching {
-                        results(app, ui);
-                    } else {
-                        let (tab, title, sub) = TABS
-                            .iter()
-                            .find(|(t, _, _)| *t == app.settings.tab)
-                            .copied()
-                            .unwrap_or(TABS[0]);
-                        ui.label(
-                            RichText::new(title)
-                                .font(egui::FontId::new(22.0, theme::semibold()))
-                                .color(p.text),
-                        );
-                        ui.add_space(-4.0);
-                        ui.label(RichText::new(sub).size(13.5).color(p.text_2));
-                        ui.add_space(14.0);
-                        pane(app, ui, tab);
-                        ui.add_space(24.0);
-                    }
-                });
-        });
+        ui.vertical(|ui| pane_scroll(app, ui, height, searching));
     });
+}
+
+fn pane_scroll(app: &mut ScApp, ui: &mut Ui, height: f32, searching: bool) {
+    let p = pal_ui(ui);
+    egui::ScrollArea::vertical()
+        .id_salt("settings-pane")
+        .auto_shrink([false, false])
+        .max_height(height)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width() - 8.0);
+            if searching {
+                results(app, ui);
+            } else {
+                let (tab, title, sub) = TABS
+                    .iter()
+                    .find(|(t, _, _)| *t == app.settings.tab)
+                    .copied()
+                    .unwrap_or(TABS[0]);
+                ui.label(
+                    RichText::new(title)
+                        .font(egui::FontId::new(22.0, theme::semibold()))
+                        .color(p.text),
+                );
+                ui.add_space(-4.0);
+                ui.label(RichText::new(sub).size(13.5).color(p.text_2));
+                ui.add_space(14.0);
+                pane(app, ui, tab);
+                ui.add_space(24.0);
+            }
+        });
+}
+
+fn tab_chip(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let p = pal_ui(ui);
+    let font = egui::FontId::new(
+        13.5,
+        if selected {
+            theme::semibold()
+        } else {
+            egui::FontFamily::Proportional
+        },
+    );
+    let galley = ui.painter().layout_no_wrap(label.to_string(), font, p.text);
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(24.0, 14.0), Sense::click());
+    let round = egui::Rounding::same(rect.height() / 2.0);
+    if selected {
+        ui.painter().rect_filled(rect, round, p.card);
+        ui.painter()
+            .rect_stroke(rect, round, egui::Stroke::new(1.0_f32, p.line));
+    } else if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, round, p.text.linear_multiply(0.06));
+    }
+    ui.painter().galley_with_override_text_color(
+        rect.center() - galley.size() / 2.0,
+        galley,
+        if selected { p.text } else { p.text_2 },
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
 }
 
 fn pane(app: &mut ScApp, ui: &mut Ui, tab: Tab) {
