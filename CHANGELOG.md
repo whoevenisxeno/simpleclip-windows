@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.5.1
+
+### Fixed
+- Undo in the editor only went back one step. Pressing Ctrl+Z again undid the undo, so it flipped between the last two states. It now goes back one edit at a time, as far as you made them, and Redo (Ctrl+Y or Ctrl+Shift+Z) walks forward again. Reset is a single step you can undo too.
+
 ## 6.5.0
 
 ### Added

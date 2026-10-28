@@ -103,6 +103,7 @@ pub struct EditorState {
     undo: Vec<Plan>,
     redo: Vec<Plan>,
     hold: Option<Plan>,
+    stepped: bool,
     selected: usize,
     tool: Tool,
     shape: Option<Shape>,
@@ -181,6 +182,10 @@ impl EditorState {
     }
 
     fn commit(&mut self, before: &Plan, ctx: &egui::Context) {
+        if std::mem::take(&mut self.stepped) {
+            self.hold = None;
+            return;
+        }
         if self.plan != *before && self.hold.is_none() {
             self.hold = Some(before.clone());
         }
@@ -217,6 +222,7 @@ impl EditorState {
             .min(self.plan.segments.len().saturating_sub(1));
         self.shape = None;
         self.hold = None;
+        self.stepped = true;
     }
 
     fn reset(&mut self) {
@@ -228,6 +234,8 @@ impl EditorState {
         self.plan = Plan::whole(self.duration);
         self.selected = 0;
         self.shape = None;
+        self.hold = None;
+        self.stepped = true;
     }
 
     fn position(&self) -> f64 {
@@ -250,6 +258,10 @@ impl EditorState {
 
     fn do_split(&mut self) -> bool {
         let at = self.position();
+        self.do_split_at(at)
+    }
+
+    fn do_split_at(&mut self, at: f64) -> bool {
         match self.plan.split(at) {
             Some(i) => {
                 self.selected = i;
@@ -501,10 +513,12 @@ fn keys(app: &mut ScApp, ctx: &egui::Context) {
     }
     let st = &mut app.editor;
     let (undo, redo, space, split, delete, left, right, shift) = ctx.input_mut(|i| {
+        let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+            || i.consume_key(Modifiers::COMMAND, Key::Y);
+        let undo = i.consume_key(Modifiers::COMMAND, Key::Z);
         (
-            i.consume_key(Modifiers::COMMAND, Key::Z),
-            i.consume_key(Modifiers::COMMAND, Key::Y)
-                || i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z),
+            undo,
+            redo,
             i.key_pressed(Key::Space),
             i.key_pressed(Key::S) && !i.modifiers.any(),
             i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace),
@@ -1629,5 +1643,66 @@ mod tests {
         assert_eq!(st.plan, Plan::whole(10.0));
         st.undo();
         assert_eq!(st.plan.speed, 2.0);
+    }
+
+    fn frame(st: &mut EditorState, ctx: &egui::Context, act: impl FnOnce(&mut EditorState)) {
+        let before = st.plan.clone();
+        act(st);
+        st.commit(&before, ctx);
+    }
+
+    #[test]
+    fn undo_keeps_going_back_one_edit_at_a_time() {
+        let mut st = EditorState {
+            duration: 10.0,
+            plan: Plan::whole(10.0),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        frame(&mut st, &ctx, |s| s.plan.speed = 2.0);
+        frame(&mut st, &ctx, |s| s.plan.volume = 0.5);
+        frame(&mut st, &ctx, |s| {
+            s.do_split_at(4.0);
+        });
+        frame(&mut st, &ctx, |s| s.plan.fade_in = 1.0);
+        assert_eq!(st.undo.len(), 4);
+
+        frame(&mut st, &ctx, EditorState::undo);
+        assert_eq!(st.plan.fade_in, 0.0);
+        assert_eq!(st.plan.segments.len(), 2);
+        frame(&mut st, &ctx, EditorState::undo);
+        assert_eq!(st.plan.segments.len(), 1);
+        frame(&mut st, &ctx, EditorState::undo);
+        assert_eq!(st.plan.volume, 1.0);
+        assert_eq!(st.plan.speed, 2.0);
+        frame(&mut st, &ctx, EditorState::undo);
+        assert_eq!(st.plan, Plan::whole(10.0));
+        assert!(st.undo.is_empty());
+        assert_eq!(st.redo.len(), 4);
+
+        frame(&mut st, &ctx, EditorState::redo);
+        frame(&mut st, &ctx, EditorState::redo);
+        assert_eq!(st.plan.volume, 0.5);
+        assert_eq!(st.redo.len(), 2);
+        frame(&mut st, &ctx, |s| s.plan.fade_out = 2.0);
+        assert!(st.redo.is_empty());
+        assert_eq!(st.undo.len(), 3);
+    }
+
+    #[test]
+    fn reset_is_one_undo_step() {
+        let mut st = EditorState {
+            duration: 10.0,
+            plan: Plan::whole(10.0),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        frame(&mut st, &ctx, |s| s.plan.speed = 3.0);
+        frame(&mut st, &ctx, EditorState::reset);
+        assert_eq!(st.undo.len(), 2);
+        frame(&mut st, &ctx, EditorState::undo);
+        assert_eq!(st.plan.speed, 3.0);
+        frame(&mut st, &ctx, EditorState::undo);
+        assert_eq!(st.plan, Plan::whole(10.0));
     }
 }
