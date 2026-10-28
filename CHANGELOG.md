@@ -2,7 +2,10 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
-## 6.1.1
+## 6.2.0
+
+### Added
+- Settings > Storage > Clean up > Remove duplicate clips. It looks for clips that exist in several versions, such as an original, a trimmed copy and a compressed copy of it, and keeps the best one: the compressed copy if there is one, otherwise the trimmed copy, otherwise the original. It asks first, tells you how many clips and how much space, and moves the rest to the Recycle Bin. Two different trims of the same clip are different moments, so both are kept, and clips that only share a name are never touched.
 
 ### Fixed
 - The ring around the clip you just opened did not show up until you came back to the window and moved the mouse, because opening a clip hands the screen to your video player. It now draws straight away, so it is already there when you return.

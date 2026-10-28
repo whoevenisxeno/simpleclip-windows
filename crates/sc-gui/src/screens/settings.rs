@@ -1,4 +1,5 @@
-use crate::app::ScApp;
+use crate::app::{ScApp, ToastKind};
+use crate::screens::gallery;
 use crate::theme::{self, pal_ui};
 use crate::widgets::{self, section};
 use egui::{vec2, Align, Layout, RichText, Sense, Ui};
@@ -61,6 +62,7 @@ const TABS: [(Tab, &str, &str); 8] = [
 pub struct SettingsState {
     pub tab: Tab,
     pub query: String,
+    pub dupes: Option<crate::dupes::Plan>,
 }
 
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
@@ -112,6 +114,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             for (tab, label, _) in TABS {
                 let selected = !searching && app.settings.tab == tab;
                 if rail_item(ui, label, selected, tab_icon(tab)).clicked() {
+                    app.settings.dupes = None;
                     app.settings.tab = tab;
                     app.settings.query.clear();
                 }
@@ -199,7 +202,10 @@ fn pane(app: &mut ScApp, ui: &mut Ui, tab: Tab) {
         }
         Tab::Sound => audio(app, ui),
         Tab::Quality => quality(app, ui),
-        Tab::Storage => saving(app, ui),
+        Tab::Storage => {
+            saving(app, ui);
+            cleanup(app, ui);
+        }
         Tab::Hotkeys => shortcuts(app, ui),
         Tab::SaveCard => notifications(app, ui),
         Tab::Look => appearance(app, ui),
@@ -1331,6 +1337,91 @@ fn paint_icon(painter: &egui::Painter, c: egui::Pos2, icon: Icon, color: egui::C
                 pts.push(at(r * a.cos(), r * a.sin()));
             }
             painter.add(egui::Shape::closed_line(pts, s));
+        }
+    }
+}
+
+fn cleanup(app: &mut ScApp, ui: &mut Ui) {
+    let plan = app.settings.dupes.clone();
+    let mut scan = false;
+    let mut confirm = false;
+    let mut cancel = false;
+    section(ui, Some("Clean up"), |s| {
+        let hint = match &plan {
+            Some(p) => format!(
+                "Found {} duplicate {} ({}). Move them to the Recycle Bin?",
+                p.remove.len(),
+                if p.remove.len() == 1 { "clip" } else { "clips" },
+                gallery::size_label(p.bytes())
+            ),
+            None => "Keeps the compressed copy of a clip, else the trimmed one, else the original."
+                .to_string(),
+        };
+        s.row("Remove duplicate clips", Some(&hint), |ui| match &plan {
+            Some(p) => {
+                if widgets::primary_button(ui, None, &format!("Yes, delete {}", p.remove.len()))
+                    .clicked()
+                {
+                    confirm = true;
+                }
+                if widgets::quiet_button(ui, None, "Cancel").clicked() {
+                    cancel = true;
+                }
+            }
+            None => {
+                if widgets::quiet_button(ui, None, "Remove duplicates\u{2026}").clicked() {
+                    scan = true;
+                }
+            }
+        });
+    });
+    if cancel {
+        app.settings.dupes = None;
+    }
+    if scan {
+        let items = gallery::video_files(app)
+            .into_iter()
+            .map(|(path, bytes)| crate::dupes::Item { path, bytes })
+            .collect();
+        let found = crate::dupes::plan(items);
+        if found.remove.is_empty() {
+            app.toast("No duplicate clips found", ToastKind::Ok);
+        } else {
+            app.settings.dupes = Some(found);
+        }
+    }
+    if confirm {
+        if let Some(found) = app.settings.dupes.take() {
+            let (mut done, mut freed, mut failed) = (0usize, 0u64, 0usize);
+            for item in &found.remove {
+                if !item.path.exists() {
+                    continue;
+                }
+                if gallery::delete(&item.path) {
+                    app.library.forget(&item.path);
+                    app.thumbs.forget(&item.path);
+                    done += 1;
+                    freed += item.bytes;
+                } else {
+                    failed += 1;
+                }
+            }
+            app.gallery.rescan();
+            if failed > 0 {
+                app.toast(
+                    format!("Moved {done} to the Recycle Bin, {failed} could not be moved"),
+                    ToastKind::Warn,
+                );
+            } else {
+                app.toast(
+                    format!(
+                        "Moved {done} {} to the Recycle Bin ({})",
+                        if done == 1 { "clip" } else { "clips" },
+                        gallery::size_label(freed)
+                    ),
+                    ToastKind::Ok,
+                );
+            }
         }
     }
 }

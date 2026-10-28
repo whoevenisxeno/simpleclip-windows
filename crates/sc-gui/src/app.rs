@@ -237,6 +237,7 @@ impl ScApp {
         self.flush_config();
         if screen != Screen::Settings {
             self.settings.query.clear();
+            self.settings.dupes = None;
         }
         if !matches!(screen, Screen::Trim(_)) {
             self.trim.stop_player();
@@ -599,6 +600,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("settings-look", true),
     ("settings-system", true),
     ("settings-search", true),
+    ("settings-dupes", true),
     ("look-accent", true),
     ("look-sand", true),
     ("settings-light", false),
@@ -733,6 +735,17 @@ impl ScApp {
                     "settings-sound" => self.settings.tab = Tab::Sound,
                     "settings-quality" => self.settings.tab = Tab::Quality,
                     "settings-storage" => self.settings.tab = Tab::Storage,
+                    "settings-dupes" => {
+                        self.settings.tab = Tab::Storage;
+                        self.settings.dupes = Some(crate::dupes::Plan {
+                            remove: (0..3)
+                                .map(|i| crate::dupes::Item {
+                                    path: std::path::PathBuf::from(format!("demo-{i}.mp4")),
+                                    bytes: 11_000_000,
+                                })
+                                .collect(),
+                        });
+                    }
                     "settings-hotkeys" => self.settings.tab = Tab::Hotkeys,
                     "settings-card" => self.settings.tab = Tab::SaveCard,
                     "settings-look" | "look-accent" | "look-sand" => self.settings.tab = Tab::Look,

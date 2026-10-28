@@ -138,6 +138,17 @@ fn library_dirs(app: &ScApp) -> Vec<PathBuf> {
 
 const RESCAN_EVERY: Duration = Duration::from_secs(3);
 
+pub fn video_files(app: &mut ScApp) -> Vec<(PathBuf, u64)> {
+    let dirs = library_dirs(app);
+    app.gallery.refresh(&dirs, &app.library);
+    app.gallery
+        .clips
+        .iter()
+        .filter(|c| !c.is_image)
+        .map(|c| (c.path.clone(), c.bytes))
+        .collect()
+}
+
 pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
     let dirs = library_dirs(app);
     app.gallery.refresh(&dirs, &app.library);
