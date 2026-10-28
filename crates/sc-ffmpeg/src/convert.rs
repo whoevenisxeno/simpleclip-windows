@@ -2,22 +2,15 @@ use crate::{Error, Result};
 use ffmpeg_next::ffi;
 use std::ptr;
 
-// libswscale/swscale.h `#define SWS_BILINEAR 2`; bindgen skips flag defines, and
-// this is a stable public ABI value.
 const SWS_BILINEAR: i32 = 2;
 
-/// Converts captured BGRA frames (what the Wayland portal delivers) into tightly
-/// packed NV12 (what the VA-API encoder uploads). Wraps one reusable swscale
-/// context; the output has stride == width so it feeds `Recorder::push_nv12`.
 pub struct Bgra2Nv12 {
     sws: *mut ffi::SwsContext,
     height: i32,
-    /// Size of the converted picture (smaller than the input when scaling down).
     out_w: i32,
     out_h: i32,
 }
 
-// Owned by, and used from, a single encode thread; moving it there is sound.
 unsafe impl Send for Bgra2Nv12 {}
 
 impl Bgra2Nv12 {
@@ -25,14 +18,10 @@ impl Bgra2Nv12 {
         Self::new_scaled(width, height, width, height)
     }
 
-    /// Convert and resize in one step (`out_w` x `out_h` must be even).
     pub fn new_scaled(width: u32, height: u32, out_w: u32, out_h: u32) -> Result<Self> {
         let (w, h) = (width as i32, height as i32);
         let (ow, oh) = (out_w as i32, out_h as i32);
-        // libswscale/swscale.h `#define SWS_BICUBIC 4`: sharper than bilinear when shrinking.
         let flags = if (ow, oh) == (w, h) { SWS_BILINEAR } else { 4 };
-        // # Safety: sws_getContext validates its own args and returns null on
-        // failure, which we turn into an error rather than deref.
         let sws = unsafe {
             ffi::sws_getContext(
                 w,
@@ -53,14 +42,9 @@ impl Bgra2Nv12 {
                 ctx: "sws_getContext(bgra->nv12)",
             });
         }
-        // swscale converts RGB->YUV with BT.601 coefficients by default, but HD
-        // players assume BT.709 for untagged video and the encoder is tagged
-        // BT.709 on Windows: convert with 709 or colours come out slightly off.
         #[cfg(windows)]
         unsafe {
-            // libswscale/swscale.h `#define SWS_CS_ITU709 1`
             let coeffs = ffi::sws_getCoefficients(1);
-            // full-range RGB in, limited-range ("tv") YUV out
             ffi::sws_setColorspaceDetails(sws, coeffs, 1, coeffs, 0, 0, 1 << 16, 1 << 16);
         }
         Ok(Self {
@@ -73,9 +57,6 @@ impl Bgra2Nv12 {
 }
 
 impl Bgra2Nv12 {
-    /// Convert one BGRA frame (with its source row stride in bytes) into a fresh
-    /// packed NV12 buffer. Row stride comes from the capture backend; the Wayland
-    /// portal pads rows, so we can't assume width*4.
     pub fn convert(&mut self, bgra: &[u8], src_stride: usize) -> Result<Vec<u8>> {
         let h = self.height as usize;
         if bgra.len() < src_stride * h {
@@ -97,8 +78,6 @@ impl Bgra2Nv12 {
             ptr::null_mut(),
         ];
         let dst_stride = [self.out_w, self.out_w, 0, 0];
-        // # Safety: all four plane arrays are the fixed length libswscale reads;
-        // src/dst buffers are sized above; sws context matches these dimensions.
         let rc = unsafe {
             ffi::sws_scale(
                 self.sws,
@@ -130,12 +109,10 @@ impl Drop for Bgra2Nv12 {
 mod tests {
     use super::*;
 
-    // swscale is available in CI (libswscale-dev installed); this needs no GPU.
     #[test]
     fn converts_solid_bgra_to_nv12_luma() {
         let (w, h) = (64u32, 48u32);
         let stride = (w * 4) as usize;
-        // Solid white BGRA (B=G=R=255, A=255) -> Y should be near 235 (limited range).
         let bgra = vec![255u8; stride * h as usize];
         let mut conv = Bgra2Nv12::new(w, h).expect("ctx");
         let nv12 = conv.convert(&bgra, stride).expect("convert");

@@ -15,12 +15,9 @@ pub struct Clip {
     pub modified: SystemTime,
     pub bytes: u64,
     pub is_image: bool,
-    /// Game / app the clip came from ("Desktop" when unknown).
     pub game: String,
 }
 
-/// Which clips to list: your originals, the trimmed copies, the compressed copies, or
-/// everything.
 #[derive(Default, Clone, Copy, PartialEq)]
 enum ViewKind {
     #[default]
@@ -39,8 +36,6 @@ enum GroupBy {
     Bookmark,
 }
 
-/// Cached directory scan, so the gallery doesn't re-walk the disk on every
-/// repaint, plus the view's filters.
 #[derive(Default)]
 pub struct Cache {
     clips: Vec<Clip>,
@@ -49,9 +44,7 @@ pub struct Cache {
     search: String,
     kind: ViewKind,
     group: GroupBy,
-    /// Show only this category (a game, folder or bookmark name), if set.
     only: Option<String>,
-    /// Every sub-folder of the clips folder, including empty ones.
     folders: Vec<PathBuf>,
 }
 
@@ -63,12 +56,10 @@ impl Cache {
             .count()
     }
 
-    /// Force a rescan on the next frame.
     pub fn rescan(&mut self) {
         self.scanned = None;
     }
 
-    /// Back to the default view (used by the design-review harness).
     pub fn reset_view(&mut self) {
         self.kind = ViewKind::Originals;
         self.group = GroupBy::Game;
@@ -76,36 +67,30 @@ impl Cache {
         self.search.clear();
     }
 
-    /// Switch the list to the trimmed clips.
     pub fn show_trimmed(&mut self) {
         self.kind = ViewKind::Trimmed;
         self.only = None;
     }
 
-    /// Switch the list to the compressed clips.
     pub fn show_compressed(&mut self) {
         self.kind = ViewKind::Compressed;
         self.only = None;
     }
 
-    /// The clip at `path`, if it is in the current listing.
     pub fn find(&self, path: &Path) -> Option<Clip> {
         self.clips.iter().find(|c| c.path == path).cloned()
     }
 
-    /// Folders a clip can be moved to: the main folder first, then each sub-folder.
     pub fn folder_choices(&self, root: &Path) -> Vec<PathBuf> {
         let mut v = vec![root.to_path_buf()];
         v.extend(self.folders.iter().cloned());
         v
     }
 
-    /// Paths of everything listed, newest first.
     pub fn all_paths(&self) -> Vec<PathBuf> {
         self.clips.iter().map(|c| c.path.clone()).collect()
     }
 
-    /// Switch the view (used by the design-review harness).
     pub fn show_by(&mut self, folder: bool) {
         self.group = if folder {
             GroupBy::Folder
@@ -114,7 +99,6 @@ impl Cache {
         };
     }
 
-    /// First video in the list (newest), for the design-review harness.
     pub fn first_video(&self) -> Option<PathBuf> {
         self.clips
             .iter()
@@ -127,7 +111,6 @@ impl Cache {
         if stale {
             let mut clips: Vec<Clip> = dirs.iter().flat_map(|d| scan(d)).collect();
             clips.sort_by_key(|c| std::cmp::Reverse(c.modified));
-            // Games remembered at rename time win over what the file name says.
             for c in &mut clips {
                 if let Some(g) = lib.game(&c.path) {
                     c.game = g.to_string();
@@ -141,7 +124,6 @@ impl Cache {
     }
 }
 
-/// Folders to list: the clips folder, plus the trim folder when it lives elsewhere.
 fn library_dirs(app: &ScApp) -> Vec<PathBuf> {
     let main = app.cfg.save.resolve_dir();
     let mut dirs = vec![main.clone()];
@@ -155,11 +137,9 @@ fn library_dirs(app: &ScApp) -> Vec<PathBuf> {
 
 const RESCAN_EVERY: Duration = Duration::from_secs(3);
 
-/// The newest `n` items, scanning first if the cache is stale.
 pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
     let dirs = library_dirs(app);
     app.gallery.refresh(&dirs, &app.library);
-    // Trimmed copies have their own list; "recent" means fresh recordings.
     app.gallery
         .clips
         .iter()
@@ -169,12 +149,6 @@ pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
         .collect()
 }
 
-// ---------------------------------------------------------------- scanning --
-
-/// Work out which game a clip belongs to from the `{app}` part of the default
-/// `sc-{app}-{date}` file name. A clip you've named yourself has no game in its
-/// name, so it is "Other" unless the app recorded its game when you renamed it
-/// (see `Library::game`). Folders you make are for organising, not for games.
 fn game_of(path: &Path, _root: &Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     if !(stem == "sc" || stem.starts_with("sc-")) {
@@ -184,7 +158,6 @@ fn game_of(path: &Path, _root: &Path) -> String {
     if parts.first() == Some(&"sc") {
         parts.remove(0);
     }
-    // Trailing date / time / "trim" / "10mb" markers aren't part of the name.
     while let Some(last) = parts.last() {
         let digits = !last.is_empty() && last.chars().all(|c| c.is_ascii_digit());
         let size = last
@@ -244,8 +217,6 @@ fn scan(dir: &Path) -> Vec<Clip> {
     clips
 }
 
-/// Small recursive directory walk (max 3 levels) so per-day / per-app subfolders
-/// are picked up without pulling in an extra crate.
 fn walkdir(root: &Path) -> Vec<PathBuf> {
     fn go(dir: &Path, depth: u8, out: &mut Vec<PathBuf>) {
         if depth > 3 {
@@ -268,7 +239,6 @@ fn walkdir(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// All sub-folders under `root` (depth-limited), sorted, including empty ones.
 fn list_folders(root: &Path) -> Vec<PathBuf> {
     fn go(dir: &Path, depth: u8, out: &mut Vec<PathBuf>) {
         if depth > 3 {
@@ -291,7 +261,6 @@ fn list_folders(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// "Main folder" for the clips folder itself, else the path inside it ("Best of / Aces").
 pub fn folder_label(dir: &Path, root: &Path) -> String {
     if dir == root {
         return "Main folder".to_string();
@@ -309,8 +278,6 @@ pub fn folder_label(dir: &Path, root: &Path) -> String {
     }
 }
 
-// -------------------------------------------------------------- formatting --
-
 fn local(t: SystemTime) -> time::OffsetDateTime {
     let utc = time::OffsetDateTime::from(t);
     time::UtcOffset::current_local_offset()
@@ -318,7 +285,6 @@ fn local(t: SystemTime) -> time::OffsetDateTime {
         .unwrap_or(utc)
 }
 
-/// "Today", "Yesterday", or "Mon 19 Oct" in the user's local time zone.
 pub fn day_label(t: SystemTime) -> String {
     const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     const MONTHS: [&str; 12] = [
@@ -345,7 +311,6 @@ pub fn time_label(t: SystemTime) -> String {
     format!("{:02}:{:02}", l.hour(), l.minute())
 }
 
-/// "5 min ago", "Today 14:12", "Yesterday 21:03".
 pub fn ago(t: SystemTime) -> String {
     let secs = SystemTime::now()
         .duration_since(t)
@@ -367,8 +332,6 @@ pub fn size_label(bytes: u64) -> String {
     }
 }
 
-// ------------------------------------------------------------ file actions --
-
 pub fn open_path(path: &Path) {
     #[cfg(target_os = "linux")]
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
@@ -376,8 +339,6 @@ pub fn open_path(path: &Path) {
     let _ = std::process::Command::new("explorer").arg(path).spawn();
 }
 
-/// Put the clip's file on the clipboard, like Copy in Explorer, so pasting into Discord
-/// (or any chat or folder) attaches it.
 pub fn copy_file(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -394,7 +355,6 @@ pub fn copy_file(path: &Path) -> Result<(), String> {
     }
 }
 
-/// Open the folder with the file selected.
 pub fn reveal(path: &Path) {
     #[cfg(target_os = "windows")]
     {
@@ -409,7 +369,6 @@ pub fn reveal(path: &Path) {
     }
 }
 
-/// Send to the Recycle Bin where there is one, so a mis-click isn't permanent.
 pub fn delete(path: &Path) -> bool {
     #[cfg(windows)]
     if trash::delete(path).is_ok() {
@@ -418,19 +377,13 @@ pub fn delete(path: &Path) -> bool {
     std::fs::remove_file(path).is_ok()
 }
 
-// -------------------------------------------------------------------- view --
-
-/// One labelled section of the gallery.
 struct Group {
     label: String,
     color: Option<[u8; 3]>,
-    /// For a folder group: the folder on disk (so an empty one can be removed).
     folder: Option<PathBuf>,
     items: Vec<Clip>,
 }
 
-/// The categories a clip belongs to under a grouping (a clip can be in several
-/// bookmark groups at once).
 fn keys_of(
     c: &Clip,
     by: GroupBy,
@@ -458,9 +411,6 @@ fn keys_of(
     }
 }
 
-/// Split clips into groups. `clips` arrive newest-first, so first-seen order is
-/// already by recency. Folders are listed alphabetically (Main folder first) and
-/// bookmarks in your own order; empty folders appear when `with_empty` is set.
 fn build_groups(
     clips: &[Clip],
     by: GroupBy,
@@ -522,8 +472,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let dirs = library_dirs(app);
     app.gallery.refresh(&dirs, &app.library);
 
-    // Split the listing by kind so trimmed copies aren't mixed in with originals.
-    // A compressed copy of a trimmed clip counts as compressed only.
     let compressed_count = app
         .gallery
         .clips
@@ -571,7 +519,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         }),
     );
 
-    // Clips / Trimmed / All.
     ui.horizontal(|ui| {
         widgets::segmented(
             ui,
@@ -593,7 +540,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         widgets::card(ui, |ui| {
             ui.add_space(18.0);
             ui.vertical_centered(|ui| {
-                // One quiet icon, one title, one sentence, one action.
                 if theme::has_icons(ui.ctx()) {
                     ui.label(
                         RichText::new(icon::CLIPS)
@@ -670,8 +616,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         .cloned()
         .collect();
 
-    // Only folders with nothing in them at all count as empty; a folder whose
-    // clips are just hidden by the Clips/Trimmed switch is not empty.
     let show_empty = needle.is_empty() && only.is_none();
     let empty_folders: Vec<PathBuf> = app
         .gallery
@@ -694,12 +638,10 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     render_groups(app, ui, groups, by);
 }
 
-/// Search, grouping, actions, and the category chips.
 fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path, clips: &[Clip]) {
     let p = pal_ui(ui);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
-        // Search field.
         egui::Frame::none()
             .fill(p.card_hi)
             .rounding(Rounding::same(9.0))
@@ -758,7 +700,6 @@ fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path, clips: &[Clip]) {
         });
     });
 
-    // One chip per category of the current grouping, most clips first.
     let by = app.gallery.group;
     if by == GroupBy::Date {
         return;
@@ -786,7 +727,6 @@ fn toolbar(app: &mut ScApp, ui: &mut Ui, dir: &Path, clips: &[Clip]) {
     }
 }
 
-/// A category chip; bookmark chips carry their colour as a dot.
 fn chip(ui: &mut Ui, label: &str, on: bool, dot: Option<[u8; 3]>) -> bool {
     let p = pal_ui(ui);
     let font = FontId::new(13.0, egui::FontFamily::Proportional);
@@ -859,7 +799,6 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
         ui.add_space(6.0);
 
         if g.items.is_empty() {
-            // An empty folder: say so, and let it be removed.
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("Empty. Move clips here from a clip’s details.")
@@ -883,13 +822,10 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
             continue;
         }
 
-        // Responsive grid: as many ~240px cards as fit.
         let gap = 14.0;
         let avail = ui.available_width();
         let cols = (((avail + gap) / (240.0 + gap)).floor() as usize).max(1);
         let w = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).floor();
-        // One explicit row per `cols` cards. (A wrapping layout doesn't wrap
-        // containers like these cards, so the extra ones ran off the edge.)
         for row in g.items.chunks(cols) {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = gap;
@@ -902,11 +838,9 @@ fn render_groups(app: &mut ScApp, ui: &mut Ui, groups: Vec<Group>, by: GroupBy) 
     }
 }
 
-/// A rounded preview image (or a placeholder while it loads).
 pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> egui::Response {
     let p = pal_ui(ui);
     let rounding = Rounding::same(10.0);
-    // Off-screen cards take their space but load nothing until scrolled into view.
     let slot = egui::Rect::from_min_size(ui.cursor().min, size);
     if !ui.is_rect_visible(slot) {
         let (_, resp) = ui.allocate_exact_size(size, Sense::click());
@@ -940,8 +874,6 @@ pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> e
     }
 }
 
-/// What to call a clip in a short list: its game if the app named it, else the
-/// name you gave it.
 pub fn recent_title(c: &Clip) -> String {
     if is_default_name(&c.path) {
         c.game.clone()
@@ -954,16 +886,12 @@ pub fn recent_title(c: &Clip) -> String {
     }
 }
 
-/// Clips named by the app ("sc-game-date") show their time as the title; clips
-/// you've named yourself show that name instead.
 fn is_default_name(path: &Path) -> bool {
     path.file_stem()
         .and_then(|s| s.to_str())
         .is_some_and(|s| s == "sc" || s.starts_with("sc-"))
 }
 
-/// The right-click menu on a clip: everything the card's buttons and the details
-/// sheet can do, without opening anything first.
 fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
     ui.set_min_width(190.0);
     let item = |ui: &mut Ui, label: &str| ui.add(egui::Button::new(label).frame(false)).clicked();
@@ -1072,7 +1000,6 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
     }
 }
 
-/// A clip card: preview with hover actions, then a caption, bookmarks and note.
 fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
     let p = pal_ui(ui);
     let h = (w * 9.0 / 16.0).round();
@@ -1087,7 +1014,6 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
             open_path(&clip.path);
         }
 
-        // A small corner label marks clips that came from a trim or a compression.
         let badge = if app.library.is_compressed(&clip.path) {
             Some("Compressed")
         } else if app.library.is_trimmed(&clip.path) {
@@ -1115,7 +1041,6 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
         }
 
         if hovered {
-            // Soft scrim, a play glyph, and the quick actions along the bottom.
             ui.painter()
                 .rect_filled(rect, Rounding::same(10.0), Color32::from_black_alpha(70));
             let c = rect.center();
@@ -1179,7 +1104,6 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
             ui.ctx().request_repaint();
         }
 
-        // Caption: the clip's own name if you gave it one, else when it happened.
         let when = format!("{} {}", day_label(clip.modified), time_label(clip.modified));
         let stem = clip
             .path
@@ -1224,7 +1148,6 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
         )
         .context_menu(|ui| clip_menu(app, ui, clip));
 
-        // Bookmarks (click one to browse by it) and the start of the note.
         let marks: Vec<(String, [u8; 3])> = app
             .library
             .bookmarks_of(&clip.path)
@@ -1268,7 +1191,6 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
 mod tests {
     use super::*;
 
-    /// Run with `cargo test -p sc-gui -- --ignored`: it replaces the clipboard contents.
     #[cfg(windows)]
     #[test]
     #[ignore = "uses the real clipboard"]
@@ -1311,7 +1233,6 @@ mod tests {
 
     #[test]
     fn game_comes_from_the_name_not_the_folder() {
-        // Folders are for organising, so a folder you made is never a "game".
         assert_eq!(g("V/Best of/sc-valorant-20261019.mp4"), "Valorant");
         assert_eq!(g("V/Best of/Triple kill.mp4"), "Other");
     }

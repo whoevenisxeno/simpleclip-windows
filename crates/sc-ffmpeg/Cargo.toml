@@ -12,9 +12,5 @@ thiserror.workspace = true
 tracing.workspace = true
 crossbeam-channel.workspace = true
 
-# FFmpeg is linked from the system library: VA-API on Linux, and on Windows the
-# hardware encoders (NVENC / AMF / QSV) with a libx264 software fallback. Windows
-# builds need FFMPEG_DIR pointing at a shared FFmpeg dev build and LIBCLANG_PATH
-# (see packaging/windows/README.md).
 [target.'cfg(any(target_os = "linux", windows))'.dependencies]
 ffmpeg-next.workspace = true

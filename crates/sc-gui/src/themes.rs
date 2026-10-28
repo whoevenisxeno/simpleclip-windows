@@ -1,11 +1,6 @@
-//! The built-in colour themes, and applying one. The default, "SimpleClip", is the
-//! original look and follows Windows light and dark; the others are fixed palettes.
-//! An accent colour can be laid over any theme.
-
 use crate::theme::{self, Palette, DARK, LIGHT};
 use egui::{Color32, Id};
 
-/// One selectable theme. `pal` is `None` for the default, which follows the system.
 pub struct ThemeDef {
     pub id: &'static str,
     pub name: &'static str,
@@ -16,7 +11,6 @@ const fn c(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-/// A dark palette from its surfaces, text shades and accent.
 #[allow(clippy::too_many_arguments)]
 const fn dark(
     bg: Color32,
@@ -46,7 +40,6 @@ const fn dark(
     }
 }
 
-/// A light palette from its surfaces, text shades and accent.
 #[allow(clippy::too_many_arguments)]
 const fn light(
     bg: Color32,
@@ -224,7 +217,6 @@ pub const THEMES: &[ThemeDef] = &[
     },
 ];
 
-/// Accent colours offered on top of any theme: `#rrggbb` and a name.
 pub const ACCENTS: &[(&str, &str)] = &[
     ("#0a84ff", "Blue"),
     ("#8b5cf6", "Purple"),
@@ -243,18 +235,15 @@ fn accent_id() -> Id {
     Id::new("sc-theme-accent")
 }
 
-/// The accent laid over the system theme, if one is chosen.
 pub fn system_accent(ctx: &egui::Context) -> Option<Color32> {
     ctx.data(|d| d.get_temp::<Color32>(accent_id()))
 }
 
-/// The palette of the fixed theme in use, or `None` when following the system.
 pub fn fixed_palette(ctx: &egui::Context) -> Option<Palette> {
     ctx.data(|d| d.get_temp::<Option<Palette>>(palette_id()))
         .flatten()
 }
 
-/// `#rrggbb` as a colour.
 pub fn parse_hex(hex: &str) -> Option<Color32> {
     let h = hex.trim().trim_start_matches('#');
     if h.len() != 6 {
@@ -264,13 +253,11 @@ pub fn parse_hex(hex: &str) -> Option<Color32> {
     Some(Color32::from_rgb((n >> 16) as u8, (n >> 8) as u8, n as u8))
 }
 
-/// Switch to theme `id` (an unknown id means the default) with an optional accent.
 pub fn set_theme(ctx: &egui::Context, id: &str, accent: Option<&str>) {
     let def = THEMES.iter().find(|t| t.id == id).unwrap_or(&THEMES[0]);
     let accent = accent.and_then(parse_hex);
     match def.pal {
         None => {
-            // The original look: Windows decides light or dark.
             let (mut d, mut l) = (DARK, LIGHT);
             if let Some(a) = accent {
                 d.accent = a;
@@ -337,7 +324,6 @@ mod tests {
 
     #[test]
     fn text_stays_readable_on_every_theme() {
-        // A simple contrast check of body text against the page background.
         fn lum(c: Color32) -> f32 {
             let f = |v: u8| {
                 let v = v as f32 / 255.0;

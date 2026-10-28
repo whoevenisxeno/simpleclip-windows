@@ -1,5 +1,3 @@
-// Screen + desktop-audio capture backends: portal/PipeWire on Linux, Windows
-// Graphics Capture + WASAPI loopback on Windows. No-op on other targets.
 #![cfg(any(target_os = "linux", windows))]
 
 #[cfg(target_os = "linux")]
@@ -37,28 +35,17 @@ pub enum Error {
     Windows(String),
 }
 
-/// What to capture and how. Linux ignores everything but the audio flag (the
-/// portal dialog picks the source); Windows honors all of it.
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// Monitor to capture: empty for the primary, otherwise an id from
-    /// `list_monitors` (a 1-based index on Windows).
     pub monitor_id: String,
     pub show_cursor: bool,
     pub fps: u32,
-    /// Capture desktop audio (loopback).
     pub desktop_audio: bool,
-    /// Output device for desktop-audio loopback; empty for the default device.
     pub audio_device: String,
-    /// Also capture a microphone (Windows).
     pub mic_enabled: bool,
-    /// Microphone endpoint id; empty for the default input device.
     pub mic_device: String,
 }
 
-/// A running capture (video, plus desktop audio if requested). Dropping the
-/// handle tears both PipeWire loops down cleanly. `width`/`height` are the
-/// negotiated video dimensions.
 #[cfg(target_os = "linux")]
 pub struct CaptureHandle {
     pub width: u32,
@@ -85,9 +72,6 @@ impl Drop for CaptureHandle {
     }
 }
 
-/// Start capturing. Pops the portal consent dialog on first use, then blocks
-/// until the video format is negotiated. If `audio` is provided, desktop audio
-/// is captured on a shared monotonic clock so it stays in sync with video.
 #[cfg(target_os = "linux")]
 pub fn start(
     frames: crossbeam_channel::Sender<VideoFrame>,

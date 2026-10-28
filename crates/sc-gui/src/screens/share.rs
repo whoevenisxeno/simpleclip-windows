@@ -1,7 +1,3 @@
-//! The "share this clip?" prompt shown after a trim is saved: copy the file to the
-//! clipboard, or compress it to fit Discord's upload limit and then offer to copy
-//! the compressed file.
-
 use crate::app::{ScApp, ToastKind};
 use crate::screens::{gallery, sheet};
 use crate::theme::{self, icon, pal};
@@ -14,22 +10,15 @@ use std::time::Duration;
 type Job = Receiver<Result<PathBuf, String>>;
 
 enum Stage {
-    /// Choose between copying and compressing.
     Ask { choosing_size: bool },
-    /// The daemon is compressing.
     Working(Job),
-    /// Compression finished; the new file can be copied.
     Done(PathBuf),
-    /// Compression did not work (or was not needed); the message says why.
     Failed(String),
 }
 
-/// The open prompt, if any.
 pub struct ShareState {
-    /// The clip that was just saved.
     path: PathBuf,
     stage: Stage,
-    /// Size limit chosen for compression, in megabytes.
     mb: u32,
 }
 
@@ -46,7 +35,6 @@ impl ShareState {
 }
 
 impl ShareState {
-    /// The prompt with the size choice showing (for the design-review run).
     pub fn demo(path: PathBuf) -> Self {
         Self {
             path,
@@ -64,7 +52,6 @@ fn file_name(p: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// Copy `path` to the clipboard and say how it went.
 fn copy(app: &mut ScApp, path: &std::path::Path) {
     match gallery::copy_file(path) {
         Ok(()) => app.toast(
@@ -75,14 +62,12 @@ fn copy(app: &mut ScApp, path: &std::path::Path) {
     }
 }
 
-/// Draw the prompt and handle its buttons. Call once per frame.
 pub fn show(app: &mut ScApp, ctx: &egui::Context) {
     let Some(mut st) = app.share.take() else {
         return;
     };
     let p = pal(ctx);
 
-    // Compression running: pick up the result when it arrives.
     let mut next: Option<Stage> = None;
     if let Stage::Working(rx) = &st.stage {
         match rx.try_recv() {

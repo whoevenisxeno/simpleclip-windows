@@ -10,9 +10,6 @@ fn socket_name() -> String {
     std::env::var("SC_SOCKET").unwrap_or_else(|_| ipc::DEFAULT_SOCKET_NAME.to_string())
 }
 
-/// One-shot request to the daemon. The GUI is a client just like `sc`; it never
-/// captures. Returns an error (not a panic) if the daemon isn't running, so the
-/// UI can show a disconnected state.
 pub fn request(req: Request) -> Result<Response> {
     let ns = socket_name().to_ns_name::<GenericNamespaced>()?;
     let stream = Stream::connect(ns).context("daemon not reachable")?;
@@ -25,9 +22,6 @@ pub fn request(req: Request) -> Result<Response> {
     Ok(env.payload)
 }
 
-/// Launch the daemon that ships next to this executable (falling back to `scd`
-/// on PATH). Detached, with no console window, so closing the GUI leaves the
-/// replay buffer running. Returns whether a process was started.
 pub fn spawn_daemon() -> bool {
     let sibling = std::env::current_exe()
         .ok()
@@ -47,23 +41,18 @@ pub fn spawn_daemon() -> bool {
     cmd.spawn().is_ok()
 }
 
-/// Start the daemon if nothing answers on the socket. Cheap when it is up.
 pub fn ensure_running() {
     if request(Request::Ping).is_err() {
         spawn_daemon();
     }
 }
 
-/// Live connection status the top bar renders.
 #[derive(Clone)]
 pub enum Link {
     Connected(sc_core::ipc::StatusReport),
     Disconnected,
 }
 
-/// Poll the daemon on a background thread and push updates to the UI thread,
-/// nudging egui to repaint. One request per second keeps the status bar live
-/// without holding a persistent socket open.
 pub fn spawn_status_poller(ctx: egui::Context, tx: crossbeam_channel::Sender<Link>) {
     std::thread::spawn(move || loop {
         let link = match request(Request::Status) {

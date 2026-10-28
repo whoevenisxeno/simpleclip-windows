@@ -1,8 +1,3 @@
-//! Decoding for the in-app player. Video and audio are decoded on their own
-//! threads (each with its own demuxer) and handed over through small bounded
-//! channels, so a slow consumer simply makes the decoder wait. A decoder stops
-//! when its `stop` flag is set or its receiver is dropped.
-
 use crate::{Error, Result};
 use crossbeam_channel::{bounded, Receiver, SendTimeoutError, Sender};
 use ffmpeg_next as ff;
@@ -11,16 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Audio is always delivered as interleaved stereo f32 at this rate.
 pub const AUDIO_RATE: u32 = 48_000;
 
-/// One decoded picture.
 pub struct VideoFrame {
-    /// Presentation time in seconds from the start of the clip.
     pub pts: f64,
     pub width: u32,
     pub height: u32,
-    /// Tightly packed RGBA.
     pub rgba: Vec<u8>,
 }
 
@@ -28,7 +19,6 @@ fn err(e: ff::Error) -> Error {
     Error::Ffmpeg(e.to_string())
 }
 
-/// Send, giving up when asked to stop or when nobody is listening any more.
 fn send<T>(tx: &Sender<T>, mut item: T, stop: &AtomicBool) -> bool {
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -42,12 +32,10 @@ fn send<T>(tx: &Sender<T>, mut item: T, stop: &AtomicBool) -> bool {
     }
 }
 
-/// Stream facts the player needs up front.
 pub struct MediaInfo {
     pub duration: f64,
     pub width: u32,
     pub height: u32,
-    /// How many audio streams the clip has (mixed and separate-track clips differ).
     pub audio_streams: usize,
 }
 
@@ -74,8 +62,6 @@ pub fn media_info(path: &Path) -> Result<MediaInfo> {
     })
 }
 
-/// Start decoding video from `start` seconds. Frames before `start` are
-/// dropped, and the picture is scaled down to at most `max_width` pixels wide.
 pub fn spawn_video(
     path: &Path,
     start: f64,
@@ -200,9 +186,6 @@ fn run_video(
     Ok(())
 }
 
-/// Start decoding audio from `start` seconds, resampled to stereo f32 at
-/// [`AUDIO_RATE`]. Each message is a chunk of interleaved samples. The channel
-/// closes at the end of the clip.
 pub fn spawn_audio(
     path: &Path,
     start: f64,

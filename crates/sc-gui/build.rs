@@ -1,4 +1,3 @@
-// Embeds the app icon and version info into the Windows executables.
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
@@ -11,7 +10,6 @@ fn main() {
         res.set("FileDescription", "SimpleClip");
         res.set("LegalCopyright", "MIT OR Apache-2.0");
         if let Err(e) = res.compile() {
-            // A missing resource compiler shouldn't break the build; the exe just has no icon.
             println!("cargo:warning=could not embed Windows resources: {e}");
         }
     }

@@ -10,14 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-/// The live capture pipeline: capture threads feed video frames and desktop
-/// audio to encode threads, which push encoded packets into rolling ring
-/// buffers. `save` snapshots both rings and muxes a clip without disturbing
-/// capture.
 pub struct Pipeline {
     video_ring: Arc<Mutex<PacketRing>>,
-    /// One entry per audio track in the saved file: desktop, or desktop+mic
-    /// mixed, or desktop then mic as separate tracks.
     audio_tracks: Vec<Arc<AudioTrack>>,
     video_params: Arc<CodecParams>,
     pub width: u32,
@@ -31,8 +25,6 @@ pub struct Pipeline {
     _audio_encode: JoinHandle<()>,
 }
 
-/// How loud each source goes into the clip, in percent. Shared with the audio
-/// thread so the sliders in Settings take effect without restarting capture.
 struct Volumes {
     desktop: AtomicU32,
     mic: AtomicU32,
@@ -53,27 +45,20 @@ struct AudioMeta {
     rate: i32,
 }
 
-/// A rolling buffer of encoded AAC for one track, plus the codec parameters the
-/// muxer needs once the encoder has been opened (on the first buffer).
 struct AudioTrack {
     ring: Mutex<PacketRing>,
     meta: Mutex<Option<AudioMeta>>,
 }
 
-/// How captured audio maps onto tracks in the saved clip.
 #[derive(Clone, Copy, PartialEq)]
 enum AudioMode {
-    /// One track from one source.
     Single(AudioRole),
-    /// Desktop and microphone summed into one track.
     Mixed,
-    /// Desktop on track 1, microphone on track 2.
     Separate,
 }
 
 impl AudioMode {
     fn from_config(cfg: &Config) -> Self {
-        // Microphone capture is implemented for Windows only.
         let mic = cfg!(windows) && cfg.audio.mic_enabled;
         match (cfg.audio.desktop_enabled, mic) {
             (true, true) if cfg.audio.tracks == AudioTracks::Separate => Self::Separate,
@@ -94,8 +79,6 @@ impl AudioMode {
 
 const AUDIO_KBPS: u32 = 160;
 
-/// The picture size after applying the optional height cap, keeping the aspect
-/// ratio and even sides.
 fn output_size(w: u32, h: u32, max_h: Option<u32>) -> (u32, u32) {
     match max_h {
         Some(m) if m < h => {
@@ -115,7 +98,6 @@ fn ring_bytes(kbps: u64, secs: u64) -> usize {
 impl Pipeline {
     pub fn start(cfg: &Config) -> Result<Self> {
         let (vtx, vrx) = crossbeam_channel::bounded(4);
-        // Audio is tiny; never drop it (gaps cause audible artifacts), unlike video.
         let (atx, arx) = crossbeam_channel::unbounded();
         let mode = AudioMode::from_config(cfg);
         let want_audio = cfg.audio.desktop_enabled || (cfg!(windows) && cfg.audio.mic_enabled);
@@ -131,7 +113,6 @@ impl Pipeline {
         };
         let cap = sc_capture::start(vtx, audio_tx, &opts).context("starting capture")?;
         let (src_w, src_h) = (cap.width, cap.height);
-        // Optionally shrink the picture (Settings, Quality, Resolution). Never enlarges.
         let (width, height) = output_size(src_w, src_h, cfg.encode.max_height);
         let scaling = (width, height) != (src_w, src_h);
         let paused = Arc::new(AtomicBool::new(false));
@@ -144,13 +125,10 @@ impl Pipeline {
             fps,
             cfg.encode.bitrate_kbps,
             cfg.encode.gop_frames,
-            // The GPU colour path can not resize, so scaling uses the CPU path.
             cfg.encode.gpu_convert && !scaling,
         )
         .context("opening video encoder")?;
         let encoder_kind = venc.kind();
-        // GPU colour conversion: frames go to the encoder as BGRA and the CPU
-        // swscale step is skipped entirely.
         let gpu_convert = venc.takes_bgra();
         let video_params = Arc::new(venc.codec_params().context("video params")?);
         let video_ring = Arc::new(Mutex::new(PacketRing::new(ring_bytes(
@@ -165,12 +143,6 @@ impl Pipeline {
         let vring = video_ring.clone();
         let vpaused = paused.clone();
 
-        // Two stages so colour conversion and encoding overlap: BGRA->NV12 on the
-        // CPU and the hardware encode each get a full frame interval to themselves,
-        // instead of sharing one thread's 16 ms at 60 fps. Backpressure flows
-        // upstream; the capture pacer drops frames if both stages fall behind.
-        // Items are (pixels, timestamp_ns, stride); stride 0 means packed NV12,
-        // otherwise raw BGRA rows for GPU conversion.
         let (ntx, nrx) = crossbeam_channel::bounded::<(sc_core::capture::FrameBuf, i64, usize)>(2);
         let video_convert = std::thread::Builder::new()
             .name("sc-vconv".into())
@@ -282,10 +254,6 @@ impl Pipeline {
     }
 }
 
-/// Route captured audio into tracks, encode each to AAC and push the packets
-/// into that track's ring. Every path goes through `audio_mix` so pauses, device
-/// dropouts and a late-starting microphone stay on the shared clock instead of
-/// sliding the audio against the video.
 fn audio_loop(
     rx: crossbeam_channel::Receiver<AudioBuffer>,
     tracks: Vec<Arc<AudioTrack>>,
@@ -325,7 +293,6 @@ fn audio_loop(
     }
 }
 
-/// Encode one buffer for a track, opening its AAC encoder on first use.
 fn encode_into(track: &AudioTrack, enc: &mut Option<AacEncoder>, buf: &AudioBuffer) {
     if enc.is_none() {
         match AacEncoder::new(buf.sample_rate, buf.channels, AUDIO_KBPS) {
@@ -354,8 +321,6 @@ fn encode_into(track: &AudioTrack, enc: &mut Option<AacEncoder>, buf: &AudioBuff
     }
 }
 
-/// Write video and every audio track in timestamp order. `audio[i]` goes to
-/// muxer track `i`.
 fn merge_write(
     video: &[EncodedPacket],
     audio: &[Vec<EncodedPacket>],
@@ -364,7 +329,6 @@ fn merge_write(
     let mut vi = 0usize;
     let mut ai = vec![0usize; audio.len()];
     loop {
-        // Earliest pending audio packet across tracks (ties go to video first).
         let next_audio = audio
             .iter()
             .enumerate()
@@ -393,22 +357,16 @@ fn merge_write(
 }
 
 impl Pipeline {
-    /// Change how loud each source is in clips from now on (audio already in the
-    /// buffer keeps the level it was recorded at).
     pub fn set_volumes(&self, desktop: u32, mic: u32) {
         self.volumes.desktop.store(desktop, Ordering::Relaxed);
         self.volumes.mic.store(mic, Ordering::Relaxed);
     }
 
-    /// Snapshot the last `secs` seconds of video and audio and mux them together.
-    /// Cloning happens under the lock; muxing runs after, so capture is not stalled.
     pub fn save(&self, secs: u32, path: &Path) -> Result<f64> {
         let video = self.video_ring.lock().unwrap().snapshot(secs);
         if video.is_empty() {
             bail!("replay buffer is empty");
         }
-        // Line the audio up with the video's keyframe start, not `secs` ago, so
-        // the track doesn't begin partway into the clip.
         let start = video.first().unwrap().timestamp.as_nanos();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -416,8 +374,6 @@ impl Pipeline {
         let first = video.first().unwrap().timestamp.as_nanos();
         let last = video.last().unwrap().timestamp.as_nanos();
 
-        // Tracks whose encoder hasn't produced anything yet (e.g. a mic that
-        // never delivered) are left out rather than written empty.
         let mut metas = Vec::new();
         let mut audio = Vec::new();
         for t in &self.audio_tracks {
@@ -440,12 +396,10 @@ impl Pipeline {
         Ok((last - first) as f64 / 1_000_000_000.0)
     }
 
-    /// Stop feeding the ring buffer (capture keeps running, so resuming is instant).
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
     }
 
-    /// Write the most recent captured frame to `path` as a PNG.
     #[cfg(windows)]
     pub fn screenshot(&self, path: &Path) -> Result<()> {
         let frame = self
@@ -460,7 +414,6 @@ impl Pipeline {
             frame.height as usize,
             frame.stride as usize,
         );
-        // BGRA with row padding -> tightly packed RGB (a screen has no alpha).
         let mut rgb = Vec::with_capacity(w * h * 3);
         for row in frame.data.chunks_exact(stride).take(h) {
             for px in row[..w * 4].as_chunks::<4>().0 {

@@ -6,12 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-/// Bump on any breaking change to the message shapes below. Once published,
-/// only additive changes are allowed within a version (§13).
 pub const IPC_VERSION: u32 = 1;
 
-/// Default socket/pipe name, overridable via `SC_SOCKET` for tests and
-/// side-by-side daemons.
 pub const DEFAULT_SOCKET_NAME: &str = "simpleclip.sock";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,26 +25,20 @@ pub enum Request {
     Resume,
     ListMonitors,
     ListAudioDevices,
-    /// Ask the daemon to exit (used by `sc quit` and the installer).
     Shutdown,
-    /// Show a sample save card (and play the sound) with the current settings.
     TestNotification,
-    /// A small preview image of a saved clip, for the gallery.
     Thumbnail {
         path: PathBuf,
         width: u32,
     },
-    /// Length of a saved clip, for the trim view.
     Probe {
         path: PathBuf,
     },
-    /// The frame of a clip at a given time (for the trim view's scrubbing).
     Frame {
         path: PathBuf,
         secs: f64,
         width: u32,
     },
-    /// Lossless trim of a saved clip into a new file.
     Trim {
         path: PathBuf,
         start_secs: f64,
@@ -56,24 +46,18 @@ pub enum Request {
         #[serde(default)]
         dest: TrimDest,
     },
-    /// Re-encode a saved clip to fit under `target_mb` megabytes (for Discord and chat
-    /// upload limits), as a new file beside it.
     Compress {
         path: PathBuf,
         target_mb: u32,
     },
 }
 
-/// Where a trimmed copy is written.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrimDest {
-    /// The configured trim folder, or beside the original when none is set.
     #[default]
     Default,
-    /// Always beside the original (used when replacing it).
     Beside,
-    /// A scratch folder, for previewing; cleaned up automatically.
     Temp,
 }
 
@@ -94,27 +78,13 @@ pub struct StatusReport {
 pub enum Response {
     Pong,
     Status(StatusReport),
-    Saved {
-        path: PathBuf,
-        duration_secs: f64,
-    },
-    Probed {
-        duration_secs: f64,
-    },
-    /// Path of a cached preview PNG.
-    Thumbnail {
-        path: PathBuf,
-    },
-    Monitors {
-        monitors: Vec<MonitorInfo>,
-    },
-    AudioDevices {
-        devices: Vec<AudioDevice>,
-    },
+    Saved { path: PathBuf, duration_secs: f64 },
+    Probed { duration_secs: f64 },
+    Thumbnail { path: PathBuf },
+    Monitors { monitors: Vec<MonitorInfo> },
+    AudioDevices { devices: Vec<AudioDevice> },
     Ok,
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,8 +104,6 @@ impl<T> Envelope<T> {
     }
 }
 
-/// Write one newline-delimited JSON message. Framing is a trailing '\n'; the
-/// version field inside the envelope guards against schema drift.
 pub fn write_message<W: Write, T: Serialize>(w: &mut W, msg: &Envelope<T>) -> Result<()> {
     let mut line = serde_json::to_vec(msg)?;
     line.push(b'\n');
@@ -144,7 +112,6 @@ pub fn write_message<W: Write, T: Serialize>(w: &mut W, msg: &Envelope<T>) -> Re
     Ok(())
 }
 
-/// Read one newline-delimited JSON message and check the protocol version.
 pub fn read_message<R: BufRead, T: for<'de> Deserialize<'de>>(
     r: &mut R,
     expected_version: u32,

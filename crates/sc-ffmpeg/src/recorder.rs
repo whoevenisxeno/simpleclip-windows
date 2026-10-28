@@ -2,9 +2,6 @@ use crate::encoder::Encoder;
 use crate::mux::Mp4Muxer;
 use crate::Result;
 
-/// Convenience wrapper that encodes NV12 frames straight to an MP4 file (manual
-/// recording). The instant-replay path instead keeps the `Encoder` feeding a ring
-/// buffer and builds an `Mp4Muxer` only when a clip is saved.
 pub struct Recorder {
     enc: Encoder,
     mux: Option<Mp4Muxer>,

@@ -1,8 +1,3 @@
-//! Shrink a clip to fit under a size limit (Discord's upload limits), by
-//! re-encoding it at a bitrate worked out from its length. If the picture would be
-//! starved at the clip's own size, it is scaled down first. Sound from every audio
-//! track is mixed into one. The video is encoded on the GPU like normal clips.
-
 use crate::{AacEncoder, Encoder, Error, Mp4Muxer, Result};
 use ffmpeg_next as ff;
 use sc_core::audio::{AudioBuffer, AudioRole};
@@ -11,15 +6,11 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-/// Sound is always re-encoded as stereo AAC at this rate and bitrate.
 const AUDIO_RATE: u32 = 48_000;
 const AUDIO_KBPS: u32 = 96;
-/// How much of the size limit the file may use, leaving room for the container.
 const HEADROOM: f64 = 0.93;
-/// Bits per pixel per frame below which H.264 looks blocky.
 const MIN_BPP: f64 = 0.055;
 
-/// What came out.
 pub struct Compressed {
     pub bytes: u64,
     pub width: u32,
@@ -31,7 +22,6 @@ fn err(e: ff::Error) -> Error {
     Error::Ffmpeg(e.to_string())
 }
 
-/// The clip's frame rate (rounded), 30 if it is not stated.
 fn source_fps(path: &Path) -> Result<u32> {
     let ictx = ff::format::input(&path).map_err(err)?;
     let s = ictx
@@ -47,7 +37,6 @@ fn source_fps(path: &Path) -> Result<u32> {
     Ok((fps.round() as u32).clamp(10, 240))
 }
 
-/// The largest picture (up to the original size) the bitrate can fill properly.
 fn pick_size(w: u32, h: u32, fps: u32, video_kbps: f64) -> (u32, u32) {
     let mut heights = vec![h, 1080, 900, 720, 540, 480, 360];
     heights.retain(|&x| x <= h);
@@ -66,7 +55,6 @@ fn pick_size(w: u32, h: u32, fps: u32, video_kbps: f64) -> (u32, u32) {
     )
 }
 
-/// All audio tracks of `path`, mixed into one stereo f32 stream at [`AUDIO_RATE`].
 fn decode_audio_mix(path: &Path, tracks: usize) -> Vec<f32> {
     let stop = Arc::new(AtomicBool::new(false));
     let streams: Vec<Vec<f32>> = (0..tracks)
@@ -92,7 +80,6 @@ fn decode_audio_mix(path: &Path, tracks: usize) -> Vec<f32> {
     mix
 }
 
-/// Everything one encode pass needs, so decoded frames can be fed one at a time.
 struct Pass {
     enc: Encoder,
     mux: Mp4Muxer,
@@ -109,8 +96,6 @@ struct Pass {
 }
 
 impl Pass {
-    /// Scale one decoded picture to NV12 at the target size and encode it, then
-    /// feed the sound up to that moment so audio and video stay interleaved.
     fn video_frame(&mut self, frame: &ff::frame::Video) -> Result<()> {
         if self.scaler.is_none() {
             self.scaler = Some(
@@ -153,7 +138,6 @@ impl Pass {
         self.feed_audio(ns as f64 / 1e9 + 0.1)
     }
 
-    /// Encode sound up to `until` seconds.
     fn feed_audio(&mut self, until: f64) -> Result<()> {
         let Some(aac) = self.aac.as_mut() else {
             return Ok(());
@@ -180,7 +164,6 @@ impl Pass {
         Ok(())
     }
 
-    /// Flush both encoders and close the file.
     fn finish(mut self) -> Result<()> {
         self.feed_audio(f64::MAX)?;
         for p in self.enc.flush()? {
@@ -195,7 +178,6 @@ impl Pass {
     }
 }
 
-/// One encode of `src` into `dst` at the given picture size and video bitrate.
 fn encode_once(
     src: &Path,
     dst: &Path,
@@ -265,8 +247,6 @@ fn encode_once(
     pass.finish()
 }
 
-/// Re-encode `src` into `dst`, at most `target_bytes` big. Fails if the clip is
-/// already small enough, or cannot be squeezed under the limit.
 pub fn compress_to_size(src: &Path, dst: &Path, target_bytes: u64) -> Result<Compressed> {
     crate::init()?;
     let info = crate::media_info(src)?;
@@ -308,7 +288,6 @@ pub fn compress_to_size(src: &Path, dst: &Path, target_bytes: u64) -> Result<Com
                 video_kbps: video_kbps as u32,
             });
         }
-        // Over the limit: aim lower by how much it overshot, with a little extra.
         video_kbps = (video_kbps * target_bytes as f64 / got as f64 * 0.95).max(80.0);
     }
     let _ = std::fs::remove_file(dst);
@@ -323,15 +302,11 @@ mod tests {
 
     #[test]
     fn small_bitrates_pick_smaller_pictures() {
-        // Plenty of bits keep the original size.
         assert_eq!(pick_size(1920, 1080, 60, 12_000.0), (1920, 1080));
-        // Starved bits step down.
         let (_, h) = pick_size(1920, 1080, 60, 1_200.0);
         assert!(h < 1080);
-        // Never larger than the original.
         let (w, h) = pick_size(1280, 720, 30, 50_000.0);
         assert_eq!((w, h), (1280, 720));
-        // Even sides always.
         let (w, h) = pick_size(1920, 1080, 60, 300.0);
         assert!(w % 2 == 0 && h % 2 == 0);
     }

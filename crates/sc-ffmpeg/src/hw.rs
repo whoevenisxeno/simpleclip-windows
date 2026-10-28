@@ -2,13 +2,6 @@ use crate::{Error, Result};
 use ffmpeg_next::ffi;
 use std::ptr;
 
-/// Create a VA-API hardware device context. Caller owns the returned ref and
-/// must `av_buffer_unref` it. Returns an error (not UB) if no VA-API device can
-/// be opened, which is how we detect "no usable hardware encoder" up front.
-///
-/// # Safety
-/// Wraps `av_hwdevice_ctx_create`; the out-pointer is null-initialized and only
-/// read on success, matching the FFmpeg contract.
 pub fn create_vaapi_device() -> Result<*mut ffi::AVBufferRef> {
     unsafe {
         let mut dev: *mut ffi::AVBufferRef = ptr::null_mut();
@@ -29,13 +22,6 @@ pub fn create_vaapi_device() -> Result<*mut ffi::AVBufferRef> {
     }
 }
 
-/// Build a VA-API hardware frame pool sized for `width`x`height`, with NV12 as
-/// the software (upload) format. Caller owns the returned ref. The encoder holds
-/// its own ref, so we unref our copy after wiring it up.
-///
-/// # Safety
-/// `device` must be a live VA-API device ref from `create_vaapi_device`. We
-/// initialize every field FFmpeg requires before `av_hwframe_ctx_init`.
 pub fn create_hw_frames_ctx(
     device: *mut ffi::AVBufferRef,
     width: i32,

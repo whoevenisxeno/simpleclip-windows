@@ -1,6 +1,3 @@
-//! Lossless clip trimming: remux a time range with packet copy (no re-encode),
-//! snapped back to the keyframe at or before the requested start.
-
 use crate::{Error, Result};
 use ffmpeg_next::ffi;
 use std::ffi::CString;
@@ -17,7 +14,6 @@ fn cpath(p: &Path) -> Result<CString> {
         .map_err(|_| Error::Ffmpeg("path has interior NUL".into()))
 }
 
-/// Input file, closed on drop.
 struct Input(*mut ffi::AVFormatContext);
 
 impl Input {
@@ -52,7 +48,6 @@ impl Drop for Input {
     }
 }
 
-/// Length of a media file in seconds.
 pub fn probe_duration(path: &Path) -> Result<f64> {
     let input = Input::open(path)?;
     let d = unsafe { (*input.0).duration };
@@ -62,10 +57,6 @@ pub fn probe_duration(path: &Path) -> Result<f64> {
     Ok(d as f64 / ffi::AV_TIME_BASE as f64)
 }
 
-/// Copy `[start_secs, end_secs]` of `src` into a new MP4 at `dst`. The cut
-/// starts on the last keyframe at or before `start_secs` so the clip decodes
-/// cleanly from its first frame; the end is exact to the packet. Returns the
-/// duration written, in seconds.
 pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Result<f64> {
     if end_secs <= start_secs {
         return Err(Error::Ffmpeg("trim end must be after start".into()));
@@ -88,10 +79,9 @@ pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Resu
         }
         let out = Output(oc);
 
-        // Mirror every audio/video stream; remember input->output index.
         let mut map = vec![-1i32; nb];
         let mut video_in: Option<usize> = None;
-        #[allow(clippy::needless_range_loop)] // `i` also indexes the raw streams array
+        #[allow(clippy::needless_range_loop)]
         for i in 0..nb {
             let st = *(*ic).streams.add(i);
             let ty = (*(*st).codecpar).codec_type;
@@ -143,7 +133,6 @@ pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Resu
             });
         }
 
-        // Land on the keyframe at or before the start.
         let start_us = (start_secs.max(0.0) * 1_000_000.0) as i64;
         let end_us = (end_secs * 1_000_000.0) as i64;
         let rc = ffi::av_seek_frame(
@@ -180,10 +169,8 @@ pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Resu
             };
             let ts_us = ffi::av_rescale_q(ts, in_tb, US);
 
-            // The clip's zero point is the first video packet (the keyframe).
             if base_us.is_none() {
                 if idx != video_in {
-                    // audio read before the keyframe packet: skip until video starts
                     ffi::av_packet_unref(pkt);
                     continue;
                 }
@@ -196,7 +183,6 @@ pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Resu
             }
             if ts_us > end_us {
                 ffi::av_packet_unref(pkt);
-                // Both streams run in time order; once video passes the end we're done.
                 if idx == video_in {
                     break Ok(());
                 }
@@ -236,7 +222,6 @@ pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Resu
     }
 }
 
-/// Output file, closed on drop.
 struct Output(*mut ffi::AVFormatContext);
 
 impl Drop for Output {

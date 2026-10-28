@@ -13,59 +13,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Save the last N seconds from the replay buffer.
     Save {
         #[arg(long)]
         last: Option<u32>,
     },
-    /// Save a still frame from the live capture.
     Screenshot,
-    /// Start a manual recording.
     Record,
-    /// Stop the manual recording.
     Stop,
-    /// Show capture state, buffer fill, encoder and drift.
     Status {
         #[arg(long)]
         json: bool,
     },
-    /// Pause capture.
     Pause,
-    /// Resume capture.
     Resume,
-    /// Stop the daemon.
     Quit,
-    /// Make (or fetch the cached) preview image of a clip and print its path.
     Thumbnail {
         path: std::path::PathBuf,
         #[arg(long, default_value_t = 480)]
         width: u32,
-        /// Show the frame at this time (seconds) instead of a representative one.
         #[arg(long)]
         at: Option<f64>,
     },
-    /// Cut a saved clip without re-encoding (starts at the keyframe at or before --start).
     Trim {
         path: std::path::PathBuf,
-        /// Start, in seconds.
         #[arg(long, default_value_t = 0.0)]
         start: f64,
-        /// End, in seconds.
         #[arg(long)]
         end: f64,
     },
-    /// Re-encode a clip to fit under a size limit (10 fits Discord without Nitro).
     Compress {
         path: std::path::PathBuf,
-        /// Largest size in megabytes.
         #[arg(long, default_value_t = 10)]
         mb: u32,
     },
-    /// List displays that can be captured.
     Monitors,
-    /// List audio output devices whose sound can be captured.
     AudioDevices,
-    /// Show a sample save card and play the save sound (to try your notification settings).
     TestNotification,
 }
 
@@ -90,7 +72,6 @@ fn main() -> Result<()> {
         }
         Command::Trim { path, start, end } => (
             Request::Trim {
-                // The daemon resolves paths from its own working directory.
                 path: std::path::absolute(&path).unwrap_or(path),
                 start_secs: start,
                 end_secs: end,

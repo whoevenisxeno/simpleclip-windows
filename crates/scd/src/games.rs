@@ -1,20 +1,5 @@
-//! Tells an actual game from everything else you do on the PC, for the Discord
-//! status. It never guesses from "some window is in front": a program counts as a
-//! game only if one of these is true.
-//!
-//! 1. It lives in a game library folder (Steam, Epic, GOG, Riot, Ubisoft, Xbox,
-//!    EA, Rockstar), and the folder it sits in gives the game's proper name.
-//! 2. It is a well-known game by its program name.
-//! 3. It is running in exclusive full screen (the mode only games use) and is not
-//!    a browser, video player or similar.
-//!
-//! A game installed somewhere unusual and run in a window or borderless is
-//! missed rather than risk showing a browser as a game.
-
 use std::path::Path;
 
-/// Folders under which each store installs games, lower case with `\` between
-/// parts. The next folder down is the game's name.
 const LIBRARIES: &[&str] = &[
     "\\steamapps\\common\\",
     "\\epic games\\",
@@ -28,7 +13,6 @@ const LIBRARIES: &[&str] = &[
     "\\rockstar games\\",
 ];
 
-/// Folders inside those libraries that are the store's own program, not a game.
 const NOT_GAMES: &[&str] = &[
     "launcher",
     "riot client",
@@ -40,7 +24,6 @@ const NOT_GAMES: &[&str] = &[
     "battleye",
 ];
 
-/// Well-known games by program name (lower case, no `.exe`), and the name to show.
 const KNOWN: &[(&str, &str)] = &[
     ("valorant-win64-shipping", "VALORANT"),
     ("league of legends", "League of Legends"),
@@ -81,7 +64,6 @@ const KNOWN: &[(&str, &str)] = &[
     ("marvel-win64-shipping", "Marvel Rivals"),
 ];
 
-/// Programs that are never a game, even in full screen.
 const NEVER: &[&str] = &[
     "chrome",
     "msedge",
@@ -99,7 +81,6 @@ const NEVER: &[&str] = &[
     "spotify",
     "code",
     "devenv",
-    "claude",
     "obs64",
     "obs32",
     "vlc",
@@ -125,8 +106,6 @@ const NEVER: &[&str] = &[
     "powershell",
 ];
 
-/// What to call the program in `exe` if it is a game, else `None`. `fullscreen`
-/// says Windows reports it running in exclusive full screen.
 pub fn detect(exe: &Path, fullscreen: bool) -> Option<String> {
     let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
     if NEVER.contains(&stem.as_str()) {
@@ -145,8 +124,6 @@ pub fn detect(exe: &Path, fullscreen: bool) -> Option<String> {
     None
 }
 
-/// The game folder name if `exe` sits in a store's library, e.g.
-/// `...\steamapps\common\Counter-Strike 2\game\bin\cs2.exe` is "Counter-Strike 2".
 fn library_name(exe: &Path) -> Option<String> {
     let full = exe.to_str()?.replace('/', "\\");
     let lower = full.to_ascii_lowercase();
@@ -154,7 +131,6 @@ fn library_name(exe: &Path) -> Option<String> {
         let Some(at) = lower.find(lib) else { continue };
         let rest = &full[at + lib.len()..];
         let folder = rest.split('\\').next()?.trim();
-        // A file straight in the library folder has no game folder.
         if folder.is_empty() || !rest.contains('\\') {
             continue;
         }
@@ -166,8 +142,6 @@ fn library_name(exe: &Path) -> Option<String> {
     None
 }
 
-/// A readable name from a program name: "some-game-win64-shipping" becomes
-/// "Some Game".
 fn tidy(stem: &str) -> String {
     let mut s = stem.to_string();
     for suffix in [
@@ -239,7 +213,6 @@ mod tests {
             false
         )
         .is_none());
-        // A file straight in the library folder is not a game.
         assert!(detect(&p(r"C:\Epic Games\setup.exe"), false).is_none());
     }
 
@@ -265,7 +238,6 @@ mod tests {
             r"C:\Program Files\Steam\steam.exe",
         ] {
             assert!(detect(&p(exe), false).is_none(), "{exe}");
-            // Not even when full screen (a browser video, a presentation).
             assert!(detect(&p(exe), true).is_none(), "{exe} full screen");
         }
     }

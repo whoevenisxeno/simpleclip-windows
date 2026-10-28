@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Build SimpleClip and install it into the user's local paths.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

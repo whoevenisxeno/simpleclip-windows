@@ -4,9 +4,6 @@ use sc_core::config::Config;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-/// Watch the config file and hot-reload on change. Invalid configs are logged
-/// and ignored, keeping the daemon on the last-good config (§8.2) rather than
-/// crashing. Runs on its own thread; never touches the capture pipeline.
 pub fn spawn_watcher(path: PathBuf, daemon: Daemon) {
     std::thread::spawn(move || {
         let (tx, rx) = mpsc::channel();

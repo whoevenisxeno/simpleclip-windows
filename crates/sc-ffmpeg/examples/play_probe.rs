@@ -1,5 +1,3 @@
-//! Decode a clip through the player path and report what came out.
-//! `cargo run -p sc-ffmpeg --example play_probe -- <clip> [start_secs]`
 use std::sync::{atomic::AtomicBool, Arc};
 
 fn main() {

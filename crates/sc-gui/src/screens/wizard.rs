@@ -10,8 +10,6 @@ pub struct WizardState {
     pub step: usize,
 }
 
-/// First-run setup: four short, calm screens. Everything it sets can be
-/// changed later in Settings.
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     app.devices.ensure(&app.link);
@@ -37,7 +35,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let _ = p;
 }
 
-/// Four dots; the current one stretches.
 fn progress(ui: &mut Ui, step: usize) {
     let p = pal_ui(ui);
     ui.horizontal(|ui| {
@@ -70,7 +67,6 @@ fn heading(ui: &mut Ui, title: &str, sub: &str) {
 
 fn welcome(ui: &mut Ui) {
     let p = pal_ui(ui);
-    // App mark.
     let (rect, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
     ui.painter().rect_filled(
         rect,
@@ -117,7 +113,6 @@ fn welcome(ui: &mut Ui) {
     });
 }
 
-/// Pick a colour theme; it applies as you choose.
 fn look(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     heading(

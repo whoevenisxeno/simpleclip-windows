@@ -80,7 +80,6 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
         }
         Request::Shutdown => {
             tracing::info!("shutdown requested over IPC");
-            // Let the reply reach the client before the process goes away.
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 std::process::exit(0);
@@ -134,9 +133,6 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             daemon.set_paused(false);
             Response::Ok
         }
-        // Enumeration is served by the Windows capture backend; elsewhere the
-        // daemon reports nothing detected rather than faking devices, and the
-        // wizard handles the empty case.
         #[cfg(windows)]
         Request::ListMonitors => match sc_capture::list_monitors() {
             Ok(monitors) => Response::Monitors { monitors },
@@ -172,9 +168,6 @@ fn media_duration(_: &std::path::Path) -> Result<f64, String> {
     Err("not supported on this platform".into())
 }
 
-/// Trim `path` to `[start, end]` seconds into `<name>-trim.mp4`. Where it goes
-/// depends on `dest`: the configured trim folder (else beside the original), always
-/// beside the original, or a scratch folder for previews.
 #[cfg(any(target_os = "linux", windows))]
 fn trim(
     path: &std::path::Path,
@@ -211,7 +204,6 @@ fn trim(
     Ok((out, secs))
 }
 
-/// A scratch folder for trim previews; files older than a day are removed.
 #[cfg(any(target_os = "linux", windows))]
 fn preview_dir() -> Result<std::path::PathBuf, String> {
     let dir = std::env::temp_dir().join("SimpleClip-previews");
@@ -244,7 +236,6 @@ fn trim(
     Err("not supported on this platform".into())
 }
 
-/// Shrink `path` to at most `target_mb` megabytes into `<name>-<n>mb.mp4` beside it.
 #[cfg(any(target_os = "linux", windows))]
 fn compress(path: &std::path::Path, target_mb: u32) -> Result<(std::path::PathBuf, f64), String> {
     if target_mb == 0 || target_mb > 500 {
@@ -261,7 +252,6 @@ fn compress(path: &std::path::Path, target_mb: u32) -> Result<(std::path::PathBu
         out = dir.join(format!("{stem}-{target_mb}mb-{n}.mp4"));
         n += 1;
     }
-    // Decimal megabytes, so the file is under the limit however it is counted.
     let target = target_mb as u64 * 1_000_000;
     sc_ffmpeg::compress_to_size(path, &out, target).map_err(|e| e.to_string())?;
     let secs = media_duration(&out).unwrap_or(0.0);

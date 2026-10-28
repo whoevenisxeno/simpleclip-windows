@@ -1,8 +1,3 @@
-//! The small cards that slide in when a clip or screenshot is saved (or fails),
-//! and when SimpleClip starts. A card is a click-through, never-focused,
-//! always-on-top layered window, so it can't steal focus from a game, and it
-//! fades itself out. Windows-only; drawn with plain GDI to keep the daemon light.
-
 use sc_core::config::{GeneralSettings, PopupPosition};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Mutex, OnceLock};
@@ -28,26 +23,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
-/// What the card is about; picks its colour and icon.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
-    /// Something was saved (green check).
     Saved,
-    /// Something went wrong (red cross).
     Error,
-    /// SimpleClip itself has news, such as starting up (blue, so it never looks like a save).
     Info,
 }
 
-/// What to show.
 #[derive(Clone)]
 pub struct Popup {
     pub kind: Kind,
     pub title: String,
-    /// Detail lines under the title (kept short; long ones are ellipsised).
     pub lines: Vec<String>,
-    /// One short line instead of the full card. The first detail line is shown
-    /// beside the title and the rest are dropped.
     pub compact: bool,
 }
 
@@ -62,7 +49,6 @@ impl Popup {
     }
 }
 
-/// Where cards appear and whether they slide; set from the config.
 #[derive(Clone, Copy)]
 struct Placement {
     position: PopupPosition,
@@ -74,7 +60,6 @@ static PLACEMENT: Mutex<Placement> = Mutex::new(Placement {
     animate: true,
 });
 
-/// Follow the user's position and animation settings from now on.
 pub fn configure(g: &GeneralSettings) {
     if let Ok(mut p) = PLACEMENT.lock() {
         *p = Placement {
@@ -87,7 +72,6 @@ pub fn configure(g: &GeneralSettings) {
 static CURRENT: Mutex<Option<Popup>> = Mutex::new(None);
 static TX: OnceLock<Sender<Popup>> = OnceLock::new();
 
-/// Queue a popup. Cheap and non-blocking; the first call starts the UI thread.
 pub fn show(p: Popup) {
     let tx = TX.get_or_init(|| {
         let (tx, rx) = channel::<Popup>();
@@ -136,7 +120,6 @@ fn ui_thread(rx: std::sync::mpsc::Receiver<Popup>) {
         RegisterClassExW(&wc);
 
         while let Ok(mut popup) = rx.recv() {
-            // If more arrived while we were busy, show only the newest.
             while let Ok(newer) = rx.try_recv() {
                 popup = newer;
             }
@@ -145,7 +128,6 @@ fn ui_thread(rx: std::sync::mpsc::Receiver<Popup>) {
     }
 }
 
-/// Size of a card in device pixels.
 fn size_of(popup: &Popup, s: f32) -> (i32, i32) {
     if popup.compact {
         ((COMPACT_WIDTH as f32 * s) as i32, (48.0 * s) as i32)
@@ -177,7 +159,6 @@ unsafe fn run_one(
     let (w, h) = size_of(popup, s);
     let margin = (MARGIN as f32 * s) as i32;
 
-    // The primary monitor's work area (clear of the taskbar).
     let mut work = RECT::default();
     let _ = SystemParametersInfoW(
         SPI_GETWORKAREA,
@@ -195,7 +176,6 @@ unsafe fn run_one(
             work.top + (work.bottom - work.top - h) / 2,
         ),
     };
-    // Slide in from the nearest side edge; the centre card rises instead.
     let travel = (44.0 * s) as i32;
     let (dx, dy) = match place.position {
         PopupPosition::TopRight | PopupPosition::BottomRight => (travel, 0),
@@ -247,7 +227,6 @@ unsafe fn run_one(
         if t >= total || rx.try_recv().map(restash).unwrap_or(false) {
             break;
         }
-        // 0 = fully off to the side, 1 = in place.
         let (alpha, k) = if t < fade_in {
             let p = t.as_secs_f32() / fade_in.as_secs_f32();
             (ease_out(p) * top_alpha, ease_out(p))
@@ -277,7 +256,6 @@ unsafe fn run_one(
     let _ = DestroyWindow(hwnd);
 }
 
-/// A newer popup arrived while one was on screen: stash it as the one to show next.
 fn restash(next: Popup) -> bool {
     if let Some(tx) = TX.get() {
         let _ = tx.send(next);
@@ -303,7 +281,6 @@ unsafe fn paint(hwnd: HWND) {
     let mut rc = RECT::default();
     let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rc);
 
-    // Card with a hairline border.
     let bg = CreateSolidBrush(rgb(27, 29, 39));
     FillRect(hdc, &rc, bg);
     let _ = DeleteObject(HGDIOBJ(bg.0));
@@ -342,15 +319,12 @@ unsafe fn paint(hwnd: HWND) {
     let pad = (16.0 * s) as i32;
     let badge = (BADGE * s) as i32;
     let color = accent(p.kind);
-    // Round badge with the icon, vertically centred on the first row.
     let row_h = (28.0 * s) as i32;
     let top = if p.compact {
         (rc.bottom - badge) / 2
     } else {
         (14.0 * s) as i32 + (row_h - badge) / 2
     };
-    // The badge is drawn four times larger and scaled down, because plain GDI
-    // shapes and glyphs have hard, jagged edges.
     let ss = 4;
     let big = badge * ss;
     let mem = CreateCompatibleDC(Some(hdc));
@@ -430,7 +404,6 @@ unsafe fn paint(hwnd: HWND) {
 
     let text_x = pad + badge + (12.0 * s) as i32;
     if p.compact {
-        // "Clip saved   12s" on one line.
         SelectObject(hdc, HGDIOBJ(title_font.0));
         SetTextColor(hdc, rgb(240, 242, 248));
         let mut t: Vec<u16> = p.title.encode_utf16().collect();
@@ -482,7 +455,6 @@ unsafe fn paint(hwnd: HWND) {
 
         SelectObject(hdc, HGDIOBJ(body_font.0));
         for (i, line) in p.lines.iter().enumerate() {
-            // The first detail line (the file name) is brighter than the stats under it.
             SetTextColor(
                 hdc,
                 if i == 0 {

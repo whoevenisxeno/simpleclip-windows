@@ -5,18 +5,15 @@ use std::path::Path;
 #[cfg(not(windows))]
 use std::process::Command;
 
-/// Everything worth telling the user about a freshly saved clip.
 #[cfg(windows)]
 pub struct SavedClip<'a> {
     pub path: &'a Path,
-    /// Length of the clip in seconds.
     pub secs: f64,
     pub app: Option<&'a str>,
     pub encoder: EncoderKind,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
-    /// How long snapshotting and muxing took.
     pub took: std::time::Duration,
 }
 
@@ -36,7 +33,6 @@ fn file_name(path: &Path) -> &str {
     path.file_name().and_then(|n| n.to_str()).unwrap_or("clip")
 }
 
-/// Pop down the "clip saved" card (with stats) and play the save sound.
 #[cfg(windows)]
 pub fn clip_saved(c: &SavedClip, cfg: &Config) {
     if cfg.general.notify {
@@ -83,7 +79,6 @@ pub fn clip_saved(c: &SavedClip, cfg: &Config) {
     }
 }
 
-/// Notification for a saved screenshot.
 #[cfg(windows)]
 pub fn screenshot_saved(path: &Path, width: u32, height: u32, cfg: &Config) {
     if cfg.general.notify {
@@ -112,9 +107,6 @@ pub fn screenshot_saved(path: &Path, width: u32, height: u32, cfg: &Config) {
     }
 }
 
-/// Fire a desktop notification and (optionally) a sound when a clip is saved.
-/// Everything runs detached on a short-lived thread so the daemon never blocks
-/// and child processes are reaped instead of leaking as zombies.
 #[cfg(not(windows))]
 pub fn clip_saved(path: &Path, secs: f64, cfg: &Config) {
     let name = path
@@ -164,8 +156,6 @@ fn run_detached(mut cmd: Command) {
     });
 }
 
-/// A sample save card and sound with the current settings (the Settings
-/// page's Preview button).
 #[cfg(windows)]
 pub fn test(cfg: &Config) {
     crate::popup::configure(&cfg.general);

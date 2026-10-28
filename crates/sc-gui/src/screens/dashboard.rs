@@ -45,7 +45,6 @@ fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     let secs = s.buffer_secs;
 
     widgets::page_title(ui, if paused { "Paused" } else { "You’re covered" }, None);
-    // Subtitle with the hotkey drawn as key caps.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(
@@ -82,7 +81,6 @@ fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     hints(app, ui);
 }
 
-/// Buffer ring on the left, the main actions on the right.
 fn hero(app: &mut ScApp, ui: &mut Ui, s: &StatusReport, paused: bool) {
     let p = pal_ui(ui);
     widgets::card(ui, |ui| {
@@ -127,7 +125,6 @@ fn hero(app: &mut ScApp, ui: &mut Ui, s: &StatusReport, paused: bool) {
     });
 }
 
-/// A circular gauge of how full the replay buffer is.
 fn ring(ui: &mut Ui, fill: f32, secs: u32, paused: bool) {
     let p = pal_ui(ui);
     let size = 148.0;
@@ -176,7 +173,6 @@ fn ring(ui: &mut Ui, fill: f32, secs: u32, paused: bool) {
             })
             .collect();
         ui.painter().add(Shape::line(pts, Stroke::new(w, color)));
-        // Rounded caps.
         for a in [start, start + std::f32::consts::TAU * t] {
             ui.painter()
                 .circle_filled(pos2(c.x + r * a.cos(), c.y + r * a.sin()), w / 2.0, color);
@@ -275,7 +271,6 @@ fn tile(ui: &mut Ui, w: f32, label: &str, value: &str) {
         });
 }
 
-/// The latest few clips as a row of previews.
 fn recent(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     let clips = crate::screens::gallery::recent_clips(app, 4);
@@ -343,7 +338,6 @@ fn recent(app: &mut ScApp, ui: &mut Ui) {
 fn send(app: &mut ScApp, req: Request) {
     match crate::daemon::request(req) {
         Ok(Response::Saved { .. }) => {
-            // The desktop popup already announced it; the gallery just needs a refresh.
             app.gallery.rescan();
         }
         Ok(Response::Error { message }) => app.toast(message, ToastKind::Warn),

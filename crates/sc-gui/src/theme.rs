@@ -1,22 +1,12 @@
-//! Visual design: a quiet, Apple-like system. Two palettes (light and dark,
-//! following the OS), one accent, generous spacing, rounded surfaces, hairline
-//! borders, and the system's own typeface and icon font where available.
-
 use egui::{Color32, FontFamily, FontId, Rounding, Stroke, TextStyle};
 
-/// Every colour the UI uses. Fetch with [`pal`]; nothing else hard-codes colours.
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub dark: bool,
-    /// Window background.
     pub bg: Color32,
-    /// Sidebar background.
     pub sidebar: Color32,
-    /// Raised surfaces: cards, grouped lists.
     pub card: Color32,
-    /// A step above `card`: hovered rows, inset fields.
     pub card_hi: Color32,
-    /// Hairline borders and dividers.
     pub line: Color32,
     pub text: Color32,
     pub text_2: Color32,
@@ -27,18 +17,11 @@ pub struct Palette {
     pub orange: Color32,
 }
 
-/// Corner radii, so every surface and control curves the same way. A shape set
-/// inside another uses the outer radius minus the gap between them.
 pub mod radius {
-    /// Segments, key caps, chips inside a control.
     pub const SMALL: f32 = 8.0;
-    /// Buttons, fields, thumbnails.
     pub const CONTROL: f32 = 10.0;
-    /// Small tiles and the status block.
     pub const TILE: f32 = 14.0;
-    /// Cards and grouped lists.
     pub const CARD: f32 = 16.0;
-    /// Dialogs and sheets.
     pub const SHEET: f32 = 22.0;
 }
 
@@ -74,8 +57,6 @@ pub const LIGHT: Palette = Palette {
     orange: Color32::from_rgb(0xff, 0x95, 0x00),
 };
 
-/// The palette in use: the chosen fixed theme, or the original light or dark one
-/// (with the accent colour laid over it, if one is chosen).
 pub fn pal(ctx: &egui::Context) -> Palette {
     if let Some(p) = crate::themes::fixed_palette(ctx) {
         return p;
@@ -95,17 +76,14 @@ pub fn pal_ui(ui: &egui::Ui) -> Palette {
     pal(ui.ctx())
 }
 
-/// Font family for semibold text (titles, emphasis); falls back to the regular one.
 pub fn semibold() -> FontFamily {
     FontFamily::Name("semibold".into())
 }
 
-/// Font family for the icon glyphs (Segoe Fluent Icons / MDL2 on Windows).
 pub fn icons() -> FontFamily {
     FontFamily::Name("icons".into())
 }
 
-/// Icon glyphs from Segoe Fluent Icons / Segoe MDL2 Assets.
 pub mod icon {
     pub const HOME: &str = "\u{E80F}";
     pub const CLIPS: &str = "\u{E714}";
@@ -129,8 +107,6 @@ pub mod icon {
     pub const SHARE: &str = "\u{E72D}";
 }
 
-/// Load the system UI font, a semibold weight and the icon font. Anything that
-/// isn't installed is skipped and egui's built-in fonts are used instead.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
@@ -172,13 +148,11 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::new("has_icons"), has_icons));
 }
 
-/// Whether the icon font loaded (otherwise icon buttons show their label).
 pub fn has_icons(ctx: &egui::Context) -> bool {
     ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::new("has_icons")))
         .unwrap_or(false)
 }
 
-/// Set up fonts, text sizes and the light/dark visuals. Call once at startup.
 pub fn apply(ctx: &egui::Context) {
     install_fonts(ctx);
     ctx.style_mut_of(egui::Theme::Dark, |s| style(s, DARK));
@@ -250,15 +224,11 @@ pub(crate) fn style(s: &mut egui::Style, p: Palette) {
     v.widgets.open.rounding = r;
 }
 
-/// Blend `b` over `a` by `t` (0..1).
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
 
-/// The shadow under something that floats above the page (dialogs, menus): wide,
-/// soft and low, never a hard dark edge. On dark surfaces the lighter fill and
-/// the hairline do most of the separating, so it is kept gentle there.
 pub fn float_shadow(p: &Palette) -> egui::Shadow {
     egui::Shadow {
         offset: egui::vec2(0.0, 8.0),
@@ -268,8 +238,6 @@ pub fn float_shadow(p: &Palette) -> egui::Shadow {
     }
 }
 
-/// A hair of shadow under a resting card in the light themes, so white cards
-/// lift off the grey page. Dark themes need none.
 pub fn card_shadow(p: &Palette) -> egui::Shadow {
     if p.dark {
         egui::Shadow::NONE

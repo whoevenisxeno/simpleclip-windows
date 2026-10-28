@@ -2,13 +2,10 @@ use sc_core::config::{Config, FolderPolicy};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Resolve the full output path for a saved clip from config: base directory,
-/// folder policy (flat / per-day / per-app), and the filename template.
 pub fn clip_path(cfg: &Config, app: Option<&str>) -> PathBuf {
     media_path(cfg, app, "mp4")
 }
 
-/// Same naming/folder rules as clips, for a screenshot (`png`).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn screenshot_path(cfg: &Config, app: Option<&str>) -> PathBuf {
     media_path(cfg, app, "png")
@@ -33,9 +30,6 @@ fn media_path(cfg: &Config, app: Option<&str>, ext: &str) -> PathBuf {
         .replace("{app}", app.unwrap_or(""));
     let name = clean(&name);
     let path = dir.join(format!("{name}.{ext}"));
-    // Same-day clips without a time in the name would collide; add one if needed,
-    // and a counter if even that is taken (saves in the same second must never
-    // overwrite each other).
     if !path.exists() {
         return path;
     }
@@ -49,8 +43,6 @@ fn media_path(cfg: &Config, app: Option<&str>, ext: &str) -> PathBuf {
         .unwrap_or(timed)
 }
 
-/// Collapse anything that isn't alphanumeric or `_` into single dashes, so an
-/// empty {app} in "sc-{app}-{date}" yields "sc-<date>", not "sc--<date>".
 fn clean(s: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -73,12 +65,10 @@ fn clean(s: &str) -> String {
     out.trim_matches(&['-', '_'][..]).to_string()
 }
 
-/// Best-effort foreground app/game name for the {app} token.
 #[cfg(windows)]
 pub fn foreground_app() -> Option<String> {
     let exe = crate::win::foreground_exe()?;
     let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
-    // The desktop/shell and our own windows aren't a meaningful clip source.
     if matches!(stem.as_str(), "explorer" | "scd" | "sc-gui" | "searchhost") {
         return None;
     }
@@ -86,7 +76,6 @@ pub fn foreground_app() -> Option<String> {
     (!app.is_empty()).then_some(app)
 }
 
-/// Best-effort foreground app/game name for the {app} token (Hyprland).
 #[cfg(not(windows))]
 pub fn foreground_app() -> Option<String> {
     let out = std::process::Command::new("hyprctl")
@@ -105,7 +94,6 @@ pub fn foreground_app() -> Option<String> {
     (!app.is_empty()).then_some(app)
 }
 
-/// Local wall-clock time on Windows, so clip names match the user's clock.
 #[cfg(windows)]
 fn now() -> (i64, u32, u32, u32, u32, u32) {
     let t = crate::win::local_time();
@@ -137,7 +125,6 @@ fn now_utc() -> (i64, u32, u32, u32, u32, u32) {
     )
 }
 
-/// Howard Hinnant's days-to-civil-date algorithm (days since 1970-01-01 -> Y/M/D).
 #[cfg_attr(windows, allow(dead_code))]
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;

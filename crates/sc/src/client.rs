@@ -10,8 +10,6 @@ fn socket_name() -> String {
     std::env::var("SC_SOCKET").unwrap_or_else(|_| ipc::DEFAULT_SOCKET_NAME.to_string())
 }
 
-/// One request, one response. The CLI is one-shot; the GUI keeps a connection
-/// open, but both use this same envelope protocol.
 pub fn request(req: Request) -> Result<Response> {
     let name = socket_name();
     let ns = name.to_ns_name::<GenericNamespaced>()?;

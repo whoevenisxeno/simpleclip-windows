@@ -1,8 +1,3 @@
-//! Named recording setups. A preset holds how SimpleClip records (frame rate,
-//! quality, sound, replay length) and nothing about this PC (displays, devices,
-//! folders) or the look, so applying one can never break a working setup. Three
-//! come built in; your own are saved next to the config file.
-
 use sc_core::config::{AudioTracks, Config};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -17,13 +12,11 @@ pub struct Preset {
     pub separate_tracks: bool,
     pub replay_secs: u32,
     pub bitrate_kbps: u32,
-    /// Keyframe interval in seconds.
     pub keyframe_secs: u32,
     pub gpu_convert: bool,
     pub max_height: Option<u32>,
 }
 
-/// The presets that ship with SimpleClip (they can not be deleted).
 pub fn built_in() -> Vec<Preset> {
     let base = Preset {
         name: String::new(),
@@ -59,7 +52,6 @@ pub fn built_in() -> Vec<Preset> {
     ]
 }
 
-/// The current recording settings as a preset called `name`.
 pub fn capture(cfg: &Config, name: &str) -> Preset {
     let fps = cfg.capture.target_fps.max(1);
     Preset {
@@ -77,7 +69,6 @@ pub fn capture(cfg: &Config, name: &str) -> Preset {
     }
 }
 
-/// Apply a preset to `cfg`. Devices, folders, shortcuts and the look are untouched.
 pub fn apply(p: &Preset, cfg: &mut Config) {
     cfg.capture.target_fps = p.fps.clamp(1, 240);
     cfg.capture.show_cursor = p.cursor;
@@ -102,7 +93,6 @@ fn file() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("presets.json"))
 }
 
-/// The user's own presets (empty if there are none or the file is unreadable).
 pub fn load() -> Vec<Preset> {
     std::fs::read(file())
         .ok()
@@ -110,20 +100,17 @@ pub fn load() -> Vec<Preset> {
         .unwrap_or_default()
 }
 
-/// Remember the user's presets.
 pub fn save(presets: &[Preset]) -> Result<(), String> {
     let path = file();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_vec_pretty(presets).map_err(|e| e.to_string())?;
-    // Write beside, then rename, so a crash never leaves half a file.
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
-/// Add a preset, or replace the one with the same name.
 pub fn upsert(list: &mut Vec<Preset>, preset: Preset) {
     match list
         .iter_mut()
@@ -143,7 +130,7 @@ mod tests {
         let mut cfg = Config::default();
         cfg.capture.target_fps = 144;
         cfg.encode.bitrate_kbps = 15_000;
-        cfg.encode.gop_frames = 288; // two seconds at 144
+        cfg.encode.gop_frames = 288;
         let p = capture(&cfg, "  Mine ");
         assert_eq!(p.name, "Mine");
         assert_eq!(p.keyframe_secs, 2);

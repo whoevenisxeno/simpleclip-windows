@@ -6,9 +6,6 @@ use sc_core::encode::EncodedPacket;
 use sc_core::time::Timestamp;
 use std::ptr;
 
-/// AAC encoder for desktop audio. Buffers interleaved f32 into AAC-sized frames,
-/// deinterleaves to planar float, and emits packets timestamped on the shared
-/// capture clock so they mux in sync with video.
 pub struct AacEncoder {
     ctx: *mut ffi::AVCodecContext,
     rate: i32,

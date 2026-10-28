@@ -292,8 +292,6 @@ fn rail_item(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
     resp
 }
 
-/// Pick one of a few common values; a value that isn't in the list (set by
-/// hand in the config file) is shown as an extra option rather than lost.
 fn choice(ui: &mut Ui, value: &mut u32, options: &[(u32, &str)], suffix: &str) {
     let mut opts: Vec<(u32, String)> = options.iter().map(|(v, l)| (*v, l.to_string())).collect();
     if !opts.iter().any(|(v, _)| v == value) {
@@ -372,7 +370,6 @@ fn recording(app: &mut ScApp, ui: &mut Ui) {
                     ],
                     " fps",
                 );
-                // Keep the keyframe interval the same length in seconds.
                 let now = app.cfg.capture.target_fps;
                 if now != before && before > 0 {
                     let g = &mut app.cfg.encode.gop_frames;
@@ -462,11 +459,8 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
     }
 }
 
-/// A 0 to 200% loudness slider with its value beside it; double-click to go back to 100%.
 fn volume_slider(ui: &mut Ui, percent: &mut u32) {
     let p = pal_ui(ui);
-    // This sits in a right-to-left row: the slider goes first (far right), then
-    // its value to the left of it.
     widgets::percent_slider(ui, percent, MAX_VOLUME_PERCENT);
     ui.add_sized(
         [44.0, 20.0],
@@ -478,7 +472,6 @@ fn volume_slider(ui: &mut Ui, percent: &mut u32) {
     );
 }
 
-/// A dropdown of audio endpoints; `outputs` picks speakers vs microphones.
 fn device_combo(
     ui: &mut Ui,
     id: &str,
@@ -658,7 +651,6 @@ fn shortcuts(app: &mut ScApp, ui: &mut Ui) {
         });
         if cfg!(windows) {
             s.row("Open SimpleClip", Some("Brings this window up"), |ui| {
-                // Right-to-left row: this sits at the far right, the keys to its left.
                 if !app.cfg.hotkeys.open.is_empty()
                     && widgets::quiet_button(ui, None, "Off").clicked()
                 {
@@ -708,7 +700,6 @@ fn position_label(p: PopupPosition) -> &'static str {
     }
 }
 
-/// The card that slides in when a clip is saved, and the sound that goes with it.
 fn notifications(app: &mut ScApp, ui: &mut Ui) {
     section(ui, None, |s| {
         s.row("Show a card when a clip is saved", None, |ui| {
@@ -794,7 +785,6 @@ fn notifications(app: &mut ScApp, ui: &mut Ui) {
             Some("Shows a sample card and plays the sound"),
             |ui| {
                 if widgets::quiet_button(ui, None, "Preview").clicked() {
-                    // Let the daemon see the new settings first.
                     app.flush_config();
                     std::thread::spawn(|| {
                         std::thread::sleep(Duration::from_millis(700));
@@ -818,7 +808,6 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
             "Keyframe interval",
             Some("Time between full pictures; shorter makes cuts more exact"),
             |ui| {
-                // Shown in seconds; stored as frames at the current frame rate.
                 let fps = app.cfg.capture.target_fps.max(1);
                 let mut secs = ((app.cfg.encode.gop_frames + fps / 2) / fps).max(1);
                 let before = secs;
@@ -864,13 +853,10 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
     });
 }
 
-/// A button at the very bottom to remove SimpleClip. It opens a confirmation
-/// that offers to wipe your clips too (off by default) and asks for a GitHub star.
 #[cfg(windows)]
 fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
     let exe = crate::update::Updater::uninstall_exe()
-        // The design-review run shows the dialog even from a portable folder.
         .or_else(|| std::env::var_os("SC_GUI_SHOTS").map(std::path::PathBuf::from));
     let ask_id = egui::Id::new("uninstall-ask");
     let wipe_id = egui::Id::new("uninstall-wipe");
@@ -980,7 +966,6 @@ fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
     if go {
         if wipe {
             for path in app.gallery.all_paths() {
-                // Recycle Bin only: nothing here is deleted for good.
                 let _ = trash::delete(&path);
             }
         }
@@ -991,8 +976,6 @@ fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
     }
 }
 
-/// Put every setting back to its default and run the setup guide again. The
-/// old settings are kept next to the new file as `config.toml.bak`.
 fn reset_section(app: &mut ScApp, ui: &mut Ui) {
     let id = egui::Id::new("reset-confirm");
     let mut asking: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
@@ -1021,7 +1004,6 @@ fn reset_section(app: &mut ScApp, ui: &mut Ui) {
         if let Ok(path) = sc_core::config::Config::default_path() {
             let _ = std::fs::copy(&path, path.with_extension("toml.bak"));
         }
-        // Keep where clips are saved only if the user chose a folder; everything else resets.
         app.cfg = sc_core::config::Config::default();
         app.flush_config();
         app.wizard = Default::default();
@@ -1030,7 +1012,6 @@ fn reset_section(app: &mut ScApp, ui: &mut Ui) {
     ui.data_mut(|d| d.insert_temp(id, asking));
 }
 
-/// Colour theme and accent. Picking one applies at once.
 fn appearance(app: &mut ScApp, ui: &mut Ui) {
     section(ui, None, |s| {
         s.full("theme appearance look colors colours palette", |ui| {
@@ -1043,7 +1024,6 @@ fn appearance(app: &mut ScApp, ui: &mut Ui) {
     });
 }
 
-/// One line describing a preset, for its row.
 fn preset_summary(p: &crate::presets::Preset) -> String {
     format!(
         "{} fps, {} Mbps, {} s replay{}",
@@ -1057,7 +1037,6 @@ fn preset_summary(p: &crate::presets::Preset) -> String {
     )
 }
 
-/// Built-in and saved recording presets: apply one, or save the current settings.
 fn presets_section(app: &mut ScApp, ui: &mut Ui) {
     use crate::presets;
     let built_in = presets::built_in();

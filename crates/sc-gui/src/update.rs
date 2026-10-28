@@ -1,10 +1,3 @@
-//! Checks GitHub for a newer release, shows its changelog, and installs it on
-//! request. Network access goes through `curl.exe`, which ships with Windows 10
-//! and 11, so the app needs no HTTP library of its own.
-//!
-//! The changelog shown is the release's notes, so every release must carry its
-//! `CHANGELOG.md` entry as its notes.
-
 use crate::theme::{self, pal};
 use crate::widgets;
 use egui::{Align2, Color32, FontId, RichText, Rounding, Stroke};
@@ -14,12 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// The version this build is.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const PAGE: &str = "https://github.com/whoevenisxeno/simpleclip-windows/releases/latest";
-/// How often a running app looks again.
 const RECHECK: Duration = Duration::from_secs(6 * 3600);
-/// A copy this many major versions behind (4.x while 9.x is out) must update before it can be used.
 pub const FORCE_AFTER_MAJORS: u64 = 5;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,8 +19,6 @@ pub enum State {
     UpToDate,
     Available(Release),
     Downloading(Release),
-    /// The update is downloaded and unpacked (the folder holding the new files); the
-    /// app should hand over to the copy step and close.
     Ready(PathBuf),
     Failed(String),
 }
@@ -39,19 +27,12 @@ pub struct Updater {
     state: Arc<Mutex<State>>,
     checked: Option<Instant>,
     started: Instant,
-    /// Whether the details window is open.
     pub open: bool,
-    /// The forced update has been started (so it is only started once).
     forced_started: bool,
-    /// The installer has been launched (so it is only launched once, however many
-    /// frames pass before the window closes).
     handed_over: bool,
-    /// Bytes of the update package downloaded so far, and its total size.
     progress: Arc<AtomicU64>,
     package_size: Arc<AtomicU64>,
-    /// The release being installed, kept for the progress view.
     installing: Option<Release>,
-    /// When the download finished (the app waits a moment so you can see it).
     ready_since: Option<Instant>,
 }
 
@@ -84,9 +65,6 @@ impl Updater {
         self.state.lock().map(|s| s.clone()).unwrap_or(State::Idle)
     }
 
-    /// Look for a newer release in the background.
-    /// The version updates are compared against. `SC_UPDATE_PRETEND_VERSION` lets a test
-    /// run pretend to be older, to try the update flow against a real release.
     fn compare_base() -> String {
         std::env::var("SC_UPDATE_PRETEND_VERSION").unwrap_or_else(|_| CURRENT.to_string())
     }
@@ -108,10 +86,6 @@ impl Updater {
         });
     }
 
-    /// Download the update in the background and unpack it; the state becomes `Ready`
-    /// when the new files are waiting in a staging folder. SimpleClip is updated in
-    /// place: the installer is never run. The size on disk is polled so the dialog
-    /// can show a progress bar.
     fn download(&mut self, r: Release, ctx: &egui::Context) {
         self.progress.store(0, Ordering::Relaxed);
         self.package_size.store(0, Ordering::Relaxed);
@@ -133,9 +107,6 @@ impl Updater {
         });
     }
 
-    /// After this app has closed: stop the daemon, copy the new files over the old
-    /// ones (only the files that differ), then start the daemon and the app again.
-    /// No installer runs, so settings, shortcuts and the uninstaller stay as they are.
     fn hand_over(staged: &std::path::Path, version: &str) {
         use std::os::windows::process::CommandExt;
         let Some(dir) = install_dir() else { return };
@@ -144,9 +115,6 @@ impl Updater {
             .unwrap_or_default();
         let _ = std::fs::create_dir_all(&logs);
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C1F2D7E-4A6B-4C55-9E2B-5D3B8A1F0C11}_is1";
-        // A small script file, run after this app has closed. The service is stopped
-        // directly (it keeps nothing on disk that a stop could lose). The "Apps and
-        // features" version is only updated for a real installed copy.
         let script = format!(
             "@echo off\r\n\
              ping -n 2 127.0.0.1 >nul\r\n\
@@ -172,14 +140,12 @@ impl Updater {
         let _ = std::process::Command::new("cmd")
             .arg("/C")
             .raw_arg(format!("\"{}\"", script_path.display()))
-            // Test switches must not leak into the relaunched app (it would update again).
             .env_remove("SC_UPDATE_AUTO")
             .env_remove("SC_UPDATE_PRETEND_VERSION")
-            .creation_flags(0x0800_0000) // no console window (DETACHED_PROCESS would make cmd open one)
+            .creation_flags(0x0800_0000)
             .spawn();
     }
 
-    /// The uninstaller of this installed copy, if this is one (not for a portable folder).
     pub fn uninstall_exe() -> Option<PathBuf> {
         std::env::current_exe()
             .ok()
@@ -187,7 +153,6 @@ impl Updater {
             .filter(|p| p.exists())
     }
 
-    /// Run the uninstaller after this app has closed (it can not replace files in use).
     pub fn start_uninstall(exe: &std::path::Path) {
         use std::os::windows::process::CommandExt;
         let script = format!("ping -n 3 127.0.0.1 >nul & \"{}\" /SILENT", exe.display());
@@ -198,7 +163,6 @@ impl Updater {
             .spawn();
     }
 
-    /// A one-line summary for the Settings page.
     pub fn status_text(&self) -> String {
         match self.state() {
             State::Idle => format!("Version {CURRENT}"),
@@ -212,7 +176,6 @@ impl Updater {
         }
     }
 
-    /// Pretend a newer release exists (for the design-review run).
     pub fn demo(&mut self) {
         let notes = "## 4.2.0\n\n### Added\n- Check for updates from inside the app\n- Play every audio track in the preview player\n\n### Fixed\n- Seek bar jumped to the wrong time when dragged\n- Picture could freeze if the sound device stalled\n";
         if let Ok(mut s) = self.state.lock() {
@@ -227,7 +190,6 @@ impl Updater {
         self.open = true;
     }
 
-    /// Per-frame work: schedule checks, draw the top-right button and the details window.
     pub fn show(&mut self, ctx: &egui::Context, auto_check: bool, wizard: bool) {
         if auto_check
             && self.started.elapsed() > Duration::from_secs(1)
@@ -236,7 +198,6 @@ impl Updater {
             self.check(ctx);
         }
         if let State::Ready(p) = self.state() {
-            // Show "installing" for a moment before handing over, so it never looks stuck.
             let since = *self.ready_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= Duration::from_millis(1400) {
                 if !self.handed_over {
@@ -265,10 +226,8 @@ impl Updater {
             self.open = false;
             return;
         };
-        // Far behind (several major versions): the update is not optional.
         let forced =
             sc_core::update::major_gap(&r.version, &Self::compare_base()) >= FORCE_AFTER_MAJORS;
-        // Test switch: install a newer version without waiting for a click.
         if std::env::var_os("SC_UPDATE_AUTO").is_some()
             && matches!(state, State::Available(_))
             && !self.forced_started
@@ -291,7 +250,6 @@ impl Updater {
         }
         let p = pal(ctx);
 
-        // The small button, top right.
         egui::Area::new(egui::Id::new("update-pill"))
             .anchor(Align2::RIGHT_TOP, [-18.0, 14.0])
             .order(egui::Order::Foreground)
@@ -422,7 +380,6 @@ impl Updater {
                         install = true;
                     }
                     if forced {
-                        // No "Later": the only other way out is closing the app.
                         if !downloading && widgets::quiet_button(ui, None, "Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
@@ -443,7 +400,6 @@ impl Updater {
     }
 }
 
-/// Show release notes (a little Markdown: headings and bullets).
 fn changelog(ui: &mut egui::Ui, notes: &str) {
     let p = pal(ui.ctx());
     if notes.trim().is_empty() {
@@ -483,8 +439,6 @@ fn changelog(ui: &mut egui::Ui, notes: &str) {
 }
 
 impl Updater {
-    /// Dim the whole window and swallow clicks, so nothing else can be used
-    /// while a required update is on screen.
     fn block_ui(ctx: &egui::Context) {
         let screen = ctx.screen_rect();
         egui::Area::new(egui::Id::new("update-block"))
@@ -500,7 +454,6 @@ impl Updater {
 }
 
 impl Updater {
-    /// Pretend a download is under way (for the design-review run).
     pub fn demo_download(&mut self, version: &str) {
         let r = Release {
             version: version.into(),
@@ -520,8 +473,6 @@ impl Updater {
     }
 }
 
-/// SHA-256 of a file as lowercase hex, using Windows' own `certutil` so the app
-/// needs no hashing library.
 fn sha256_of(path: &std::path::Path) -> Option<String> {
     use std::os::windows::process::CommandExt;
     let out = std::process::Command::new("certutil")
@@ -531,7 +482,6 @@ fn sha256_of(path: &std::path::Path) -> Option<String> {
         .creation_flags(0x0800_0000)
         .output()
         .ok()?;
-    // Line 1 is a header, line 2 the hash (possibly with spaces), then a footer.
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .nth(1)
@@ -543,7 +493,6 @@ fn sha256_of(path: &std::path::Path) -> Option<String> {
         .filter(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// Delete installers left in the temp folder by earlier updates.
 pub fn clean_old_downloads() {
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
         return;
@@ -559,7 +508,6 @@ pub fn clean_old_downloads() {
     }
 }
 
-/// The folder SimpleClip is running from (an installed copy, or a portable one).
 fn install_dir() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()?
@@ -567,15 +515,12 @@ fn install_dir() -> Option<PathBuf> {
         .map(|p| p.to_path_buf())
 }
 
-/// Where a downloaded update is unpacked before it is copied into place.
 fn update_dir() -> PathBuf {
     directories::ProjectDirs::from("", "", "SimpleClip")
         .map(|d| d.data_local_dir().join("update"))
         .unwrap_or_else(|| std::env::temp_dir().join("SimpleClip-update"))
 }
 
-/// Are the FFmpeg libraries in `dir` the same ones this release ships? Then the
-/// small app-only package is enough. The release lists each library's SHA-256.
 fn libraries_unchanged(r: &Release, dir: &std::path::Path) -> bool {
     let Some(list) = &r.dlls else {
         return true;
@@ -590,7 +535,6 @@ fn libraries_unchanged(r: &Release, dir: &std::path::Path) -> bool {
         let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
             continue;
         };
-        // A plain file name only, never a path.
         if name.contains(['\\', '/', ':']) {
             return false;
         }
@@ -602,7 +546,6 @@ fn libraries_unchanged(r: &Release, dir: &std::path::Path) -> bool {
     seen > 0
 }
 
-/// Download an asset to `dest`, showing progress, and check its size and SHA-256.
 fn download_file(
     asset: &sc_core::update::Asset,
     dest: &std::path::Path,
@@ -617,7 +560,6 @@ fn download_file(
                 "-fsSL",
                 "--retry",
                 "2",
-                // Give up on a stalled connection instead of waiting for ever.
                 "--max-time",
                 "900",
                 "--speed-time",
@@ -650,7 +592,6 @@ fn download_file(
         if got == 0 || (asset.size > 0 && got != asset.size) {
             return Err("the download was incomplete".to_string());
         }
-        // GitHub publishes each file's SHA-256; refuse anything that does not match.
         if let Some(want) = asset.sha256.as_deref() {
             match sha256_of(dest) {
                 Some(have) if have.eq_ignore_ascii_case(want) => {}
@@ -671,8 +612,6 @@ fn download_file(
     result
 }
 
-/// Pick the right package, download and check it, and unpack it into a staging
-/// folder. Returns the folder holding the new files.
 fn prepare_update(
     r: &Release,
     progress: &AtomicU64,
@@ -681,7 +620,6 @@ fn prepare_update(
 ) -> Result<PathBuf, String> {
     use std::os::windows::process::CommandExt;
     let dir = install_dir().ok_or("couldn’t find the SimpleClip folder")?;
-    // The new files are copied over the old ones, so the folder must be writable.
     let probe = dir.join(".update-write-test");
     if std::fs::write(&probe, b"x").is_err() {
         return Err(
@@ -691,7 +629,6 @@ fn prepare_update(
     }
     let _ = std::fs::remove_file(&probe);
 
-    // The small app-only package, unless the FFmpeg libraries changed too.
     let asset = match (&r.app, &r.full) {
         (Some(app), full) => {
             if libraries_unchanged(r, &dir) {
@@ -712,7 +649,6 @@ fn prepare_update(
     let stage = update_dir().join(&r.version);
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(&stage).map_err(|e| format!("couldn’t prepare the update: {e}"))?;
-    // `tar` ships with Windows 10 and 11 and reads zip files.
     let unpacked = std::process::Command::new("tar")
         .arg("-xf")
         .arg(&zip)
@@ -725,7 +661,6 @@ fn prepare_update(
         let _ = std::fs::remove_dir_all(&stage);
         return Err("couldn’t unpack the update".to_string());
     }
-    // The full package nests everything in a SimpleClip folder.
     let root = if stage.join("sc-gui.exe").exists() {
         stage.clone()
     } else {

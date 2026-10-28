@@ -1,9 +1,5 @@
 use std::path::PathBuf;
 
-/// Keep a SimpleClip-owned Hyprland snippet in sync with the configured save
-/// hotkey, so the hotkey is set entirely from the app with no elevated
-/// permissions. Writes `~/.config/hypr/simpleclip.conf`, sources it once from
-/// the main config, and reloads Hyprland only when the bind actually changed.
 pub fn sync_hotkey(save_hotkey: &str) {
     let Some(bind) = to_bind(save_hotkey) else {
         tracing::warn!(
@@ -22,7 +18,7 @@ pub fn sync_hotkey(save_hotkey: &str) {
         return;
     };
     if std::fs::read_to_string(&conf).ok().as_deref() == Some(content.as_str()) {
-        return; // already up to date; don't reload the compositor needlessly
+        return;
     }
     if let Some(parent) = conf.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -47,7 +43,6 @@ fn sc_binary() -> String {
         .unwrap_or_else(|| "sc".into())
 }
 
-/// Convert "SUPER+F10" into Hyprland's "SUPER, F10" bind prefix.
 fn to_bind(spec: &str) -> Option<String> {
     let parts: Vec<&str> = spec
         .split('+')
@@ -84,7 +79,7 @@ fn ensure_sourced() {
 
 fn reload() {
     if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
-        return; // not a running Hyprland session
+        return;
     }
     let _ = std::process::Command::new("hyprctl").arg("reload").spawn();
 }

@@ -2,9 +2,6 @@ use crate::encode::EncodedPacket;
 use crate::time::Timestamp;
 use std::collections::VecDeque;
 
-/// A byte-capped ring of encoded packets for one stream. Eviction removes whole
-/// leading GOPs so the buffer always begins on a keyframe, which is what lets a
-/// saved clip start cleanly (§6.2). One ring per track (video, desktop, mic).
 pub struct PacketRing {
     packets: VecDeque<EncodedPacket>,
     bytes: usize,
@@ -32,7 +29,6 @@ impl PacketRing {
         self.bytes
     }
 
-    /// Fraction of the byte budget currently used, 0.0..=1.0.
     pub fn fill(&self) -> f32 {
         if self.max_bytes == 0 {
             return 0.0;
@@ -48,9 +44,6 @@ impl PacketRing {
         self.evict();
     }
 
-    /// Drop whole leading GOPs while over budget. Never drops a partial GOP and
-    /// never removes the last remaining GOP, so the front stays a keyframe and
-    /// the ring is never emptied below one clip-startable GOP.
     fn evict(&mut self) {
         while self.bytes > self.max_bytes {
             let second_gop = self
@@ -68,16 +61,12 @@ impl PacketRing {
         }
     }
 
-    /// Newest capture timestamp in the ring, if any.
     pub fn latest(&self) -> Option<Timestamp> {
         self.packets.back().map(|p| p.timestamp)
     }
 }
 
 impl PacketRing {
-    /// Clone the last `secs` seconds of packets, starting at the latest keyframe
-    /// at or before the window start so playback begins cleanly. Cheap-ish: this
-    /// clones packet bytes, but the caller does it off the capture thread (§6.3).
     pub fn snapshot(&self, secs: u32) -> Vec<EncodedPacket> {
         let Some(latest) = self.latest() else {
             return Vec::new();
@@ -95,8 +84,6 @@ impl PacketRing {
         self.packets.iter().skip(start_idx).cloned().collect()
     }
 
-    /// Clone packets at or after `since` (nanoseconds). Used to line an audio
-    /// track up with the video snapshot's keyframe start so both begin together.
     pub fn snapshot_since(&self, since: i64) -> Vec<EncodedPacket> {
         self.packets
             .iter()
@@ -127,7 +114,6 @@ mod tests {
         }
         assert!(!ring.is_empty());
         assert!(ring.packets.front().unwrap().keyframe);
-        // Bounded: budget plus at most one extra in-progress GOP.
         assert!(ring.bytes() <= 300 + 4 * 100);
     }
 

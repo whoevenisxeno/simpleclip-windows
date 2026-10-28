@@ -1,7 +1,3 @@
-//! Preview frames: decode one frame from a clip (a representative one for the
-//! gallery, or the frame at an exact time for the trim view) and scale it down
-//! to RGB.
-
 use crate::{Error, Result};
 use ffmpeg_next as ff;
 use std::path::Path;
@@ -10,20 +6,13 @@ fn err(e: ff::Error) -> Error {
     Error::Ffmpeg(e.to_string())
 }
 
-/// Decode a representative frame (about a quarter of the way in, so it is
-/// neither the loading frame nor the tail) and scale it to at most `max_width`
-/// pixels wide. Returns `(width, height, rgb24 bytes)`, tightly packed.
 pub fn thumbnail(path: &Path, max_width: u32) -> Result<(u32, u32, Vec<u8>)> {
-    // Seeking can fail or land somewhere undecodable on unusual files; fall back
-    // to simply decoding the first frame.
     match decode(path, max_width, Target::Quarter) {
         Ok(t) => Ok(t),
         Err(_) => decode(path, max_width, Target::First),
     }
 }
 
-/// The frame shown at `secs` into the clip (the first frame at or after that
-/// time), for scrubbing in the trim view.
 pub fn frame_at(path: &Path, secs: f64, max_width: u32) -> Result<(u32, u32, Vec<u8>)> {
     match decode(path, max_width, Target::At(secs.max(0.0))) {
         Ok(t) => Ok(t),
@@ -33,11 +22,8 @@ pub fn frame_at(path: &Path, secs: f64, max_width: u32) -> Result<(u32, u32, Vec
 
 #[derive(Clone, Copy)]
 enum Target {
-    /// The very first frame.
     First,
-    /// A quarter of the way in, nearest keyframe is fine.
     Quarter,
-    /// The frame at this time in seconds, exactly.
     At(f64),
 }
 
@@ -62,7 +48,6 @@ fn decode(path: &Path, max_width: u32, target: Target) -> Result<(u32, u32, Vec<
         .video()
         .map_err(err)?;
 
-    // Seek lands on the keyframe at or before the target.
     let (seek_us, want_secs) = match target {
         Target::First => (None, None),
         Target::Quarter => (Some(ictx.duration() / 4), None),
@@ -75,7 +60,6 @@ fn decode(path: &Path, max_width: u32, target: Target) -> Result<(u32, u32, Vec<
     let mut frame = ff::frame::Video::empty();
     let mut got = false;
     let mut decoded = 0u32;
-    // Is this frame the one we want? Exact targets skip frames until the time.
     let wanted = |f: &ff::frame::Video| match want_secs {
         None => true,
         Some(s) => f.pts().is_none_or(|p| p as f64 * tb >= s - 0.001),
@@ -93,8 +77,6 @@ fn decode(path: &Path, max_width: u32, target: Target) -> Result<(u32, u32, Vec<
         }
     }
     if !got {
-        // Flush frames the decoder is still holding (short clips, or a target
-        // at the very end): take the last one that comes out.
         let _ = decoder.send_eof();
         let mut last = ff::frame::Video::empty();
         while decoder.receive_frame(&mut last).is_ok() {

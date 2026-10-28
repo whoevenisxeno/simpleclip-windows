@@ -28,7 +28,6 @@ pub struct Toast {
     born: Instant,
 }
 
-/// Settings are saved as you change them; this tracks that.
 #[derive(Default)]
 pub struct AutoSave {
     dirty_since: Option<Instant>,
@@ -39,7 +38,6 @@ pub struct AutoSave {
 
 pub struct ScApp {
     pub cfg: Config,
-    /// What is on disk, to spot unsaved changes.
     saved_cfg: Config,
     pub autosave: AutoSave,
     pub link: Link,
@@ -47,27 +45,18 @@ pub struct ScApp {
     pub screen: Screen,
     pub wizard: screens::wizard::WizardState,
     pub toast: Option<Toast>,
-    /// Displays and audio outputs reported by the daemon (empty until fetched).
     pub devices: Devices,
     pub gallery: screens::gallery::Cache,
     pub trim: screens::trim::TrimState,
     pub settings: screens::settings::SettingsState,
     pub thumbs: crate::thumbs::Thumbs,
-    /// Bookmarks and notes for your clips.
     pub library: crate::library::Library,
-    /// The open details / bookmark / new-folder sheet, if any.
     pub sheet: screens::sheet::SheetState,
-    /// The occasional "star the project" card.
     pub star: crate::star::StarPrompt,
-    /// The logo shown in the sidebar, loaded on first use.
     logo: Option<egui::TextureHandle>,
-    /// The theme and accent last applied, to notice a change in Settings or the setup guide.
     applied_look: (String, Option<String>),
-    /// The user's own saved presets (the built-in ones live in `presets`).
     pub presets: Vec<crate::presets::Preset>,
-    /// The "share this clip?" prompt after a trim, when open.
     pub share: Option<crate::screens::share::ShareState>,
-    /// Looks for newer releases and installs them.
     #[cfg(windows)]
     pub updater: crate::update::Updater,
     shot: Option<Shot>,
@@ -81,7 +70,6 @@ pub struct Devices {
 }
 
 impl Devices {
-    /// Ask the daemon for the current displays and audio devices.
     pub fn refresh(&mut self) {
         use sc_core::ipc::{Request, Response};
         if let Ok(Response::Monitors { monitors: m }) = daemon::request(Request::ListMonitors) {
@@ -95,7 +83,6 @@ impl Devices {
         self.loaded = true;
     }
 
-    /// Fetch once the daemon is reachable.
     pub fn ensure(&mut self, link: &Link) {
         if !self.loaded && matches!(link, Link::Connected(_)) {
             self.refresh();
@@ -107,43 +94,35 @@ impl ScApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let (tx, rx) = crossbeam_channel::unbounded();
-        // Bring the daemon up if it isn't already (it outlives this window).
         std::thread::spawn(daemon::ensure_running);
         daemon::spawn_status_poller(cc.egui_ctx.clone(), tx);
         let shot = Shot::from_env();
         if let Some(s) = &shot {
-            // The design-review run uses its own throwaway library.
             std::env::set_var("SC_LIBRARY", s.dir.join("library.json"));
         }
         let mut cfg = config_io::load();
         if let Some(s) = &shot {
-            // ...and its own clips folder, so review never touches yours.
             cfg.save.directory = Some(s.dir.join("clips"));
-            // Show the defaults rather than this PC's particular devices.
             cfg.capture.monitor_id.clear();
             cfg.audio.desktop_device.clear();
             cfg.audio.mic_device = None;
             cfg.hotkeys = Default::default();
             cfg.audio.mic_enabled = true;
             cfg.general.setup_complete = true;
-            // ...and the stock look, not whatever theme or accent this PC picked.
             cfg.general.theme = "system".into();
             cfg.general.accent = None;
             cfg.general.discord_presence = true;
             cfg.buffer.replay_duration_secs = 60;
-            // SC_GUI_THEME lets a review run render any theme.
             if let Ok(t) = std::env::var("SC_GUI_THEME") {
                 cfg.general.theme = t;
             }
         }
-        // The chosen colour theme (the default follows Windows light and dark).
         crate::themes::set_theme(
             &cc.egui_ctx,
             &cfg.general.theme,
             cfg.general.accent.as_deref(),
         );
         let applied_look = (cfg.general.theme.clone(), cfg.general.accent.clone());
-        // After an update, say so once. (Not during the design-review run.)
         let mut updated_from = None;
         #[cfg(windows)]
         if shot.is_none() {
@@ -159,7 +138,6 @@ impl ScApp {
             cfg.general.last_version = Some(env!("CARGO_PKG_VERSION").to_string());
             let _ = config_io::save(&cfg);
         }
-        // Show the wizard only until it has been completed once.
         let screen = if cfg.general.setup_complete {
             Screen::Dashboard
         } else {
@@ -218,7 +196,6 @@ impl ScApp {
         self.screen = screen;
     }
 
-    /// Write any unsaved settings now (used when leaving the Settings page).
     pub fn settings_dirty(&self) -> bool {
         self.cfg != self.saved_cfg
     }
@@ -242,14 +219,13 @@ impl ScApp {
         self.autosave.attempted = Some(self.cfg.clone());
     }
 
-    /// Settings page: save shortly after the last change, unless it's invalid.
     fn autosave(&mut self, ctx: &egui::Context) {
         if self.screen != Screen::Settings || self.cfg == self.saved_cfg {
             self.autosave.dirty_since = None;
             return;
         }
         if self.autosave.attempted.as_ref() == Some(&self.cfg) {
-            return; // already tried this exact state and it failed validation
+            return;
         }
         let since = *self.autosave.dirty_since.get_or_insert_with(Instant::now);
         if since.elapsed() > Duration::from_millis(600) {
@@ -265,7 +241,6 @@ impl eframe::App for ScApp {
         if self.screen != Screen::Settings {
             widgets::set_search_query(ctx, "");
         }
-        // Apply a theme or accent change as soon as it is made.
         let look = (
             self.cfg.general.theme.clone(),
             self.cfg.general.accent.clone(),
@@ -275,14 +250,12 @@ impl eframe::App for ScApp {
             self.applied_look = look;
         }
         while let Ok(link) = self.link_rx.try_recv() {
-            // The daemon came back (it restarted, or was updating): retry failed previews now.
             if matches!(self.link, Link::Disconnected) && matches!(link, Link::Connected(_)) {
                 self.thumbs.retry_failed();
             }
             self.link = link;
         }
         self.thumbs.poll();
-        // A minimized window shows nothing, so give the preview memory back.
         if ctx.input(|i| i.viewport().minimized) == Some(true) {
             self.thumbs.trim_to(0);
         }
@@ -355,11 +328,9 @@ impl eframe::App for ScApp {
         #[cfg(not(windows))]
         let update_open = false;
         let star_busy = self.screen == Screen::Wizard || update_open;
-        // The design-review run never touches the settings, so it only draws a forced card.
         if self.shot.is_none() || self.star.is_showing() {
             crate::star::show(self, ctx, star_busy);
         }
-        // Bookmarks and notes save a moment after the last edit.
         self.library.flush_if_due();
         if self.library.is_dirty() {
             ctx.request_repaint_after(Duration::from_millis(600));
@@ -377,9 +348,7 @@ impl eframe::App for ScApp {
 impl ScApp {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         let p = theme::pal_ui(ui);
-        // App mark and name.
         ui.horizontal(|ui| {
-            // The app logo (assets/icon.svg, rendered by assets/make-icon.ps1).
             let logo = self.logo.get_or_insert_with(|| {
                 let img =
                     crate::thumbs::decode_png_bytes(include_bytes!("../../../assets/icon-64.png"))
@@ -442,7 +411,6 @@ impl ScApp {
         });
     }
 
-    /// Live state at the foot of the sidebar: a dot, a word, and the buffer.
     fn status_block(&mut self, ui: &mut egui::Ui) {
         let p = theme::pal_ui(ui);
         let (color, word, sub, fill) = match &self.link {
@@ -547,10 +515,6 @@ impl ScApp {
     }
 }
 
-// ------------------------------------------------- screenshot test harness --
-
-/// With `SC_GUI_SHOTS=<dir>` the app walks through its screens in dark and light
-/// mode, saves a PNG of each, and exits. Used to review the design; hidden.
 struct Shot {
     dir: PathBuf,
     step: usize,
@@ -590,7 +554,6 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("clips", false),
     ("details", false),
     ("trim", false),
-    // These leave a dialog on screen, so they come last.
     ("share", true),
     ("update", true),
     ("uninstall", true),
@@ -613,8 +576,6 @@ impl Shot {
 }
 
 impl ScApp {
-    /// Sample bookmarks and notes (in the throwaway review library) so those
-    /// screens have something to show.
     fn shot_demo_data(&mut self) {
         if !self.library.bookmarks.is_empty() {
             return;
@@ -649,7 +610,6 @@ impl ScApp {
             return;
         };
         ctx.request_repaint();
-        // Save any finished screenshot and move on.
         let image = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -695,7 +655,6 @@ impl ScApp {
             } else {
                 egui::Theme::Light
             });
-            // Never let the review run write to the real config.
             self.cfg.general.setup_complete = true;
             let (shot_theme, shot_accent) = match name {
                 "look-accent" => ("ember".to_string(), Some("#e84576".to_string())),
@@ -797,7 +756,6 @@ impl ScApp {
             }
         }
         shot.waited += 1;
-        // Pick a selection (as if dragging a handle), then let it play.
         if name == "player" && shot.waited == 40 {
             self.trim.demo_select(3.0, 11.0);
         }
@@ -805,7 +763,6 @@ impl ScApp {
             self.trim.demo_play();
         }
         if shot.step == 0 && shot.waited == 1 {
-            // A taller window so long pages (trim, settings) fit in one picture.
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
                 1080.0,
                 std::env::var("SC_GUI_SHOT_HEIGHT")
@@ -814,7 +771,6 @@ impl ScApp {
                     .unwrap_or(900.0),
             )));
         }
-        // Wait for previews to settle (including retries) before capturing.
         let settled = !self.thumbs.pending() || shot.waited > 1500;
         if shot.waited
             >= (if name == "trim" {

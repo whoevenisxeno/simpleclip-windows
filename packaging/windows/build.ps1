@@ -1,25 +1,3 @@
-<#
-.SYNOPSIS
-  Build SimpleClip for Windows and stage a ready-to-run folder (and zip) in dist\.
-
-.DESCRIPTION
-  Needs: Rust (MSVC toolchain), Visual Studio Build Tools (C++ workload), LLVM
-  (for bindgen), and a *shared* FFmpeg 8.x dev build. Pass -InstallDeps to have
-  the script install anything missing (winget + a BtbN FFmpeg download); without
-  it, missing pieces are reported with the command that fixes them.
-
-.PARAMETER FfmpegDir
-  Folder containing FFmpeg's bin\ lib\ include\. Defaults to $env:FFMPEG_DIR, then
-  to the copy this script downloads under %LOCALAPPDATA%\SimpleClip\build-deps.
-
-.PARAMETER Variant
-  lgpl (default) LGPL FFmpeg: hardware encoders plus Windows' built-in h264_mf as a
-                 software fallback. Easy to redistribute (see docs/DECISIONS.md D-0002).
-  gpl            adds libx264 as a better software fallback; the DLLs are then GPL.
-
-.EXAMPLE
-  .\packaging\windows\build.ps1 -InstallDeps
-#>
 [CmdletBinding()]
 param(
     [string]$FfmpegDir = $env:FFMPEG_DIR,
@@ -47,7 +25,6 @@ function Need($what, $wingetId, $override) {
     & winget @wingetArgs
 }
 
-# --- Rust -----------------------------------------------------------------
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 if (Test-Path $cargoBin) { $env:Path += ";$cargoBin" }
 if (-not (Have cargo)) {
@@ -55,7 +32,6 @@ if (-not (Have cargo)) {
     $env:Path += ";$cargoBin"
 }
 
-# --- MSVC linker ----------------------------------------------------------
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $haveMsvc = (Test-Path $vswhere) -and
     (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
@@ -64,7 +40,6 @@ if (-not $haveMsvc) {
         '--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
 }
 
-# --- LLVM (libclang for ffmpeg-sys-next's bindgen) -------------------------
 if (-not $env:LIBCLANG_PATH) {
     $llvm = "$env:ProgramFiles\LLVM\bin"
     if (-not (Test-Path "$llvm\libclang.dll")) {
@@ -73,7 +48,6 @@ if (-not $env:LIBCLANG_PATH) {
     $env:LIBCLANG_PATH = $llvm
 }
 
-# --- FFmpeg (shared dev build) ---------------------------------------------
 if (-not $FfmpegDir -or -not (Test-Path "$FfmpegDir\lib\avcodec.lib")) {
     $FfmpegDir = Join-Path $depsDir "ffmpeg-$Variant"
     if (-not (Test-Path "$FfmpegDir\lib\avcodec.lib")) {
@@ -95,7 +69,6 @@ if (-not $FfmpegDir -or -not (Test-Path "$FfmpegDir\lib\avcodec.lib")) {
 $env:FFMPEG_DIR = $FfmpegDir
 Step "Using FFmpeg at $FfmpegDir"
 
-# --- Build -----------------------------------------------------------------
 Step 'Building release binaries'
 Push-Location $root
 try {
@@ -104,7 +77,6 @@ try {
 }
 finally { Pop-Location }
 
-# --- Stage -----------------------------------------------------------------
 $version = (Select-String -Path "$root\Cargo.toml" -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
 $stage = Join-Path $root "dist\SimpleClip"
 Step "Staging $stage"
@@ -113,7 +85,6 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 foreach ($exe in 'scd.exe', 'sc.exe', 'sc-gui.exe') {
     Copy-Item "$root\target\release\$exe" $stage
 }
-# Only the FFmpeg libraries SimpleClip links (no avfilter or avdevice): about 40 MB smaller.
 foreach ($lib in 'avcodec', 'avformat', 'avutil', 'swresample', 'swscale') {
     Copy-Item "$FfmpegDir\bin\$lib-*.dll" $stage
 }
@@ -135,9 +106,6 @@ if (-not $NoZip) {
     Step "Wrote $zipPath"
 }
 
-# --- Update packages (used by the in-app updater, which never runs the installer) ---
-# The small package holds only the programs. dlls.sha256 lists each FFmpeg library's
-# hash, so an update can tell whether the libraries changed (then it needs the full zip).
 $appZip = Join-Path $root "dist\SimpleClip-$version-app.zip"
 Remove-Item $appZip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$stage\scd.exe", "$stage\sc.exe", "$stage\sc-gui.exe" -DestinationPath $appZip
@@ -148,7 +116,6 @@ Get-ChildItem $stage -Filter *.dll | Sort-Object Name | ForEach-Object {
 } | Set-Content $dllList -Encoding ascii
 Step "Wrote $dllList"
 
-# --- Installer (Setup.exe) ---------------------------------------------------
 if (-not $NoInstaller) {
     $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
     if (-not $iscc) {

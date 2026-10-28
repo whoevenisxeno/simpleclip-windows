@@ -1,15 +1,9 @@
-//! Reusable controls in the app's visual language: grouped lists, switches,
-//! segmented controls, buttons, key caps. Everything draws from the palette.
-
 use crate::theme::{self, mix, pal_ui};
 use egui::{
     pos2, vec2, Align, Align2, Color32, FontId, Layout, Rect, Response, RichText, Rounding, Sense,
     Stroke, Ui,
 };
 
-// ------------------------------------------------------------------ text --
-
-/// A page's large title with an optional quiet subtitle underneath.
 pub fn page_title(ui: &mut Ui, title: &str, subtitle: Option<&str>) {
     let p = pal_ui(ui);
     ui.add_space(6.0);
@@ -25,7 +19,6 @@ pub fn page_title(ui: &mut Ui, title: &str, subtitle: Option<&str>) {
     ui.add_space(14.0);
 }
 
-/// Small grey section label ("CAPTURE") above a group.
 pub fn caption(ui: &mut Ui, text: &str) {
     let p = pal_ui(ui);
     ui.add_space(6.0);
@@ -42,9 +35,6 @@ pub fn secondary(ui: &mut Ui, text: impl Into<String>) {
     ui.label(RichText::new(text.into()).size(13.0).color(p.text_2));
 }
 
-// --------------------------------------------------------------- surfaces --
-
-/// A raised, rounded surface.
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     let p = pal_ui(ui);
     egui::Frame::none()
@@ -185,12 +175,8 @@ impl Section<'_> {
     }
 }
 
-// --------------------------------------------------------------- controls --
-
-/// iOS-style on/off switch.
 pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     let p = pal_ui(ui);
-    // The native switch is 51 by 31, with the knob inset 2 from the track.
     let (rect, mut resp) = ui.allocate_exact_size(vec2(51.0, 31.0), Sense::click());
     if resp.clicked() {
         *on = !*on;
@@ -211,7 +197,6 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
         egui::lerp((rect.left() + radius)..=(rect.right() - radius), t),
         rect.center().y,
     );
-    // A soft, tight shadow, the way the real knob sits above its track.
     ui.painter().circle_filled(
         knob + vec2(0.0, 1.5),
         knob_r + 0.5,
@@ -224,7 +209,6 @@ pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
     resp
 }
 
-/// Pill-shaped segmented control. Returns true when the selection changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T, &str)]) -> bool {
     let p = pal_ui(ui);
     let font = FontId::new(13.0, egui::FontFamily::Proportional);
@@ -240,12 +224,9 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         })
         .collect();
     let total: f32 = widths.iter().sum::<f32>() + 4.0;
-    // 32 high with the pill inset 2: the pill's corners (8) are the track's (10)
-    // less that gap, so the two curves run parallel.
     let (rect, _) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
     ui.painter()
         .rect_filled(rect, Rounding::same(theme::radius::CONTROL), p.card_hi);
-    // The selected pill glides to its new place instead of jumping.
     let mut starts = Vec::with_capacity(widths.len());
     let mut at = rect.left() + 2.0;
     for w in &widths {
@@ -304,10 +285,8 @@ pub enum Tone {
     Quiet,
 }
 
-/// A rounded button with an optional leading icon.
 pub fn button(ui: &mut Ui, tone: Tone, glyph: Option<&str>, label: &str) -> Response {
     let p = pal_ui(ui);
-    // The one filled button on a screen is semibold; the rest stay regular.
     let font = FontId::new(
         14.0,
         if tone == Tone::Primary {
@@ -324,13 +303,11 @@ pub fn button(ui: &mut Ui, tone: Tone, glyph: Option<&str>, label: &str) -> Resp
         .size()
         .x;
     let w = text_w + 28.0 + if use_icon { 24.0 } else { 0.0 };
-    // 32 high: on the 8pt grid, and comfortably above the 28px desktop minimum.
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(40.0), 32.0), Sense::click());
     let (bg, fg) = match tone {
         Tone::Primary => (p.accent, theme::on_accent(&p)),
         Tone::Quiet => (p.card_hi, p.text),
     };
-    // Hover is a quiet fill change that eases in; a press goes a step darker.
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
@@ -379,7 +356,6 @@ pub fn quiet_button(ui: &mut Ui, glyph: Option<&str>, label: &str) -> Response {
     button(ui, Tone::Quiet, glyph, label)
 }
 
-/// A square icon-only button (falls back to a text label without the icon font).
 pub fn icon_button(ui: &mut Ui, glyph: &str, fallback: &str, tip: &str, danger: bool) -> Response {
     let p = pal_ui(ui);
     let has = theme::has_icons(ui.ctx());
@@ -427,13 +403,11 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, fallback: &str, tip: &str, danger: 
     resp.on_hover_text(tip)
 }
 
-/// A filled dot, used for status.
 pub fn dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.5, color);
 }
 
-/// "ALT+F10" drawn as little key caps.
 pub fn keycaps(ui: &mut Ui, combo: &str) {
     ui.spacing_mut().item_spacing.x = 5.0;
     for part in combo.split('+').filter(|s| !s.is_empty()) {
@@ -441,7 +415,6 @@ pub fn keycaps(ui: &mut Ui, combo: &str) {
     }
 }
 
-/// Same, for use inside a right-to-left layout.
 pub fn keycaps_rtl(ui: &mut Ui, combo: &str) {
     ui.spacing_mut().item_spacing.x = 5.0;
     for part in combo.split('+').filter(|s| !s.is_empty()).rev() {
@@ -499,21 +472,17 @@ fn pretty_key(k: &str) -> String {
     }
 }
 
-/// A hotkey as key caps plus a "Change" button that listens for the next combination.
 pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
     let p = pal_ui(ui);
     let rec_id = ui.make_persistent_id(id);
     let recording = ui.data(|d| d.get_temp::<bool>(rec_id)).unwrap_or(false);
     let mut changed = false;
-    // Right-to-left parent: add the button first so it sits at the far right.
     if recording {
         let cancel = quiet_button(ui, None, "Cancel");
         if cancel.clicked() {
             ui.data_mut(|d| d.insert_temp(rec_id, false));
         }
         ui.label(RichText::new("Press the new shortcut…").color(p.orange));
-        // On Windows read the keyboard itself: window events lose the Alt key
-        // on combinations like Alt+F10, which Windows treats as a menu key.
         #[cfg(windows)]
         if ui.ctx().input(|i| i.focused) {
             let armed_id = rec_id.with("armed");
@@ -565,23 +534,17 @@ pub fn hotkey_field(ui: &mut Ui, value: &mut String, id: &str) -> bool {
                 d.insert_temp(rec_id.with("armed"), false);
             });
         }
-        // We're inside a right-to-left row: add the caps last-key-first so they
-        // read left to right, sitting just left of the button.
         keycaps_rtl(ui, value);
     }
     changed
 }
 
-/// Reads the physical keyboard for the shortcut recorder.
 #[cfg(windows)]
 mod keypoll {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
     pub enum Poll {
-        /// Nothing pressed yet.
         Waiting,
-        /// Every key has been let go since "Change" was clicked, so a key that
-        /// started the recording (Enter, Space) is not mistaken for the shortcut.
         Armed,
         Cancelled,
         Combo(String),
@@ -606,10 +569,6 @@ mod keypoll {
         parts
     }
 
-    /// Build "CTRL+ALT+F10" from what is down, or `None` if no real key is.
-    /// Every key counts, including punctuation, arrows and keys with no name
-    /// (written `VK_xx`). Escape only counts with a modifier, because on its own
-    /// it cancels the recording.
     pub fn combo(down: impl Fn(i32) -> bool) -> Option<String> {
         let mut parts = modifier_names(&down);
         let key = (0x08..=0xFEu32).find_map(|vk| {
@@ -685,7 +644,6 @@ mod keypoll {
     }
 }
 
-/// A tinted notice bar (success / warning / error).
 pub fn notice(ui: &mut Ui, color: Color32, text: &str) {
     egui::Frame::none()
         .fill(color.linear_multiply(0.14))
@@ -777,8 +735,6 @@ pub fn nav_item(
     resp
 }
 
-/// Two-handle range selector over `0..=max` seconds. Returns true if either
-/// handle moved. Keeps at least `min_gap` seconds between the handles.
 pub fn range_slider(ui: &mut Ui, start: &mut f64, end: &mut f64, max: f64, min_gap: f64) -> bool {
     let p = pal_ui(ui);
     let w = ui.available_width();
@@ -828,9 +784,7 @@ pub fn range_slider(ui: &mut Ui, start: &mut f64, end: &mut f64, max: f64, min_g
             Color32::from_rgb(0xc7, 0xc7, 0xcc),
         );
     }
-    // Keep the handles in order and apart.
     if *start > *end - min_gap {
-        // Whichever moved last gives way to the other; clamp both to the range.
         let mid = (*start + *end) / 2.0;
         *start = (mid - min_gap / 2.0).max(0.0);
         *end = (*start + min_gap).min(max);
@@ -839,13 +793,9 @@ pub fn range_slider(ui: &mut Ui, start: &mut f64, end: &mut f64, max: f64, min_g
     changed
 }
 
-/// A named, coloured bookmark tag. `filled` shows it as applied (solid colour);
-/// otherwise it is an outlined, quieter chip. `small` is the compact card size.
 pub fn bookmark_pill(ui: &mut Ui, name: &str, rgb: [u8; 3], filled: bool, small: bool) -> Response {
     let p = pal_ui(ui);
     let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-    // Quiet by design: on cards just a small dot and the name in grey with no
-    // background; in the sheet a faint tint when applied.
     let size = if small { 11.5 } else { 13.0 };
     let font = FontId::new(size, egui::FontFamily::Proportional);
     let galley = ui.painter().layout_no_wrap(name.to_string(), font, p.text);
@@ -888,7 +838,6 @@ pub fn bookmark_pill(ui: &mut Ui, name: &str, rgb: [u8; 3], filled: bool, small:
     resp
 }
 
-/// A row of colour swatches; returns the chosen colour index when one is clicked.
 pub fn swatches(ui: &mut Ui, colors: &[[u8; 3]], selected: Option<[u8; 3]>) -> Option<usize> {
     let p = pal_ui(ui);
     let mut picked = None;
@@ -914,9 +863,6 @@ pub fn swatches(ui: &mut Ui, colors: &[[u8; 3]], selected: Option<[u8; 3]>) -> O
     picked
 }
 
-// ----------------------------------------------------------------- themes --
-
-/// A tiny picture of the app in one palette: sidebar, a card and an accent.
 fn theme_preview(
     painter: &egui::Painter,
     rect: Rect,
@@ -943,7 +889,6 @@ fn theme_preview(
         },
         p.sidebar,
     );
-    // Sidebar items.
     for i in 0..3 {
         let y = rect.top() + 12.0 + i as f32 * 9.0;
         let w = side.width() - 14.0;
@@ -953,7 +898,6 @@ fn theme_preview(
             if i == 0 { p.accent } else { p.card_hi },
         );
     }
-    // A card with a line of text and an accent button.
     let card = Rect::from_min_max(
         pos2(side.right() + 8.0, rect.top() + 10.0),
         pos2(rect.right() - 8.0, rect.bottom() - 10.0),
@@ -975,8 +919,6 @@ fn theme_preview(
     );
 }
 
-/// A grid of theme tiles. Returns true when the choice changed. `compact` makes
-/// the tiles smaller (the setup guide).
 pub fn theme_picker(
     ui: &mut Ui,
     current: &mut String,
@@ -996,7 +938,6 @@ pub fn theme_picker(
             match &t.pal {
                 Some(pal) => theme_preview(ui.painter(), tile, pal, accent),
                 None => {
-                    // The default follows Windows, so show both halves.
                     theme_preview(ui.painter(), tile, &theme::DARK, accent);
                     let right = Rect::from_min_max(pos2(tile.center().x, tile.top()), tile.max);
                     theme_preview(
@@ -1043,13 +984,11 @@ pub fn theme_picker(
     changed
 }
 
-/// Accent colour swatches (and "theme default"). Returns true when it changed.
 pub fn accent_picker(ui: &mut Ui, current: &mut Option<String>) -> bool {
     let p = pal_ui(ui);
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        // "Theme default": a ring with no fill.
         let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
         ui.painter()
             .circle_stroke(rect.center(), 10.0, Stroke::new(1.5_f32, p.text_3));
@@ -1096,10 +1035,6 @@ pub fn accent_picker(ui: &mut Ui, current: &mut Option<String>) -> bool {
     changed
 }
 
-/// A slider from 0 to `max` in whole numbers, with its value written beside it
-/// (for example "100%"). A thin track filled with the accent, a white knob on a
-/// soft shadow, and a small notch where the usual setting (100) is. Double-click
-/// to go back to 100.
 pub fn percent_slider(ui: &mut Ui, value: &mut u32, max: u32) -> Response {
     let p = pal_ui(ui);
     let track_w = 180.0;
@@ -1126,7 +1061,6 @@ pub fn percent_slider(ui: &mut Ui, value: &mut u32, max: u32) -> Response {
     let track = Rect::from_min_max(pos2(left, cy - 2.0), pos2(right, cy + 2.0));
     ui.painter()
         .rect_filled(track, Rounding::same(2.0), p.card_hi);
-    // The usual setting.
     if *value != 100 && max > 100 {
         ui.painter()
             .circle_filled(pos2(x_of(100), cy), 1.5, p.text_3);
@@ -1151,7 +1085,6 @@ pub fn percent_slider(ui: &mut Ui, value: &mut u32, max: u32) -> Response {
     resp
 }
 
-/// A shortcut written for a sentence: "ALT+F10" becomes "Alt+F10".
 pub fn pretty_combo(combo: &str) -> String {
     combo
         .split('+')

@@ -1,7 +1,3 @@
-<#
-.SYNOPSIS
-  Remove SimpleClip. Your clips and config are kept unless -RemoveData is given.
-#>
 [CmdletBinding()]
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\SimpleClip'),
@@ -24,7 +20,6 @@ if ($userPath) {
     [Environment]::SetEnvironmentVariable('Path', $kept, 'User')
 }
 
-# Uninstall may be run from inside the install dir; delete it after we exit.
 if ($PSScriptRoot -like "$InstallDir*") {
     Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', "Start-Sleep 2; Remove-Item -LiteralPath '$InstallDir' -Recurse -Force"
 }

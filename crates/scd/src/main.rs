@@ -1,6 +1,3 @@
-// Release builds on Windows are GUI-subsystem apps so the daemon starts at login
-// without flashing a console window; logs go to a file (or to the parent
-// terminal with --foreground).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod audio_mix;
@@ -35,13 +32,10 @@ use std::path::PathBuf;
     about = "SimpleClip daemon: owns capture, buffer, encode, save"
 )]
 struct Args {
-    /// Run in the foreground (do not detach); logs also go to stderr.
     #[arg(long)]
     foreground: bool,
-    /// Verbose (debug) logging.
     #[arg(long, short)]
     verbose: bool,
-    /// Config file path (defaults to the platform config dir).
     #[arg(long)]
     config: Option<PathBuf>,
 }
@@ -68,17 +62,12 @@ fn main() -> Result<()> {
     popup::configure(&config.general);
     let daemon = Daemon::new(config);
     reload::spawn_watcher(config_path, daemon.clone());
-    // Tidy the preview cache in the background; it must never slow start-up.
     std::thread::spawn(thumbs::prune);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "scd starting");
 
-    // Start capture off-thread so the IPC server is reachable immediately (the
-    // portal consent dialog can take a while to be answered).
     {
         let d = daemon.clone();
         std::thread::spawn(move || {
-            // On Windows a failure is usually transient (no display yet at
-            // login, a GPU driver restart), so keep trying instead of giving up.
             #[cfg(windows)]
             {
                 let mut wait = 5;
@@ -92,15 +81,11 @@ fn main() -> Result<()> {
         });
     }
 
-    // Keep the compositor's save-hotkey bind in sync with config (no elevated
-    // permissions needed; SimpleClip owns and reloads its own Hyprland snippet).
     #[cfg(target_os = "linux")]
     hypr::sync_hotkey(&daemon.config.read().unwrap().hotkeys.save);
 
     #[cfg(windows)]
     {
-        // Keep the Windows startup entry in step with the setting (on by default),
-        // so the replay buffer is always running in the background after sign-in.
         win::set_autostart(daemon.config.read().unwrap().general.autostart);
         win::spawn_hotkey(daemon.clone());
         discord::spawn(daemon.clone());
@@ -115,7 +100,6 @@ fn main() -> Result<()> {
             })
             .context("ipc thread")?;
         win::announce_startup(daemon.clone());
-        // The tray owns the main thread's message loop until the user quits.
         win::run_tray(daemon);
         tracing::info!("scd quitting");
         Ok(())
@@ -140,10 +124,6 @@ fn init_logging(verbose: bool, _foreground: bool) -> Option<()> {
     None
 }
 
-/// Windows logging: to the parent terminal with `--foreground`, otherwise to a
-/// rolling file under `%LOCALAPPDATA%\SimpleClip\logs`. The returned guard must
-/// outlive `main` so buffered lines are flushed.
-/// Keep only the newest `keep` daily log files so logs never pile up.
 #[cfg(windows)]
 fn prune_logs(dir: &std::path::Path, keep: usize) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -158,7 +138,6 @@ fn prune_logs(dir: &std::path::Path, keep: usize) {
                 .is_some_and(|n| n.starts_with("scd.log"))
         })
         .collect();
-    // Names end in the date, so sorting by name sorts by age.
     logs.sort();
     let drop = logs.len().saturating_sub(keep);
     for p in logs.into_iter().take(drop) {
@@ -201,7 +180,6 @@ fn init_logging(
         }
     };
 
-    // A windowless process otherwise dies silently; leave a trace in the log.
     std::panic::set_hook(Box::new(|info| {
         tracing::error!("panic: {info}");
     }));

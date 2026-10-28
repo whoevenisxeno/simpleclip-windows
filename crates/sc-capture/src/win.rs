@@ -1,7 +1,3 @@
-//! Windows capture: Windows Graphics Capture for video, WASAPI loopback for
-//! desktop audio. Both are stamped against one shared `Instant` epoch so audio
-//! and video stay aligned in the replay buffer.
-
 use crate::{Error, Options, Result};
 use sc_core::audio::{AudioBuffer, AudioDevice, AudioRole};
 use sc_core::capture::{FramePool, MonitorInfo, PixelFormat, VideoFrame};
@@ -21,9 +17,6 @@ use windows_capture::settings::{
 
 type BoxErr = Box<dyn std::error::Error + Send + Sync>;
 
-/// Latest captured frame. WGC only delivers when the screen changes, so the
-/// pacing thread re-emits this at the target rate: a static desktop still
-/// yields regular frames (and keyframes), and a 240 Hz display is capped.
 #[derive(Default)]
 struct Slot {
     data: Vec<u8>,
@@ -70,7 +63,6 @@ impl GraphicsCaptureApiHandler for Grabber {
 
 type Control = CaptureControl<Grabber, BoxErr>;
 
-/// A running capture. Dropping it stops video and audio and joins their threads.
 pub struct CaptureHandle {
     pub width: u32,
     pub height: u32,
@@ -82,7 +74,6 @@ pub struct CaptureHandle {
 }
 
 impl CaptureHandle {
-    /// The most recent captured frame (for screenshots), cropped like the video stream.
     pub fn latest_frame(&self) -> Option<VideoFrame> {
         let s = self.slot.lock().unwrap();
         if !s.has_frame {
@@ -131,8 +122,6 @@ fn pick_monitor(id: &str) -> Result<Monitor> {
     Monitor::primary().map_err(werr)
 }
 
-/// Start capturing the chosen monitor. Blocks (up to a few seconds) until the
-/// first frame arrives so the real frame size is known, then returns.
 pub fn start(
     frames: crossbeam_channel::Sender<VideoFrame>,
     audio: Option<crossbeam_channel::Sender<AudioBuffer>>,
@@ -159,8 +148,6 @@ pub fn start(
             slot.clone(),
         )
     };
-    // Hide the yellow capture border where Windows allows it (Win11); older
-    // builds reject the setting, so retry with the system default.
     let control =
         match Grabber::start_free_threaded(make_settings(DrawBorderSettings::WithoutBorder)) {
             Ok(c) => c,
@@ -171,13 +158,11 @@ pub fn start(
             }
         };
 
-    // The frame size, not the monitor query, is authoritative (DPI scaling).
     let deadline = Instant::now() + Duration::from_secs(5);
     let (width, height) = loop {
         {
             let s = slot.lock().unwrap();
             if s.has_frame {
-                // NV12 needs even dimensions; crop one pixel row/column if odd.
                 break (s.width & !1, s.height & !1);
             }
         }
@@ -199,8 +184,6 @@ pub fn start(
             .map_err(werr)?
     };
 
-    // Desktop loopback and (optionally) the microphone each get a thread, both
-    // feeding the one audio channel; `AudioBuffer::role` tells them apart.
     let mut audio_threads = Vec::new();
     if let Some(tx) = audio {
         let mut sources = Vec::new();
@@ -258,7 +241,7 @@ fn pace(
         if next > now {
             std::thread::sleep(next - now);
         } else if now - next > period * 4 {
-            next = now; // fell far behind (system sleep, debugger): don't burst
+            next = now;
         }
         let frame = {
             let s = slot.lock().unwrap();
@@ -275,8 +258,6 @@ fn pace(
                 }
                 continue;
             }
-            // Crop to even size by trimming trailing rows; the stride keeps the
-            // row layout intact so trailing columns are simply ignored.
             VideoFrame {
                 width,
                 height,
@@ -286,8 +267,6 @@ fn pace(
                 data: pool.copy_of(&s.data[..(s.stride * height) as usize]),
             }
         };
-        // Drop on a full queue rather than stalling the pacer: video may skip,
-        // the clock must not.
         match tx.try_send(frame) {
             Ok(()) => sent += 1,
             Err(_) => dropped += 1,
@@ -302,17 +281,13 @@ fn pace(
 const RATE: u32 = 48_000;
 const CHANNELS: u16 = 2;
 
-/// Which audio endpoint a capture thread reads.
 #[derive(Clone)]
 struct Source {
     role: AudioRole,
-    /// Endpoint id; empty for the default device of the relevant kind.
     device: String,
 }
 
 impl Source {
-    /// Desktop audio is a loopback tap on an output (render) device; the
-    /// microphone is an ordinary capture device.
     fn is_loopback(&self) -> bool {
         self.role == AudioRole::Desktop
     }
@@ -325,9 +300,6 @@ impl Source {
     }
 }
 
-/// Continuously capture one source as 48 kHz stereo f32. WASAPI delivers nothing
-/// while a loopback is silent (and a mic can stall), which would slide audio
-/// earlier than video, so gaps are filled with silence against the wall clock.
 fn capture_audio(
     tx: crossbeam_channel::Sender<AudioBuffer>,
     epoch: Instant,
@@ -344,12 +316,9 @@ fn capture_audio(
     while !stop.load(Ordering::Relaxed) {
         if let Err(e) = audio_session(&tx, epoch, t0, &stop, &src, &mut produced_frames) {
             failures += 1;
-            // Say it once, then quietly retry: a missing/blocked mic shouldn't spam the log.
             if failures == 1 {
                 tracing::warn!(error = %e, source = src.label(), "audio capture interrupted; retrying");
             }
-            // Keep the timeline moving while the device is gone (e.g. headphones
-            // unplugged and the default output changes).
             for _ in 0..10 {
                 if stop.load(Ordering::Relaxed) {
                     return;
@@ -361,8 +330,6 @@ fn capture_audio(
     }
 }
 
-/// Emit enough silence to bring `produced_frames` up to the wall clock, minus
-/// `incoming` frames about to be sent. Small deficits are jitter and are left alone.
 fn pad_silence(
     tx: &crossbeam_channel::Sender<AudioBuffer>,
     role: AudioRole,
@@ -396,7 +363,6 @@ fn send(
     let frames = (samples.len() / CHANNELS as usize) as u64;
     let ts = t0.as_nanos() as i64 + (*produced_frames * 1_000_000_000 / RATE as u64) as i64;
     *produced_frames += frames;
-    // Audio is never dropped by the pipeline's unbounded queue.
     let _ = tx.send(AudioBuffer {
         role,
         sample_rate: RATE,
@@ -428,8 +394,6 @@ fn audio_session(
         enumerator.get_device(&src.device)?
     };
     let mut client = dev.get_iaudioclient()?;
-    // Shared-mode autoconvert lets us ask for 48 kHz stereo f32 whatever the
-    // device's mix format is.
     let fmt = WaveFormat::new(
         32,
         32,
@@ -439,8 +403,6 @@ fn audio_session(
         None,
     );
     let (period, _min) = client.get_device_period()?;
-    // Direction::Capture on a render device means loopback; on a capture device
-    // it is a plain recording stream.
     client.initialize_client(
         &fmt,
         &Direction::Capture,
@@ -481,7 +443,6 @@ fn audio_session(
     Ok(())
 }
 
-/// Connected displays, ids are 1-based indices accepted by `Options::monitor_id`.
 pub fn list_monitors() -> Result<Vec<MonitorInfo>> {
     let primary = Monitor::primary().ok();
     Monitor::enumerate()
@@ -501,9 +462,6 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>> {
         .collect()
 }
 
-/// Audio endpoints: outputs that can be looped back (`is_monitor: true`, ids for
-/// `Options::audio_device`) and microphones (`is_monitor: false`, ids for
-/// `Options::mic_device`).
 pub fn list_audio_devices() -> Result<Vec<AudioDevice>> {
     use wasapi::{DeviceEnumerator, Direction};
     let _ = wasapi::initialize_mta();

@@ -1,5 +1,3 @@
-// Encode path: system FFmpeg. VA-API on Linux; NVENC / AMF / QSV (with a libx264
-// fallback) on Windows. On other targets the crate compiles to nothing.
 #![cfg(any(target_os = "linux", windows))]
 
 mod audio_encoder;
@@ -39,7 +37,6 @@ pub enum Error {
     Av { code: i32, ctx: &'static str },
 }
 
-/// Plain wording for the FFmpeg errors people actually meet.
 fn av_message(code: i32, ctx: &str) -> String {
     match code {
         -2 => "couldn't open the file; it may have been moved or deleted".into(),
@@ -49,14 +46,10 @@ fn av_message(code: i32, ctx: &str) -> String {
     }
 }
 
-/// Initialize FFmpeg once. Cheap to call repeatedly.
 pub fn init() -> Result<()> {
     ff::init().map_err(|e| Error::Ffmpeg(e.to_string()))
 }
 
-/// H.264 encoders in priority order for this platform. Hardware first; on
-/// Windows the last entry is the software fallback so capture still works on a
-/// machine with no usable GPU encoder.
 pub(crate) const H264_CANDIDATES: &[(EncoderKind, &str)] = &[
     #[cfg(windows)]
     (EncoderKind::Nvenc, "h264_nvenc"),
@@ -72,25 +65,17 @@ pub(crate) const H264_CANDIDATES: &[(EncoderKind, &str)] = &[
     (EncoderKind::Qsv, "h264_qsv"),
     #[cfg(target_os = "linux")]
     (EncoderKind::Amf, "h264_amf"),
-    // Software fallbacks, tried only when no GPU encoder opens. libx264 needs a
-    // GPL FFmpeg build; h264_mf is Windows' built-in Media Foundation encoder and
-    // is present in LGPL builds too.
     #[cfg(windows)]
     (EncoderKind::Software, "libx264"),
     #[cfg(windows)]
     (EncoderKind::Software, "h264_mf"),
 ];
 
-/// What `Encoder::new` actually tries, in order. Linux keeps its VA-API-only
-/// path; Windows walks every candidate and keeps the first that opens.
 #[cfg(target_os = "linux")]
 pub(crate) const ENCODE_ORDER: &[(EncoderKind, &str)] = &[(EncoderKind::Vaapi, "h264_vaapi")];
 #[cfg(windows)]
 pub(crate) const ENCODE_ORDER: &[(EncoderKind, &str)] = H264_CANDIDATES;
 
-/// Probe H.264 encoders in priority order and return the first whose FFmpeg
-/// codec is present in this build. Actual device-open is verified when an
-/// `Encoder` is constructed (§6.1: probe that it really initializes).
 pub fn detect_h264_encoder() -> Option<(EncoderKind, &'static str)> {
     H264_CANDIDATES
         .iter()

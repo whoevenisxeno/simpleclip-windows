@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Monotonic capture timestamp in nanoseconds, shared across audio and video
-/// sources so the muxer can align tracks. Never derived from wall-clock time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Timestamp(pub i64);
 

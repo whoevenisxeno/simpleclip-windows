@@ -12,14 +12,10 @@ pub struct AudioDevice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioRole {
-    /// System/desktop output (WASAPI loopback / PipeWire sink-monitor).
     Desktop,
-    /// Optional microphone input.
     Microphone,
 }
 
-/// Interleaved f32 samples with a monotonic timestamp on the same timebase as
-/// video, so the muxer can keep A/V drift under the 50ms acceptance bound.
 pub struct AudioBuffer {
     pub role: AudioRole,
     pub sample_rate: u32,
@@ -28,8 +24,6 @@ pub struct AudioBuffer {
     pub samples: Vec<f32>,
 }
 
-/// One implementation per platform audio system. Desktop and mic are separate
-/// sources; mixing/track layout is decided at save time, not here.
 pub trait AudioSource: Send {
     fn role(&self) -> AudioRole;
     fn enumerate(&self) -> Result<Vec<AudioDevice>>;

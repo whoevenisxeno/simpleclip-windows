@@ -1,7 +1,3 @@
-//! Windows shell integration for the daemon: single-instance guard, global save
-//! hotkey, system tray, start-with-Windows, toast notifications, and the little
-//! Win32 helpers (foreground app, local time) the portable code calls.
-
 use crate::state::Daemon;
 use sc_core::capture::CaptureState;
 use std::path::PathBuf;
@@ -31,35 +27,27 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const AUMID: &str = "SimpleClip"; // also the Run-key value name
+const AUMID: &str = "SimpleClip";
 
-/// Route console output to the parent terminal when started with `--foreground`.
-/// The release binary is a GUI-subsystem app (no console flash at login), so a
-/// terminal has to be attached explicitly. Returns a writer for the log output.
 pub fn attach_parent_console() -> Option<std::fs::File> {
     unsafe { AttachConsole(ATTACH_PARENT_PROCESS).ok()? };
     std::fs::OpenOptions::new().write(true).open("CONOUT$").ok()
 }
 
-/// `false` if another daemon already holds the instance mutex.
 pub fn acquire_single_instance() -> bool {
     unsafe {
         match CreateMutexW(None, true, w!("Local\\SimpleClipDaemon")) {
-            // The handle is deliberately never closed: the mutex must live as
-            // long as the process (HANDLE has no Drop, so nothing releases it).
             Ok(_) => GetLastError() != ERROR_ALREADY_EXISTS,
             Err(_) => true,
         }
     }
 }
 
-/// Local wall-clock time as (year, month, day, hour, minute, second).
 pub fn local_time() -> (u16, u16, u16, u16, u16, u16) {
     let t = unsafe { GetLocalTime() };
     (t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
 }
 
-/// Executable path of the window currently in the foreground.
 pub fn foreground_exe() -> Option<PathBuf> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -84,9 +72,6 @@ pub fn foreground_exe() -> Option<PathBuf> {
     }
 }
 
-// ---------------------------------------------------------------- hotkey --
-
-/// Parse "CTRL+ALT+F10" style strings into RegisterHotKey modifiers + virtual key.
 pub fn parse_hotkey(spec: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
     let mut mods = HOT_KEY_MODIFIERS(0);
     let mut key = None;
@@ -99,7 +84,7 @@ pub fn parse_hotkey(spec: &str) -> Option<(HOT_KEY_MODIFIERS, u32)> {
             "" => return None,
             k => {
                 if key.replace(parse_key(k)?).is_some() {
-                    return None; // two non-modifier keys
+                    return None;
                 }
             }
         }
@@ -111,9 +96,6 @@ fn parse_key(k: &str) -> Option<u32> {
     sc_core::keys::vk_from_name(k)
 }
 
-/// Own the global hotkeys on a dedicated message-loop thread. Bindings follow
-/// the config: edit `hotkeys.save` / `hotkeys.screenshot` and they re-register
-/// without a restart.
 pub fn spawn_hotkey(daemon: Daemon) {
     std::thread::Builder::new()
         .name("sc-hotkey".into())
@@ -125,14 +107,11 @@ const SAVE_ID: i32 = 0x5C01;
 const SHOT_ID: i32 = 0x5C02;
 const OPEN_ID: i32 = 0x5C03;
 
-/// One configurable global hotkey: what is registered with Windows right now,
-/// and the last value that failed (so a bad binding is reported once, not every poll).
 struct Binding {
     id: i32,
     what: &'static str,
     registered: Option<String>,
     failed: Option<String>,
-    /// The registered combination includes Alt (see `mask_alt`).
     uses_alt: bool,
 }
 
@@ -147,7 +126,6 @@ impl Binding {
         }
     }
 
-    /// Bring the registration in line with the configured `want` string.
     fn sync(&mut self, want: &str) {
         if self.registered.as_deref() == Some(want) || self.failed.as_deref() == Some(want) {
             return;
@@ -158,7 +136,6 @@ impl Binding {
             }
         }
         self.uses_alt = false;
-        // An empty binding means "off" and is not an error.
         if want.trim().is_empty() {
             self.failed = None;
             return;
@@ -212,8 +189,6 @@ fn hotkey_loop(daemon: Daemon) {
         save.sync(&want_save);
         shot.sync(&want_shot);
         open.sync(&want_open);
-        // WM_HOTKEY lands in this thread's queue; poll it so config changes are
-        // also noticed promptly.
         let mut msg = MSG::default();
         while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
             if msg.message != WM_HOTKEY {
@@ -244,21 +219,16 @@ fn hotkey_loop(daemon: Daemon) {
     }
 }
 
-/// Windows treats a lone press and release of Alt as "go to the menu bar". A
-/// hotkey like Alt+F10 swallows the F10 but not the Alt, so the program in front
-/// would still see a lone Alt: its menu lights up, a game can lose focus, a
-/// browser eats the next key. Pressing an unassigned key while Alt is still down
-/// turns it into a combination, which is what stops that.
 fn mask_alt() {
     unsafe {
         if GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000 == 0 {
-            return; // Alt is already up, nothing to cancel
+            return;
         }
         let key = |flags: KEYBD_EVENT_FLAGS| INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(0xE8), // unassigned
+                    wVk: VIRTUAL_KEY(0xE8),
                     wScan: 0,
                     dwFlags: flags,
                     time: 0,
@@ -285,10 +255,6 @@ fn screenshot_from_hotkey(daemon: &Daemon) {
     }
 }
 
-// --------------------------------------------------------- notifications --
-
-/// A card shortly after start-up: SimpleClip is running in the background, and
-/// whether a newer version is out. Waits a little for the network at sign-in.
 pub fn announce_startup(daemon: Daemon) {
     std::thread::Builder::new()
         .name("sc-startup-card".into())
@@ -335,7 +301,6 @@ pub fn announce_startup(daemon: Daemon) {
         .ok();
 }
 
-/// Show a one-line popup in the top-right corner (errors, hotkey problems).
 pub fn notify(title: &str, body: &str) {
     let kind = if title.to_ascii_lowercase().contains("couldn") {
         crate::popup::Kind::Error
@@ -345,8 +310,6 @@ pub fn notify(title: &str, body: &str) {
     crate::popup::show(crate::popup::Popup::simple(kind, title, body));
 }
 
-/// Opt the process into per-monitor DPI awareness so the popup is crisp on
-/// scaled displays. Must run before any window is created.
 pub fn init_dpi() {
     use windows::Win32::UI::HiDpi::{
         SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -356,11 +319,8 @@ pub fn init_dpi() {
     }
 }
 
-/// The built-in save sound (a camera shutter, see assets/sounds/CREDITS.md).
 static SAVE_WAV: &[u8] = include_bytes!("../../../assets/sounds/save.wav");
 
-/// Play the save sound: the user's own file if one is set and exists, else the
-/// built-in one. Async; returns immediately.
 pub fn play_save_sound(g: &sc_core::config::GeneralSettings) {
     use windows::core::HSTRING;
     unsafe {
@@ -377,8 +337,6 @@ pub fn play_save_sound(g: &sc_core::config::GeneralSettings) {
         );
     }
 }
-
-// ------------------------------------------------------------- autostart --
 
 pub fn autostart_enabled() -> bool {
     use winreg::enums::{HKEY_CURRENT_USER, KEY_READ};
@@ -405,11 +363,7 @@ pub fn set_autostart(on: bool) {
     }
 }
 
-// ------------------------------------------------------------------ tray --
-
 fn tray_icon_image(active: bool) -> tray_icon::Icon {
-    // The app logo at 32x32 (assets/tray-32.rgba, made by assets/make-icon.ps1). While
-    // paused it is drawn in grey and slightly faded, so the state shows at a glance.
     const N: u32 = 32;
     static LOGO: &[u8] = include_bytes!("../../../assets/tray-32.rgba");
     let mut px = LOGO.to_vec();
@@ -426,9 +380,6 @@ fn tray_icon_image(active: bool) -> tray_icon::Icon {
     tray_icon::Icon::from_rgba(px, N, N).expect("valid icon")
 }
 
-/// Handle the open window if there is one: minimise it when it is the window in
-/// front, otherwise restore it and bring it up. Returns false when there is no
-/// such window.
 fn raise_gui() -> bool {
     unsafe extern "system" fn visit(hwnd: HWND, found: LPARAM) -> BOOL {
         let mut title = [0u16; 32];
@@ -436,7 +387,6 @@ fn raise_gui() -> bool {
         let mut class = [0u16; 64];
         let c = GetClassNameW(hwnd, &mut class).max(0) as usize;
         let is_title = String::from_utf16_lossy(&title[..n]) == "SimpleClip";
-        // The save card is also titled "SimpleClip"; it is not the app.
         let is_card = String::from_utf16_lossy(&class[..c]) == "SimpleClipPopup";
         if is_title && !is_card && (IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool()) {
             *(found.0 as *mut Option<HWND>) = Some(hwnd);
@@ -451,7 +401,6 @@ fn raise_gui() -> bool {
             LPARAM(&mut found as *mut Option<HWND> as isize),
         );
         let Some(hwnd) = found else { return false };
-        // Already the window in front: pressing the shortcut again tucks it away.
         if !IsIconic(hwnd).as_bool() && GetForegroundWindow() == hwnd {
             let _ = ShowWindow(hwnd, SW_MINIMIZE);
             return true;
@@ -464,8 +413,6 @@ fn raise_gui() -> bool {
     }
 }
 
-/// The open-window shortcut: bring SimpleClip up (a new window if none is open),
-/// or put it away if it is already in front.
 fn open_gui() {
     if raise_gui() {
         return;
@@ -487,8 +434,6 @@ fn open_folder(path: &std::path::Path) {
     let _ = Command::new("explorer.exe").arg(path).spawn();
 }
 
-/// Run the tray icon and its message loop on the calling (main) thread. Returns
-/// when the user picks Quit.
 pub fn run_tray(daemon: Daemon) {
     use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{TrayIconBuilder, TrayIconEvent};
@@ -551,8 +496,6 @@ pub fn run_tray(daemon: Daemon) {
                 let paused = d.capture_state() != CaptureState::Paused;
                 d.set_paused(paused);
             } else if id == auto_id {
-                // Persist through the config so the setting survives restarts
-                // (the daemon re-applies it from there).
                 let on = !autostart_enabled();
                 set_autostart(on);
                 if let Ok(path) = sc_core::config::Config::default_path() {
@@ -572,8 +515,6 @@ pub fn run_tray(daemon: Daemon) {
         }
     }));
 
-    // The standard message loop services the tray's hidden window and menus.
-    // Poll rather than block so pause changes can refresh the icon too.
     let mut msg = MSG::default();
     let mut shown_paused = false;
     loop {
@@ -586,7 +527,6 @@ pub fn run_tray(daemon: Daemon) {
                 DispatchMessageW(&msg);
             }
         }
-        // Reflect pause state however it changed (menu, `sc pause`, or the GUI).
         let paused = daemon.capture_state() == CaptureState::Paused;
         if paused != shown_paused {
             shown_paused = paused;
@@ -606,8 +546,6 @@ pub fn run_tray(daemon: Daemon) {
     }
 }
 
-/// Whether a program is running in exclusive full screen (Direct3D), the mode
-/// games use and a browser or document never does.
 pub fn exclusive_fullscreen() -> bool {
     use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN};
     unsafe {
@@ -625,7 +563,7 @@ mod tests {
     fn parses_modifier_combos() {
         let (m, vk) = parse_hotkey("ctrl+alt+F10").unwrap();
         assert_eq!(m, MOD_CONTROL | MOD_ALT);
-        assert_eq!(vk, 0x79); // VK_F10
+        assert_eq!(vk, 0x79);
         let (m, vk) = parse_hotkey("SUPER + shift + c").unwrap();
         assert_eq!(m, MOD_WIN | MOD_SHIFT);
         assert_eq!(vk, b'C' as u32);
@@ -650,8 +588,8 @@ mod tests {
     fn rejects_malformed_hotkeys() {
         assert!(parse_hotkey("").is_none());
         assert!(parse_hotkey("CTRL+").is_none());
-        assert!(parse_hotkey("CTRL+ALT").is_none()); // modifiers only
-        assert!(parse_hotkey("A+B").is_none()); // two keys
+        assert!(parse_hotkey("CTRL+ALT").is_none());
+        assert!(parse_hotkey("A+B").is_none());
         assert!(parse_hotkey("ALT+F99").is_none());
         assert!(parse_hotkey("ALT+NOPE").is_none());
     }

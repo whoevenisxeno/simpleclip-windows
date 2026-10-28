@@ -1,6 +1,3 @@
-//! Pop-over sheets for the clip library: a clip's details (rename, bookmarks,
-//! folder, note), the bookmark manager, and the new-folder prompt.
-
 use crate::app::{ScApp, Screen, ToastKind};
 use crate::library::{self, COLORS};
 use crate::screens::gallery::{self, Clip};
@@ -9,7 +6,6 @@ use crate::widgets;
 use egui::{vec2, Align, Align2, Color32, FontId, Layout, Order, RichText, Rounding, Sense, Ui};
 use std::path::PathBuf;
 
-/// What is open right now, plus the text boxes' working copies.
 #[derive(Default)]
 pub struct SheetState {
     pub open: Option<PathBuf>,
@@ -21,16 +17,13 @@ pub struct SheetState {
     new_color: usize,
     pub folder_dialog: Option<FolderDialog>,
     error: Option<String>,
-    /// Size chosen for "Compress for Discord" (0 until chosen, meaning 10 MB).
     compress_mb: u32,
     compress_open: bool,
-    /// A compression running in the background, and what it will report.
     compress_job: Option<crossbeam_channel::Receiver<Result<(PathBuf, f64), String>>>,
 }
 
 pub struct FolderDialog {
     pub name: String,
-    /// A clip to move into the new folder once it exists.
     pub move_clip: Option<PathBuf>,
 }
 
@@ -42,9 +35,7 @@ impl SheetState {
     }
 }
 
-/// Draw whichever sheet is open. Call once per frame, after the main content.
 pub fn show(app: &mut ScApp, ctx: &egui::Context) {
-    // A compression can be started from a card's menu with no sheet open.
     poll_compress(app, ctx);
     if app.sheet.folder_dialog.is_some() {
         folder_dialog(app, ctx);
@@ -55,8 +46,6 @@ pub fn show(app: &mut ScApp, ctx: &egui::Context) {
     }
 }
 
-/// A centred card over a dimmed backdrop. Returns true when the user asked to
-/// close it (backdrop click or Esc).
 pub(crate) fn modal(ctx: &egui::Context, id: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
     let p = pal(ctx);
     let screen = ctx.screen_rect();
@@ -114,7 +103,6 @@ fn field_label(ui: &mut Ui, text: &str) {
     );
 }
 
-/// A text box in the app's inset style.
 fn text_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
     let p = theme::pal_ui(ui);
     egui::Frame::none()
@@ -132,14 +120,11 @@ fn text_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> egui::Res
         .inner
 }
 
-// ------------------------------------------------------------------ details --
-
 fn details(app: &mut ScApp, ctx: &egui::Context) {
     let Some(path) = app.sheet.open.clone() else {
         return;
     };
     let Some(clip) = app.gallery.find(&path) else {
-        // The file is gone (deleted or moved outside the app).
         app.sheet.open = None;
         return;
     };
@@ -164,7 +149,6 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 28.0;
 
-            // Left: preview, when it happened, and the file actions.
             ui.vertical(|ui| {
                 ui.set_width(left_w);
                 let resp =
@@ -236,7 +220,6 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                 }
             });
 
-            // Right: the editable details.
             ui.vertical(|ui| {
                 ui.set_width(right_w);
                 title(ui, "Details");
@@ -323,7 +306,6 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
     });
 
     if close || done {
-        // Commit a half-typed name and make sure the note reaches disk.
         if !done {
             rename(app, &clip);
         }
@@ -332,7 +314,6 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
     }
 }
 
-/// Apply the name box to the file (no-op if unchanged or empty).
 fn rename(app: &mut ScApp, clip: &Clip) {
     let current = app.sheet.open.clone().unwrap_or_else(|| clip.path.clone());
     let stem = current
@@ -342,7 +323,7 @@ fn rename(app: &mut ScApp, clip: &Clip) {
         .to_string();
     let wanted = app.sheet.name_buf.trim().to_string();
     if wanted.is_empty() {
-        app.sheet.name_buf = stem; // never rename to nothing; restore
+        app.sheet.name_buf = stem;
         return;
     }
     if library::clean_name(&wanted) == stem {
@@ -350,7 +331,6 @@ fn rename(app: &mut ScApp, clip: &Clip) {
     }
     match library::rename_clip(&current, &wanted) {
         Ok(new) => {
-            // A custom name no longer says which game this was, so remember it.
             app.library.set_game_if_unset(&current, &clip.game);
             after_file_change(app, &current, &new);
             app.sheet.name_buf = new
@@ -365,19 +345,16 @@ fn rename(app: &mut ScApp, clip: &Clip) {
     }
 }
 
-/// A clip's path changed (rename or move): keep every record pointing at it.
 fn after_file_change(app: &mut ScApp, old: &std::path::Path, new: &std::path::Path) {
     app.library.rekey(old, new);
     app.thumbs.forget(old);
     app.gallery.rescan();
-    // Follow the clip if its details are what is open (not when a card's menu did it).
     if app.sheet.open.as_deref() == Some(old) {
         app.sheet.open = Some(new.to_path_buf());
         app.sheet.loaded_for = Some(new.to_path_buf());
     }
 }
 
-/// Start shrinking a clip to fit `mb` MB from a card's menu.
 pub fn compress_clip(app: &mut ScApp, clip: &Clip, mb: u32) {
     if app.sheet.compress_job.is_some() {
         app.toast("Already compressing a clip", ToastKind::Warn);
@@ -388,7 +365,6 @@ pub fn compress_clip(app: &mut ScApp, clip: &Clip, mb: u32) {
     app.toast(format!("Compressing to fit {mb} MB\u{2026}"), ToastKind::Ok);
 }
 
-/// Move a clip into `dest` from a card's menu.
 pub fn move_clip_to(app: &mut ScApp, clip: &Clip, dest: &std::path::Path) {
     let root = app.cfg.save.resolve_dir();
     match library::move_clip(&clip.path, dest) {
@@ -403,7 +379,6 @@ pub fn move_clip_to(app: &mut ScApp, clip: &Clip, dest: &std::path::Path) {
     }
 }
 
-/// Ask for a new folder and move a clip into it.
 pub fn move_clip_to_new_folder(app: &mut ScApp, clip: &Clip) {
     app.sheet.folder_dialog = Some(FolderDialog {
         name: String::new(),
@@ -422,7 +397,6 @@ pub(crate) fn delete_clip(app: &mut ScApp, clip: &Clip) {
     app.gallery.rescan();
 }
 
-/// Where the clip lives, as a dropdown that moves it when changed.
 fn folder_picker(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
     let root = app.cfg.save.resolve_dir();
     let current_dir = clip
@@ -474,8 +448,6 @@ fn folder_picker(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
     }
 }
 
-// ---------------------------------------------------------------- bookmarks --
-
 fn manager(app: &mut ScApp, ctx: &egui::Context) {
     let mut done = false;
     let close = modal(ctx, "bookmark-manager", 500.0, |ui| {
@@ -488,8 +460,6 @@ fn manager(app: &mut ScApp, ctx: &egui::Context) {
         );
         ui.add_space(4.0);
 
-        // Existing bookmarks: colour, name, usage, delete. Edits are collected and
-        // applied after the loop so we aren't borrowing the library while drawing.
         let snapshot = app.library.bookmarks.clone();
         let mut edits: Vec<(u32, String, [u8; 3])> = Vec::new();
         let mut remove: Option<u32> = None;
@@ -540,7 +510,6 @@ fn manager(app: &mut ScApp, ctx: &egui::Context) {
             app.library.delete_bookmark(id);
         }
 
-        // New bookmark.
         ui.add_space(6.0);
         field_label(ui, "New bookmark");
         let mut add = false;
@@ -572,7 +541,6 @@ fn manager(app: &mut ScApp, ctx: &egui::Context) {
             let color = COLORS[app.sheet.new_color];
             app.library.add_bookmark(&app.sheet.new_name, color);
             app.sheet.new_name.clear();
-            // Next colour, so consecutive bookmarks differ by default.
             app.sheet.new_color = (app.sheet.new_color + 1) % COLORS.len();
         }
     });
@@ -581,8 +549,6 @@ fn manager(app: &mut ScApp, ctx: &egui::Context) {
         app.sheet.manage = false;
     }
 }
-
-// ------------------------------------------------------------------ folders --
 
 fn folder_dialog(app: &mut ScApp, ctx: &egui::Context) {
     let mut create = false;
@@ -663,14 +629,12 @@ fn make_folder(app: &mut ScApp) {
             }
         }
         Err(e) => {
-            // Keep the dialog open so the name can be fixed.
             app.sheet.error = Some(e);
             app.sheet.folder_dialog = Some(d);
         }
     }
 }
 
-/// Start shrinking a clip in the background (the daemon does the work).
 fn start_compress(app: &mut ScApp, clip: &Clip) {
     let (tx, rx) = crossbeam_channel::bounded(1);
     let req = sc_core::ipc::Request::Compress {
@@ -693,7 +657,6 @@ fn start_compress(app: &mut ScApp, clip: &Clip) {
     });
 }
 
-/// Report a finished compression, and keep repainting while one is running.
 fn poll_compress(app: &mut ScApp, ctx: &egui::Context) {
     let Some(rx) = &app.sheet.compress_job else {
         return;

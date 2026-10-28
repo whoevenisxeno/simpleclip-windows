@@ -7,21 +7,10 @@ use sc_core::time::Timestamp;
 use std::ffi::CString;
 use std::ptr;
 
-const TIMEBASE_HZ: i64 = 1_000_000; // microsecond encoder timebase for variable-rate capture
+const TIMEBASE_HZ: i64 = 1_000_000;
 
-/// H.264 encoder that emits encoded packets (it does not mux). Feed it NV12
-/// frames with a monotonic nanosecond timestamp and it returns packets carrying
-/// real PTS, so variable-rate screen capture plays back at the right speed.
-/// Global headers are always on so an MP4 muxer built from this encoder gets
-/// SPS/PPS in the container header.
-///
-/// On Linux frames are uploaded to a VA-API surface. On Windows the hardware
-/// encoders (NVENC, AMF, QSV) take system-memory NV12 directly, so no hardware
-/// frame pool is needed; `new` walks the candidate list and keeps the first that
-/// really opens, ending in libx264.
 pub struct Encoder {
     ctx: *mut ffi::AVCodecContext,
-    // Null on Windows, where frames are sent as plain NV12.
     device: *mut ffi::AVBufferRef,
     frames: *mut ffi::AVBufferRef,
     width: i32,
@@ -31,12 +20,9 @@ pub struct Encoder {
     name: &'static str,
     gop: i64,
     sent: i64,
-    /// Frames go in as BGRA and the encoder converts to YUV on the GPU, skipping
-    /// the CPU swscale step (cheaper CPU, hardware encoders only).
     bgra: bool,
 }
 
-// Owned by, and used from, a single encode thread; moving it there is sound.
 unsafe impl Send for Encoder {}
 
 impl Encoder {
@@ -51,15 +37,11 @@ impl Encoder {
         crate::init()?;
         let (w, h) = (width as i32, height as i32);
         let mut last_err = Error::NoEncoder { codec: "h264" };
-        // `SC_ENCODER=h264_mf` (or any FFmpeg encoder name in the list) pins the
-        // choice, for testing fallbacks and for working around a driver bug.
         let forced = std::env::var("SC_ENCODER").ok();
         for &(kind, name) in crate::ENCODE_ORDER {
             if forced.as_deref().is_some_and(|f| f != name) {
                 continue;
             }
-            // With GPU conversion requested, try BGRA input first on the encoders
-            // that take it, then fall back to NV12 on the same encoder.
             let modes: &[bool] = if gpu_convert && bgra_capable(kind) {
                 &[true, false]
             } else {
@@ -95,27 +77,20 @@ impl Encoder {
         Err(last_err)
     }
 
-    /// Which encoder backend actually opened.
     pub fn kind(&self) -> EncoderKind {
         self.kind
     }
 
-    /// FFmpeg codec name of the opened encoder (e.g. `h264_nvenc`).
     pub fn name(&self) -> &'static str {
         self.name
     }
 
-    /// Whether frames must be pushed with `push_bgra` (GPU colour conversion)
-    /// rather than `push_nv12`.
     pub fn takes_bgra(&self) -> bool {
         self.bgra
     }
 }
 
 impl Encoder {
-    /// Platform-specific setup before the codec opens. On Linux that is the
-    /// VA-API device and surface pool; VA-API is only ever tried on Linux, and
-    /// other candidates there simply fail to open if the hardware is absent.
     unsafe fn try_open(&mut self, fps: i32, bitrate: i64, gop: i32) -> Result<()> {
         #[cfg(target_os = "linux")]
         if self.kind == EncoderKind::Vaapi {
@@ -160,14 +135,10 @@ impl Encoder {
             c.hw_frames_ctx = ffi::av_buffer_ref(self.frames);
         }
         c.flags |= ffi::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-        // Constrain the rate so the ring buffer's byte budget (sized from the
-        // configured bitrate) actually holds N seconds.
         #[cfg(windows)]
         {
             c.rc_max_rate = bitrate * 1000;
             c.rc_buffer_size = (bitrate * 1000) as i32;
-            // Tag the stream BT.709 / limited range to match the converter, so
-            // players don't guess (and shift colours).
             c.colorspace = ffi::AVColorSpace::AVCOL_SPC_BT709;
             c.color_primaries = ffi::AVColorPrimaries::AVCOL_PRI_BT709;
             c.color_trc = ffi::AVColorTransferCharacteristic::AVCOL_TRC_BT709;
@@ -190,7 +161,6 @@ impl Encoder {
     }
 }
 
-/// Encoders that can take BGRA frames and convert on the GPU.
 fn bgra_capable(kind: EncoderKind) -> bool {
     cfg!(windows)
         && matches!(
@@ -201,14 +171,11 @@ fn bgra_capable(kind: EncoderKind) -> bool {
 
 fn bgra_format(kind: EncoderKind) -> ffi::AVPixelFormat {
     match kind {
-        // NVENC wants the padded-alpha variant; AMF and QSV take straight BGRA.
         EncoderKind::Nvenc => ffi::AVPixelFormat::AV_PIX_FMT_BGR0,
         _ => ffi::AVPixelFormat::AV_PIX_FMT_BGRA,
     }
 }
 
-/// Low-latency, constant-ish-rate settings per encoder. Replay capture wants the
-/// encoder to keep up in real time and never stall the pipeline.
 fn encoder_options(kind: EncoderKind, name: &str) -> &'static [(&'static str, &'static str)] {
     match kind {
         EncoderKind::Nvenc => &[
@@ -234,16 +201,12 @@ fn encoder_options(kind: EncoderKind, name: &str) -> &'static [(&'static str, &'
 }
 
 impl Encoder {
-    /// Encode one packed NV12 frame stamped with a monotonic nanosecond time.
-    /// Returns any packets that became ready (usually one, sometimes zero).
     pub fn push_nv12(&mut self, nv12: &[u8], pts_nanos: i64) -> Result<Vec<EncodedPacket>> {
         let base = *self.base_ns.get_or_insert(pts_nanos);
         let pts_us = (pts_nanos - base) / (1_000_000_000 / TIMEBASE_HZ);
         unsafe { self.upload(nv12, pts_us) }
     }
 
-    /// Encode one BGRA frame (rows `stride` bytes apart) when the encoder was
-    /// opened for GPU colour conversion.
     pub fn push_bgra(
         &mut self,
         bgra: &[u8],
@@ -348,10 +311,6 @@ impl Encoder {
             h / 2,
         );
         if self.frames.is_null() {
-            // Software-memory path (Windows): the encoder takes NV12 directly.
-            // Several hardware encoders (AMF in particular) ignore gop_size, which
-            // would leave one endless GOP the ring buffer can never trim, so ask
-            // for an IDR explicitly every `gop` frames.
             if self.sent % self.gop == 0 {
                 (*sw).pict_type = ffi::AVPictureType::AV_PICTURE_TYPE_I;
             }
@@ -450,13 +409,8 @@ impl Drop for Encoder {
     }
 }
 
-/// An owned snapshot of the encoder's codec parameters (dimensions + SPS/PPS
-/// extradata). Lets a muxer be built on a save thread without touching the live
-/// encoder. Safe to send across threads: it is plain owned data with no aliasing.
 pub struct CodecParams(*mut ffi::AVCodecParameters);
 
-// Send + Sync: after creation the AVCodecParameters is immutable; the muxer only
-// reads it (avcodec_parameters_copy), so sharing a reference across threads is safe.
 unsafe impl Send for CodecParams {}
 unsafe impl Sync for CodecParams {}
 
@@ -465,8 +419,6 @@ impl CodecParams {
         self.0
     }
 
-    /// Snapshot the codec parameters (dimensions/format + extradata) of any open
-    /// encoder context.
     pub(crate) fn from_context(ctx: *mut ffi::AVCodecContext) -> Result<Self> {
         unsafe {
             let p = ffi::avcodec_parameters_alloc();

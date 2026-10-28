@@ -1,10 +1,3 @@
-//! Names for the keys a shortcut can use, shared by the service (which turns a
-//! shortcut string into a Windows virtual-key code) and the app (which turns the
-//! key you press into a string). Keys without a friendly name are written
-//! `VK_<hex>`, e.g. `VK_C0`, so every key on the keyboard can be a shortcut.
-
-/// Keys with a fixed friendly name: `(name, virtual-key code)`. Letters, digits
-/// and F1 to F24 are handled by rule, not listed here.
 const NAMED: &[(&str, u32)] = &[
     ("BACKSPACE", 0x08),
     ("TAB", 0x09),
@@ -63,7 +56,6 @@ const NAMED: &[(&str, u32)] = &[
     ("OEM102", 0xE2),
 ];
 
-/// Other spellings that mean the same key.
 const ALIASES: &[(&str, u32)] = &[
     ("PRINTSCREEN", 0x2C),
     ("PRTSC", 0x2C),
@@ -86,22 +78,19 @@ const ALIASES: &[(&str, u32)] = &[
     ("BACKSLASH", 0xDC),
 ];
 
-/// Virtual-key codes that are not a key to press on their own: the mouse
-/// buttons, the modifiers (left, right and generic) and Windows' placeholders.
 fn is_reserved(vk: u32) -> bool {
     matches!(vk, 0x00..=0x07 | 0x10..=0x12 | 0x5B | 0x5C | 0xA0..=0xA5 | 0xE5 | 0xE7 | 0xFF)
 }
 
-/// The virtual-key code for a key name (any case), or `None` if it isn't one.
 pub fn vk_from_name(name: &str) -> Option<u32> {
     let k = name.trim().to_ascii_uppercase();
     if let Some(n) = k.strip_prefix('F').and_then(|n| n.parse::<u32>().ok()) {
-        return (1..=24).contains(&n).then_some(0x6F + n); // VK_F1 = 0x70
+        return (1..=24).contains(&n).then_some(0x6F + n);
     }
     if k.len() == 1 {
         let c = k.as_bytes()[0];
         if c.is_ascii_uppercase() || c.is_ascii_digit() {
-            return Some(c as u32); // VK codes for A-Z / 0-9 are their ASCII values
+            return Some(c as u32);
         }
     }
     if let Some(hex) = k.strip_prefix("VK_") {
@@ -115,8 +104,6 @@ pub fn vk_from_name(name: &str) -> Option<u32> {
         .map(|(_, vk)| *vk)
 }
 
-/// The name to store for a virtual-key code, or `None` for keys that can't be
-/// a shortcut on their own (modifiers, mouse buttons).
 pub fn name_from_vk(vk: u32) -> Option<String> {
     if is_reserved(vk) {
         return None;
@@ -164,7 +151,7 @@ mod tests {
 
     #[test]
     fn rejects_modifiers_and_nonsense() {
-        assert!(vk_from_name("VK_11").is_none()); // Ctrl
+        assert!(vk_from_name("VK_11").is_none());
         assert!(vk_from_name("VK_FF").is_none());
         assert!(vk_from_name("VK_ZZ").is_none());
         assert!(vk_from_name("F25").is_none());

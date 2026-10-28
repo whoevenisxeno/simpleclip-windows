@@ -1,12 +1,3 @@
-//! A small in-app video player: picture drawn as an egui texture, sound played
-//! through the default output device. Sound is the clock when there is any, so
-//! picture and voice stay together; with no sound (or no output device, or a
-//! device that stalls) a wall clock drives the picture.
-//!
-//! Seeking restarts the decoders at the new position. That is quick enough for
-//! short clips and keeps the decode threads simple. Clips saved with separate
-//! audio tracks (game and microphone) have every track mixed for playback.
-
 use crate::theme::{icon, pal_ui};
 use crate::widgets;
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -18,15 +9,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Widest picture the decoder produces.
 const MAX_WIDTH: u32 = 960;
-/// The output device asks for samples a little before it plays them, so the
-/// count of samples handed over runs ahead of what is audible. Subtract it.
 const AUDIO_LAG: f64 = 0.09;
-/// Seconds skipped by the arrow keys.
 const SKIP: f64 = 5.0;
 
-/// One decoded audio track being read by the output device.
 struct Track {
     rx: Receiver<Vec<f32>>,
     buf: Vec<f32>,
@@ -34,7 +20,6 @@ struct Track {
     ended: bool,
 }
 
-/// Mixes the decoded tracks for the output device and counts what it played.
 struct Mix {
     tracks: Vec<Track>,
     played: Arc<AtomicU64>,
@@ -56,7 +41,6 @@ impl Iterator for Mix {
                         t.buf = chunk;
                         t.i = 0;
                     }
-                    // Decoder is behind: this track is silent for now.
                     Err(TryRecvError::Empty) => {
                         alive = true;
                         continue;
@@ -95,19 +79,15 @@ impl Source for Mix {
     }
 }
 
-/// One start of the decoders; dropping it stops them.
 struct Run {
     stop: Arc<AtomicBool>,
     video: Receiver<VideoFrame>,
     sink: Option<Sink>,
     played: Arc<AtomicU64>,
     audio_done: Arc<AtomicBool>,
-    /// Where in the clip this run began, in seconds.
     from: f64,
     began: Instant,
-    /// Pictures shown by this run, to tell "ended" from "failed to decode".
     shown: u32,
-    /// Last sample count seen and when it last changed (detects a stalled device).
     last_played: u64,
     last_change: Instant,
 }
@@ -124,30 +104,22 @@ impl Drop for Run {
 pub struct Player {
     path: PathBuf,
     info: Result<MediaInfo, String>,
-    /// Set when decoding fails part-way.
     failed: Option<String>,
-    /// Current position in seconds.
     pos: f64,
     playing: bool,
     muted: bool,
     run: Option<Run>,
-    /// Next decoded picture that isn't due yet.
     pending: Option<VideoFrame>,
     tex: Option<egui::TextureHandle>,
     last_tick: Instant,
-    /// Show the first picture of a paused seek even though no time passes.
     want_still: bool,
-    /// Fraction being dragged to on the bar (applied on release).
     scrub: Option<f64>,
     out: Option<(OutputStream, OutputStreamHandle)>,
-    /// Only this part of the clip plays (and loops), as in the trim view.
     range: Option<(f64, f64)>,
-    /// A paused seek waiting for a handle to stop moving, and when it was asked.
     focus: Option<(f64, Instant)>,
 }
 
 impl Player {
-    /// Open `path` showing the picture at `at` seconds, paused.
     pub fn open_paused(path: &Path, at: f64) -> Self {
         let mut p = Self::open(path);
         if p.info.is_ok() {
@@ -156,19 +128,15 @@ impl Player {
         p
     }
 
-    /// Limit playback to `start..end` seconds. Playing loops inside it.
     pub fn set_range(&mut self, start: f64, end: f64) {
         self.range = Some((start, end.max(start + 0.1)));
     }
 
-    /// Show the picture at `secs`, paused, once the caller stops asking for a moment
-    /// (so dragging a trim handle follows along without reopening the file per pixel).
     pub fn focus(&mut self, secs: f64) {
         self.pause();
         self.focus = Some((secs, Instant::now()));
     }
 
-    /// Open `path` and start playing it from the beginning.
     pub fn open(path: &Path) -> Self {
         let info = sc_ffmpeg::media_info(path).map_err(|e| e.to_string());
         let mut p = Self {
@@ -198,7 +166,6 @@ impl Player {
         self.info.as_ref().map(|i| i.duration).unwrap_or(0.0)
     }
 
-    /// The part of the clip being played: the whole clip, or the trim selection.
     fn span(&self) -> (f64, f64) {
         match self.range {
             Some((s, e)) => (s, e.min(self.duration().max(s + 0.1))),
@@ -206,7 +173,6 @@ impl Player {
         }
     }
 
-    /// Restart decoding at `secs`, playing or paused on the first picture.
     fn start_at(&mut self, secs: f64, play: bool) {
         self.run = None;
         self.pending = None;
@@ -250,7 +216,6 @@ impl Player {
             }
         }
         if sink.is_none() {
-            // Nothing will report audio progress, so the wall clock drives.
             audio_done.store(true, Ordering::Relaxed);
         }
         self.run = Some(Run {
@@ -314,12 +279,10 @@ impl Player {
         }
     }
 
-    /// Advance the clock and pick the picture that should be showing.
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f64().min(0.25);
         self.last_tick = now;
-        // A handle that has stopped moving: show the picture it points at.
         if let Some((t, at)) = self.focus {
             if at.elapsed() >= Duration::from_millis(90) {
                 self.focus = None;
@@ -330,7 +293,6 @@ impl Player {
         }
         let (lo, hi) = self.span();
         let looping = self.range.is_some();
-        // Reached the end of the selection: go round again.
         if self.playing && self.focus.is_none() && self.pos >= hi - 0.02 && looping {
             self.start_at(lo, true);
         }
@@ -344,20 +306,17 @@ impl Player {
                 run.last_played = played;
                 run.last_change = now;
             }
-            // A device that stopped taking samples must not freeze the picture.
             let stalled = now.duration_since(run.last_change) > Duration::from_millis(700);
             let audio_live = !run.audio_done.load(Ordering::Relaxed) && !stalled;
             if audio_live && played > 0 {
                 let t = run.from + played as f64 / (2.0 * AUDIO_RATE as f64) - AUDIO_LAG;
                 self.pos = self.pos.max(t);
             } else if audio_live && run.began.elapsed() < Duration::from_millis(1500) {
-                // Waiting for the first sound; hold the picture.
             } else {
                 self.pos += dt;
             }
         }
 
-        // Latest picture whose time has come (or the first one after a paused seek).
         let mut show: Option<VideoFrame> = None;
         let mut closed = false;
         loop {
@@ -395,11 +354,9 @@ impl Player {
         }
         if closed && self.pending.is_none() {
             if run.shown == 0 {
-                // The decoder gave up before producing a single picture.
                 self.failed = Some("this clip could not be decoded".into());
                 self.pause();
             } else if self.playing {
-                // End of the clip (or of its last picture).
                 if looping {
                     self.pos = self.pos.max(hi);
                 } else {
@@ -413,7 +370,6 @@ impl Player {
         }
     }
 
-    /// Space plays or pauses, the arrow keys skip, as long as no text box has focus.
     fn keys(&mut self, ui: &Ui) {
         let ctx = ui.ctx();
         if ctx.memory(|m| m.focused().is_some()) {
@@ -437,7 +393,6 @@ impl Player {
         }
     }
 
-    /// Draw the picture and its controls.
     pub fn show(&mut self, ui: &mut Ui) {
         let p = pal_ui(ui);
         if let Err(e) = &self.info {
@@ -542,8 +497,6 @@ fn clock(secs: f64) -> String {
     format!("{}:{:04.1}", (s / 60.0) as u32, s % 60.0)
 }
 
-/// A thin seek bar. Dragging only moves the handle; the seek happens when the
-/// mouse is released (returns the fraction 0..1 then).
 fn bar(ui: &mut Ui, width: f32, frac: f64, scrub: &mut Option<f64>) -> Option<f64> {
     let p = pal_ui(ui);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click_and_drag());

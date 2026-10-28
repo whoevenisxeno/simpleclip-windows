@@ -5,17 +5,13 @@ use egui::{Align, FontId, Layout, RichText, Ui};
 use sc_core::ipc::{Request, Response, TrimDest};
 use std::path::{Path, PathBuf};
 
-/// What "save" does.
 #[derive(Clone, Copy, PartialEq, Default)]
 enum SaveMode {
-    /// Keep the original and add a trimmed copy.
     #[default]
     Copy,
-    /// Keep only the trimmed version (the original goes to the Recycle Bin).
     Replace,
 }
 
-/// Per-clip trim state, kept in the app so handle positions survive repaints.
 #[derive(Default)]
 pub struct TrimState {
     path: PathBuf,
@@ -24,15 +20,12 @@ pub struct TrimState {
     start: f64,
     end: f64,
     mode: SaveMode,
-    /// Where the last trimmed copy was saved.
     result: Option<PathBuf>,
-    /// The in-app player showing the selection live.
     #[cfg(windows)]
     player: Option<crate::player::Player>,
 }
 
 impl TrimState {
-    /// Stop and close the player (leaving the screen must silence it).
     pub fn stop_player(&mut self) {
         #[cfg(windows)]
         {
@@ -40,7 +33,6 @@ impl TrimState {
         }
     }
 
-    /// For the design-review run: select a range as if a handle was dragged.
     pub fn demo_select(&mut self, start: f64, end: f64) {
         self.start = start;
         self.end = end.min(self.duration.unwrap_or(end));
@@ -51,7 +43,6 @@ impl TrimState {
         }
     }
 
-    /// For the design-review run: start playing the selection.
     pub fn demo_play(&mut self) {
         #[cfg(windows)]
         if let Some(p) = self.player.as_mut() {
@@ -59,7 +50,6 @@ impl TrimState {
         }
     }
 
-    /// Reset for a newly opened clip and ask the daemon for its length.
     fn load(&mut self, path: &Path) {
         *self = Self {
             path: path.to_path_buf(),
@@ -90,11 +80,6 @@ fn clock(secs: f64) -> String {
     format!("{}:{:04.1}", (s / 60.0) as u32, s % 60.0)
 }
 
-/// Lossless trim: the player shows the selection live (it plays and loops only
-/// the part you picked, and follows the handles while you drag them), then you
-/// save a trimmed copy or replace the original. The saved cut starts on the
-/// keyframe at or before the chosen start (keyframes are ~2 s apart), so it may
-/// begin slightly earlier than the preview.
 pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
     let p = pal_ui(ui);
     if app.trim.path != path {
@@ -130,7 +115,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         return;
     };
 
-    // ---- the player: the selection, live ----
     #[cfg(windows)]
     if let Some(pl) = app.trim.player.as_mut() {
         pl.set_range(app.trim.start, app.trim.end);
@@ -140,14 +124,11 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
     widgets::secondary(ui, "The live trim preview needs Windows.");
     ui.add_space(10.0);
 
-    // ---- the selection ----
     let mut export = false;
     widgets::card(ui, |ui| {
         let t = &mut app.trim;
         let (s0, e0) = (t.start, t.end);
         widgets::range_slider(ui, &mut t.start, &mut t.end, duration, 0.5);
-        // The player follows whichever handle moved: the start handle shows the
-        // first picture of the selection, the end handle its last.
         #[cfg(windows)]
         if let Some(pl) = t.player.as_mut() {
             let (s, e) = (t.start, t.end);
@@ -173,7 +154,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
         });
         ui.add_space(12.0);
 
-        // Save choice.
         ui.horizontal(|ui| {
             widgets::segmented(
                 ui,
@@ -243,14 +223,12 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
     );
 }
 
-/// Save the trim as a copy, or replace the original with it.
 fn export_trim(app: &mut ScApp, original: &Path) {
     let replace = app.trim.mode == SaveMode::Replace;
     let req = Request::Trim {
         path: original.to_path_buf(),
         start_secs: app.trim.start,
         end_secs: app.trim.end,
-        // Replacing needs the result beside the original so it can take its place.
         dest: if replace {
             TrimDest::Beside
         } else {
@@ -284,8 +262,6 @@ fn export_trim(app: &mut ScApp, original: &Path) {
         return;
     }
 
-    // Replace: the original goes to the Recycle Bin and the trimmed clip takes
-    // its name, so its bookmarks, note and place in the list carry over.
     app.trim.stop_player();
     if !crate::screens::gallery::delete(original) {
         let _ = std::fs::remove_file(&new_path);
@@ -297,7 +273,7 @@ fn export_trim(app: &mut ScApp, original: &Path) {
     }
     let final_path = match std::fs::rename(&new_path, original) {
         Ok(()) => original.to_path_buf(),
-        Err(_) => new_path, // keep the trimmed file under its own name
+        Err(_) => new_path,
     };
     app.library.rekey_if_missing(original, &final_path);
     app.library.set_trimmed(&final_path, true);

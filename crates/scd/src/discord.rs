@@ -1,38 +1,22 @@
-//! Discord Rich Presence: shows the game you are in and how long you have been
-//! clipping on your Discord profile.
-//!
-//! It talks to the Discord app running on this PC through its local named pipe
-//! (`\\.\pipe\discord-ipc-N`), the same way games do. Nothing is sent from here
-//! over the network; the Discord app shows what it is told. If Discord is not
-//! running the thread just keeps checking quietly.
-
 use crate::state::Daemon;
 use sc_core::capture::CaptureState;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// The Discord application this presence belongs to (its name is what Discord
-/// shows after "Playing").
 const APP_ID: &str = "1562536909262164019";
 
-/// The button on the status: Discord allows 32 characters of label.
 const BUTTON_LABEL: &str = "Get SimpleClip";
 const REPO_URL: &str = "https://github.com/whoevenisxeno/simpleclip-windows";
 
-/// Discord drops presence updates that come faster than this.
 const MIN_GAP: Duration = Duration::from_secs(15);
-/// How often to look for a change, or for Discord to start.
 const POLL: Duration = Duration::from_secs(5);
-/// How long a game stays on the profile after it leaves the front (an Alt-Tab to
-/// chat or a browser), before it counts as no longer playing.
 const GRACE: Duration = Duration::from_secs(90);
 
 const OP_HANDSHAKE: u32 = 0;
 const OP_FRAME: u32 = 1;
 const OP_CLOSE: u32 = 2;
 
-/// One packet on the pipe: opcode, length, then JSON.
 fn encode(op: u32, json: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + json.len());
     out.extend_from_slice(&op.to_le_bytes());
@@ -41,24 +25,19 @@ fn encode(op: u32, json: &str) -> Vec<u8> {
     out
 }
 
-/// What the profile shows. Two different values mean a new update is due.
 #[derive(Clone, PartialEq, Debug)]
 struct Presence {
     game: String,
     paused: bool,
-    /// Unix seconds when this game session began, for Discord's "elapsed" counter.
     started: u64,
 }
 
-/// The `SET_ACTIVITY` message for a presence (or clearing it with `None`).
 fn activity_message(presence: Option<&Presence>, pid: u32, nonce: u64) -> String {
     let activity = presence.map(|p| {
         serde_json::json!({
             "details": format!("Playing {}", p.game),
             "state": if p.paused { "Replay buffer paused" } else { "Clipping with SimpleClip" },
             "timestamps": { "start": p.started },
-            // A button under the status for other people (Discord does not show
-            // your own buttons to you).
             "buttons": [{ "label": BUTTON_LABEL, "url": REPO_URL }],
         })
     });
@@ -70,14 +49,12 @@ fn activity_message(presence: Option<&Presence>, pid: u32, nonce: u64) -> String
     .to_string()
 }
 
-/// An open connection to the Discord app.
 struct Conn {
     pipe: File,
     nonce: u64,
 }
 
 impl Conn {
-    /// Find the running Discord app and say hello. Discord may be on any of ten pipes.
     fn open() -> Option<Self> {
         for n in 0..10 {
             let path = format!(r"\\.\pipe\discord-ipc-{n}");
@@ -86,8 +63,6 @@ impl Conn {
             };
             let mut conn = Conn { pipe, nonce: 0 };
             let hello = serde_json::json!({ "v": 1, "client_id": APP_ID }).to_string();
-            // Discord answers with a READY event; anything else (a bad app id, a
-            // close) means this is not a usable connection.
             match conn.send(OP_HANDSHAKE, &hello) {
                 Ok(reply) if reply.contains("READY") => return Some(conn),
                 Ok(reply) => tracing::warn!(%reply, "discord refused the handshake"),
@@ -97,8 +72,6 @@ impl Conn {
         None
     }
 
-    /// Write a packet and read Discord's reply. Any failure means the connection is
-    /// dead (Discord closed or restarted) and the caller should drop it.
     fn send(&mut self, op: u32, json: &str) -> std::io::Result<String> {
         self.pipe.write_all(&encode(op, json))?;
         let mut header = [0u8; 8];
@@ -132,8 +105,6 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Keep the Discord profile in step with what SimpleClip is doing, until the
-/// process ends.
 pub fn spawn(daemon: Daemon) {
     std::thread::Builder::new()
         .name("sc-discord".into())
@@ -141,17 +112,12 @@ pub fn spawn(daemon: Daemon) {
         .expect("discord thread");
 }
 
-/// One game being played: its name, when this session began, and when it was
-/// last the program in front.
 struct Session {
     game: String,
     started: u64,
     last_seen: Instant,
 }
 
-/// Move the session on given the game now in front (`None` when what is in front
-/// is not a game). Alt-tabbing out for a minute or two keeps the session; a
-/// different game, or being away longer, starts a fresh one.
 fn next_session(
     current: Option<Session>,
     seen: Option<String>,
@@ -185,8 +151,6 @@ fn run(daemon: Daemon) {
         let state = daemon.capture_state();
         let clipping = matches!(state, CaptureState::Active | CaptureState::Paused);
 
-        // Only a real game counts; the browser, the desktop and every other
-        // program show nothing at all.
         let seen = if enabled && clipping {
             crate::win::foreground_exe()
                 .and_then(|exe| crate::games::detect(&exe, crate::win::exclusive_fullscreen()))
@@ -205,7 +169,6 @@ fn run(daemon: Daemon) {
         });
 
         let Some(want) = want else {
-            // Not in a game: take any status down, and do not even talk to Discord.
             if shown.take().is_some() {
                 if let Some(c) = conn.as_mut() {
                     if c.set(None).is_err() {
@@ -294,7 +257,6 @@ mod tests {
         let buttons = v["args"]["activity"]["buttons"].as_array().unwrap();
         assert_eq!(buttons.len(), 1);
         assert_eq!(buttons[0]["url"], REPO_URL);
-        // Discord's limits: 32 characters of label, 512 of address.
         assert!(BUTTON_LABEL.chars().count() <= 32);
         assert!(REPO_URL.len() <= 512 && REPO_URL.starts_with("https://"));
     }
@@ -372,7 +334,6 @@ mod tests {
         assert_eq!((other.game.as_str(), other.started), ("Minecraft", 105));
     }
 
-    /// Connects and says hello only; nothing shows on the profile.
     #[test]
     #[ignore = "talks to the running Discord app"]
     fn discord_accepts_the_app_id() {
@@ -382,8 +343,6 @@ mod tests {
         );
     }
 
-    /// Run with `cargo test -p scd -- --ignored discord` (SC_PRESENCE_TEST_SECS sets how long it stays up, 4 by default): shows the presence on the
-    /// real Discord profile for a few seconds, then clears it.
     #[test]
     #[ignore = "talks to the running Discord app"]
     fn discord_accepts_the_presence() {

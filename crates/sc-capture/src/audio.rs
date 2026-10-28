@@ -12,9 +12,6 @@ struct Cap {
     format: spa::param::audio::AudioInfoRaw,
 }
 
-/// Capture desktop audio (the default sink's monitor) as interleaved f32,
-/// timestamped on the shared capture clock so it stays aligned with video.
-/// Blocks in the PipeWire mainloop until stopped.
 pub fn run(
     tx: crossbeam_channel::Sender<AudioBuffer>,
     epoch: Instant,
@@ -86,11 +83,8 @@ fn on_process(stream: &pw::stream::Stream, cap: &mut Cap) {
     let Some(d) = datas.first_mut() else { return };
     let chunk = d.chunk();
     let (offset, size) = (chunk.offset() as usize, chunk.size() as usize);
-    // bytes per full audio frame (all channels); at least one f32 sample.
     let stride = (chunk.stride() as usize).max(4);
     let Some(bytes) = d.data() else { return };
-    // Honor the buffer offset; a non-zero offset would otherwise read garbage
-    // (which sounds like static).
     let end = (offset + size).min(bytes.len());
     let start = offset.min(end);
     let valid = (end - start) / stride * stride;

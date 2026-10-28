@@ -108,7 +108,6 @@ fn on_process(stream: &pw::stream::Stream, cap: &mut Cap) {
         timestamp: Timestamp::from_nanos(cap.epoch.elapsed().as_nanos() as i64),
         data: bytes[offset..offset + size].to_vec().into(),
     };
-    // Never block the PipeWire thread; drop the frame if the consumer is behind.
     let _ = cap.frames.try_send(frame);
 }
 
@@ -126,8 +125,6 @@ fn connect(stream: &pw::stream::StreamBox, node_id: u32) -> Result<()> {
     Ok(())
 }
 
-/// Accept the common Wayland-portal packed RGB formats. We convert to NV12 for
-/// the encoder downstream (see sc-ffmpeg::Bgra2Nv12).
 fn format_pod() -> Vec<u8> {
     let obj = spa::pod::object!(
         spa::utils::SpaTypes::ObjectParamFormat,

@@ -1,13 +1,3 @@
-<#
-  Builds every icon file from assets\icon.svg, the single source for the logo:
-    simpleclip.ico   the exe / installer / shortcut icon (16 to 256 px)
-    icon-256.png     the window and taskbar icon
-    icon-64.png      the logo in the app's sidebar
-    tray-32.rgba     raw 32x32 RGBA pixels for the tray icon
-  The SVG is rasterised with Microsoft Edge in headless mode (already on Windows
-  10 and 11), so no extra tools are needed. Run from the repo root:
-    powershell -File assets\make-icon.ps1
-#>
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $out = $PSScriptRoot
@@ -28,7 +18,7 @@ function Render([int]$n) {
     "<!doctype html><meta charset=utf-8><style>html,body{margin:0;background:transparent;overflow:hidden}img{display:block;width:${n}px;height:${n}px}</style><img src='icon.svg'>" |
         Set-Content $html -Encoding utf8
     $png = Join-Path $work "icon-$n.png"
-    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # Edge prints harmless notes on stderr
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     & $edge --headless=new --disable-gpu --hide-scrollbars --default-background-color=00000000 `
         --force-device-scale-factor=1 --window-size="$n,$n" --screenshot=$png `
         "file:///$(($work -replace '\\','/'))/p$n.html" 2>&1 | Out-Null
@@ -44,7 +34,6 @@ $pngs = foreach ($s in $sizes) { , [System.IO.File]::ReadAllBytes($files[$s]) }
 Copy-Item $files[256] (Join-Path $out 'icon-256.png') -Force
 Copy-Item $files[64] (Join-Path $out 'icon-64.png') -Force
 
-# Tray icon: raw RGBA, 4 bytes per pixel, row by row.
 $bmp = [System.Drawing.Bitmap]::FromFile($files[32])
 $raw = New-Object byte[] (32 * 32 * 4)
 $i = 0
@@ -57,7 +46,6 @@ for ($y = 0; $y -lt 32; $y++) {
 $bmp.Dispose()
 [System.IO.File]::WriteAllBytes((Join-Path $out 'tray-32.rgba'), $raw)
 
-# ICO container: ICONDIR + one ICONDIRENTRY per image, PNG payloads.
 $ms = New-Object System.IO.MemoryStream
 $w = New-Object System.IO.BinaryWriter $ms
 $w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$sizes.Count)

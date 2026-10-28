@@ -3,10 +3,6 @@ use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, S
 use ashpd::desktop::PersistMode;
 use sc_core::capture::VideoFrame;
 
-/// Runs the whole capture lifetime: negotiate the portal ScreenCast session, open
-/// the PipeWire remote, then hand off to the (blocking) PipeWire stream loop. The
-/// portal session is held in this scope for the entire capture so the compositor
-/// keeps streaming; it closes when this function returns.
 pub async fn run(
     frames: crossbeam_channel::Sender<VideoFrame>,
     dims: crossbeam_channel::Sender<(u32, u32)>,

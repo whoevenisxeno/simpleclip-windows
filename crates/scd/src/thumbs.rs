@@ -1,10 +1,3 @@
-//! Preview images (gallery thumbnails and trim-view frames), generated on demand
-//! and cached on disk.
-//!
-//! Several windows or retries can ask for the same preview at once, so every
-//! write goes to its own temp file and is renamed into place; if another request
-//! got there first, that result is used rather than reporting an error.
-
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -16,8 +9,6 @@ fn cache_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("thumbs"))
 }
 
-/// Cache key: path, size and mtime (so an edited or replaced file gets a fresh
-/// preview), the width, and for frame previews the time (to 1/10 s).
 fn cache_name(path: &Path, width: u32, at_tenths: Option<i64>) -> String {
     let meta = std::fs::metadata(path).ok();
     let mut h = DefaultHasher::new();
@@ -33,8 +24,6 @@ fn cache_name(path: &Path, width: u32, at_tenths: Option<i64>) -> String {
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Encode `rgb` as a PNG at `out`, atomically and safely against a concurrent
-/// writer of the same file.
 fn write_png(out: &Path, w: u32, h: u32, rgb: &[u8]) -> Result<(), String> {
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -56,7 +45,6 @@ fn write_png(out: &Path, w: u32, h: u32, rgb: &[u8]) -> Result<(), String> {
     }
     match std::fs::rename(&tmp, out) {
         Ok(()) => Ok(()),
-        // Someone else finished the same preview first: that's fine.
         Err(_) if out.exists() => {
             let _ = std::fs::remove_file(&tmp);
             Ok(())
@@ -68,7 +56,6 @@ fn write_png(out: &Path, w: u32, h: u32, rgb: &[u8]) -> Result<(), String> {
     }
 }
 
-/// Return the path of a preview PNG for `path`, creating it if needed.
 #[cfg(any(target_os = "linux", windows))]
 pub fn cached_thumbnail(path: &Path, width: u32) -> Result<PathBuf, String> {
     let width = width.clamp(64, 1280);
@@ -81,7 +68,6 @@ pub fn cached_thumbnail(path: &Path, width: u32) -> Result<PathBuf, String> {
     Ok(out)
 }
 
-/// The frame of `path` at `secs`, as a cached PNG.
 #[cfg(any(target_os = "linux", windows))]
 pub fn cached_frame(path: &Path, secs: f64, width: u32) -> Result<PathBuf, String> {
     let width = width.clamp(64, 1920);
@@ -106,8 +92,6 @@ pub fn cached_frame(_: &Path, _: f64, _: u32) -> Result<PathBuf, String> {
     Err("not supported on this platform".into())
 }
 
-/// Keep the preview cache from growing for ever: drop previews not touched in a
-/// month, then the oldest ones until the folder is under 200 MB. Runs at start-up.
 pub fn prune() {
     const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
     const MAX_BYTES: u64 = 200 * 1024 * 1024;

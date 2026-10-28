@@ -1,8 +1,3 @@
-//! Proves the VA-API H.264 encode + MP4 mux path with synthetic frames, no
-//! display or capture backend needed. Run on a machine with a VA-API GPU:
-//!   cargo run -p sc-ffmpeg --example encode_synthetic -- /tmp/out.mp4
-//! Then verify with: ffprobe /tmp/out.mp4
-
 #[cfg(target_os = "linux")]
 fn main() {
     let path = std::env::args()
@@ -24,8 +19,6 @@ fn main() {
     println!("wrote {frame_count} frames to {path}");
 }
 
-/// A scrolling luma gradient + shifting chroma so the encoder has real motion to
-/// compress and A/V/quality can be eyeballed.
 #[cfg(target_os = "linux")]
 fn moving_bars(w: usize, h: usize, frame: u32) -> Vec<u8> {
     let mut buf = vec![0u8; w * h + w * h / 2];

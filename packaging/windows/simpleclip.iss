@@ -1,6 +1,3 @@
-; Inno Setup script for the SimpleClip Windows installer.
-; Built by packaging\windows\build.ps1:  ISCC /DAppVersion=4.0.0 /DSourceDir=<dist\SimpleClip> simpleclip.iss
-; Per-user install (no admin prompt), shows up in Settings > Apps, and uninstalls cleanly.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -54,9 +51,7 @@ Name: "{group}\Uninstall SimpleClip"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\SimpleClip"; Filename: "{app}\sc-gui.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Registry]
-; Start the daemon at sign-in (the tray menu can toggle this later).
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SimpleClip"; ValueData: """{app}\scd.exe"""; Flags: uninsdeletevalue; Tasks: autostart
-; Identity for toast notifications, so they say "SimpleClip" instead of PowerShell.
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\SimpleClip"; ValueType: string; ValueName: "DisplayName"; ValueData: "SimpleClip"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\AppUserModelId\SimpleClip"; ValueType: dword; ValueName: "ShowInSettings"; ValueData: "0"
 

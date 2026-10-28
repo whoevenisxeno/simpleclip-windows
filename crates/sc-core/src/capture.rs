@@ -26,9 +26,6 @@ pub struct CaptureConfig {
     pub target_fps: u32,
 }
 
-/// A picture's pixel bytes. When it came from a [`FramePool`], dropping it hands the
-/// allocation back instead of freeing it, so a steady stream of frames reuses a few
-/// buffers rather than allocating megabytes sixty times a second.
 pub struct FrameBuf {
     buf: Vec<u8>,
     home: Option<crossbeam_channel::Sender<Vec<u8>>>,
@@ -50,13 +47,11 @@ impl std::ops::Deref for FrameBuf {
 impl Drop for FrameBuf {
     fn drop(&mut self) {
         if let Some(home) = &self.home {
-            // A full pool just frees the buffer.
             let _ = home.try_send(std::mem::take(&mut self.buf));
         }
     }
 }
 
-/// A few reusable pixel buffers.
 #[derive(Clone)]
 pub struct FramePool {
     tx: crossbeam_channel::Sender<Vec<u8>>,
@@ -64,13 +59,11 @@ pub struct FramePool {
 }
 
 impl FramePool {
-    /// Keep at most `max` idle buffers.
     pub fn new(max: usize) -> Self {
         let (tx, rx) = crossbeam_channel::bounded(max);
         Self { tx, rx }
     }
 
-    /// A buffer holding a copy of `src`, reusing an idle allocation when there is one.
     pub fn copy_of(&self, src: &[u8]) -> FrameBuf {
         let mut buf = self.rx.try_recv().unwrap_or_default();
         buf.clear();
@@ -82,8 +75,6 @@ impl FramePool {
     }
 }
 
-/// A single captured frame. In v1 `data` is a CPU buffer (download path); a GPU
-/// handle variant is added later behind the same type as a zero-copy optimization.
 pub struct VideoFrame {
     pub width: u32,
     pub height: u32,
@@ -93,8 +84,6 @@ pub struct VideoFrame {
     pub data: FrameBuf,
 }
 
-/// State surfaced to `sc status` and the tray icon. `NeedsConsent` is the
-/// Wayland restore-token-failed case (§5.3): capture pauses, never yanks focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CaptureState {
@@ -104,9 +93,6 @@ pub enum CaptureState {
     Stopped,
 }
 
-/// Enumerates sources and starts capture. One implementation per platform,
-/// selected at runtime. Backends never touch the encoder directly; they push
-/// frames to the sink they are handed at `start`.
 pub trait CaptureBackend: Send {
     fn name(&self) -> &'static str;
     fn enumerate_monitors(&self) -> Result<Vec<MonitorInfo>>;
@@ -117,7 +103,6 @@ pub trait CaptureBackend: Send {
     ) -> Result<Box<dyn CaptureSession>>;
 }
 
-/// Owns the running capture thread(s). Dropping it stops capture cleanly.
 pub trait CaptureSession: Send {
     fn state(&self) -> CaptureState;
     fn stop(self: Box<Self>);
@@ -135,7 +120,6 @@ mod pool_tests {
         drop(first);
         let second = pool.copy_of(&[9, 9]);
         assert_eq!(&*second, &[9, 9]);
-        // Same allocation came back, not a fresh one.
         assert_eq!(second.as_ptr(), ptr);
     }
 

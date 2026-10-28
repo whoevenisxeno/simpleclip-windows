@@ -10,9 +10,6 @@ type PipelineSlot = Option<crate::pipeline::Pipeline>;
 #[cfg(not(any(target_os = "linux", windows)))]
 type PipelineSlot = Option<()>;
 
-/// Shared daemon state. Config lives behind an RwLock so the hot-reload watcher
-/// can swap it without disturbing readers; the capture pipeline lives behind a
-/// Mutex so `sc save` and `sc status` can reach it from IPC threads.
 #[derive(Clone)]
 pub struct Daemon {
     pub config: Arc<RwLock<Config>>,
@@ -43,9 +40,6 @@ impl Daemon {
         *self.config.write().unwrap() = config;
     }
 
-    /// Swap in a reloaded config. Settings the live pipeline was built from
-    /// (capture, audio, buffer, encode) need a pipeline restart to take effect;
-    /// everything else (hotkeys, naming, notifications) is read on use.
     pub fn apply_config(&self, new: Config) {
         let needs_restart = {
             let old = self.config.read().unwrap();
@@ -56,7 +50,6 @@ impl Daemon {
         };
         #[cfg(windows)]
         crate::win::set_autostart(new.general.autostart);
-        // The volume sliders reach a running recorder directly, no restart.
         #[cfg(any(target_os = "linux", windows))]
         if let Some(p) = self.pipeline.lock().unwrap().as_ref() {
             p.set_volumes(new.audio.desktop_volume, new.audio.mic_volume);
@@ -74,8 +67,6 @@ impl Daemon {
 }
 
 impl Daemon {
-    /// Start the capture pipeline (pops the portal consent dialog on Linux).
-    /// Returns whether capture is now running.
     pub fn start_capture(&self) -> bool {
         #[cfg(any(target_os = "linux", windows))]
         {
@@ -100,13 +91,11 @@ impl Daemon {
         }
     }
 
-    /// Tear the pipeline down (drops capture + encoders and frees the buffer).
     pub fn stop_capture(&self) {
         *self.pipeline.lock().unwrap() = None;
         self.set_state(CaptureState::Stopped);
     }
 
-    /// Write the last N seconds from the ring buffer to a file.
     pub fn save_clip(&self, last_secs: Option<u32>) -> Result<(PathBuf, f64), String> {
         #[cfg(any(target_os = "linux", windows))]
         {
@@ -146,7 +135,6 @@ impl Daemon {
         }
     }
 
-    /// Save the current frame as a PNG next to the clips.
     pub fn screenshot(&self) -> Result<PathBuf, String> {
         #[cfg(windows)]
         {
@@ -163,13 +151,9 @@ impl Daemon {
         Err("screenshots aren't supported on this platform yet".into())
     }
 
-    /// Pause or resume feeding the replay buffer. Capture itself keeps running so
-    /// resuming is instant.
     pub fn set_paused(&self, paused: bool) {
         #[cfg(any(target_os = "linux", windows))]
         {
-            // Take the pipeline lock and release it before touching `status`:
-            // status_report locks them in the opposite order.
             let applied = match self.pipeline.lock().unwrap().as_ref() {
                 Some(p) => {
                     p.set_paused(paused);

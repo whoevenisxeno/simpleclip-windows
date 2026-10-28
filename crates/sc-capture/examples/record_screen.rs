@@ -1,8 +1,3 @@
-//! Full Phase 1 video pipeline on real screen content: portal+PipeWire capture
-//! -> BGRA->NV12 -> VA-API H.264 -> MP4. Pops the screen-share dialog.
-//!   cargo run -p sc-capture --example record_screen -- /tmp/screen.mp4 5
-//! (second arg = seconds to record). Verify with: ffprobe /tmp/screen.mp4
-
 #[cfg(target_os = "linux")]
 fn main() {
     use std::time::{Duration, Instant};

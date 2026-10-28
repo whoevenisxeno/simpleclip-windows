@@ -5,21 +5,14 @@ use sc_core::encode::EncodedPacket;
 use std::ffi::CString;
 use std::ptr;
 
-// Packet timestamps arrive in nanoseconds; we carry them through the muxer as
-// microseconds, then rescale to each stream's own timebase.
 const IN_TB: ffi::AVRational = ffi::AVRational {
     num: 1,
     den: 1_000_000,
 };
 
-/// Muxes encoded video (and optionally AAC audio) into a faststart MP4. Built
-/// from encoder param snapshots so it can run on a save thread. Packet
-/// timestamps are normalized to the first packet written across both streams, so
-/// a clip taken out of the ring buffer starts at zero and stays A/V-aligned.
 pub struct Mp4Muxer {
     oc: *mut ffi::AVFormatContext,
     video_tb: ffi::AVRational,
-    /// Output stream index and timebase of each audio track, in track order.
     audio: Vec<(i32, ffi::AVRational)>,
     base_ns: Option<i64>,
     finished: bool,
@@ -34,7 +27,6 @@ impl Mp4Muxer {
         Self::open_all(path, video, &[])
     }
 
-    /// Video plus an AAC audio stream at `audio_rate` Hz.
     pub fn with_audio(
         path: &std::path::Path,
         video: &CodecParams,
@@ -44,9 +36,6 @@ impl Mp4Muxer {
         Self::open_all(path, video, &[(audio, audio_rate)])
     }
 
-    /// Video plus any number of AAC tracks (e.g. desktop and microphone as
-    /// separate tracks), each `(params, sample_rate)`. Write track `i` with
-    /// `write_audio_track(i, ..)`.
     pub fn with_audio_tracks(
         path: &std::path::Path,
         video: &CodecParams,
@@ -161,18 +150,15 @@ unsafe fn stream_tb(oc: *mut ffi::AVFormatContext, idx: i32) -> ffi::AVRational 
 }
 
 impl Mp4Muxer {
-    /// Write a video packet (stream 0).
     pub fn write(&mut self, ep: &EncodedPacket) -> Result<()> {
         let tb = self.video_tb;
         self.write_pkt(ep, 0, tb)
     }
 
-    /// Write an audio packet to the first audio track, if there is one.
     pub fn write_audio(&mut self, ep: &EncodedPacket) -> Result<()> {
         self.write_audio_track(0, ep)
     }
 
-    /// Write an audio packet to track `track` (in the order given to `with_audio_tracks`).
     pub fn write_audio_track(&mut self, track: usize, ep: &EncodedPacket) -> Result<()> {
         if let Some(&(idx, tb)) = self.audio.get(track) {
             return self.write_pkt(ep, idx, tb);
