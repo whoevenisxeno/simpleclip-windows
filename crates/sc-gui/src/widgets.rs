@@ -750,64 +750,6 @@ pub fn nav_item(
     resp
 }
 
-pub fn range_slider(ui: &mut Ui, start: &mut f64, end: &mut f64, max: f64, min_gap: f64) -> bool {
-    let p = pal_ui(ui);
-    let w = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
-    let track = Rect::from_min_max(
-        pos2(rect.left() + 8.0, rect.center().y - 4.0),
-        pos2(rect.right() - 8.0, rect.center().y + 4.0),
-    );
-    let x_of = |t: f64| track.left() + (t / max.max(0.001)) as f32 * track.width();
-    let t_of = |x: f32| (((x - track.left()) / track.width()) as f64 * max).clamp(0.0, max);
-
-    ui.painter()
-        .rect_filled(track, Rounding::same(4.0), p.card_hi);
-    let sel = Rect::from_min_max(
-        pos2(x_of(*start), track.top()),
-        pos2(x_of(*end), track.bottom()),
-    );
-    ui.painter().rect_filled(sel, Rounding::same(4.0), p.accent);
-
-    let mut changed = false;
-    for (is_start, value) in [(true, &mut *start), (false, &mut *end)] {
-        let cx = x_of(*value);
-        let handle = Rect::from_center_size(pos2(cx, rect.center().y), vec2(18.0, 38.0));
-        let id = ui
-            .id()
-            .with(if is_start { "range-start" } else { "range-end" });
-        let resp = ui.interact(handle.expand2(vec2(6.0, 4.0)), id, Sense::drag());
-        if resp.dragged() {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                *value = t_of(pos.x);
-                changed = true;
-            }
-        }
-        if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-        ui.painter().rect_filled(
-            handle.translate(vec2(0.0, 1.0)),
-            Rounding::same(7.0),
-            Color32::from_black_alpha(50),
-        );
-        ui.painter()
-            .rect_filled(handle, Rounding::same(7.0), Color32::WHITE);
-        ui.painter().rect_filled(
-            Rect::from_center_size(handle.center(), vec2(2.0, 16.0)),
-            Rounding::same(1.0),
-            Color32::from_rgb(0xc7, 0xc7, 0xcc),
-        );
-    }
-    if *start > *end - min_gap {
-        let mid = (*start + *end) / 2.0;
-        *start = (mid - min_gap / 2.0).max(0.0);
-        *end = (*start + min_gap).min(max);
-        *start = (*end - min_gap).max(0.0);
-    }
-    changed
-}
-
 pub fn bookmark_pill(ui: &mut Ui, name: &str, rgb: [u8; 3], filled: bool, small: bool) -> Response {
     let p = pal_ui(ui);
     let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
@@ -1051,6 +993,10 @@ pub fn accent_picker(ui: &mut Ui, current: &mut Option<String>) -> bool {
 }
 
 pub fn percent_slider(ui: &mut Ui, value: &mut u32, max: u32) -> Response {
+    step_slider(ui, value, max, 100)
+}
+
+pub fn step_slider(ui: &mut Ui, value: &mut u32, max: u32, home: u32) -> Response {
     let p = pal_ui(ui);
     let track_w = 180.0;
     let (rect, mut resp) = ui.allocate_exact_size(vec2(track_w, 32.0), Sense::click_and_drag());
@@ -1068,17 +1014,17 @@ pub fn percent_slider(ui: &mut Ui, value: &mut u32, max: u32) -> Response {
             }
         }
     }
-    if resp.double_clicked() && *value != 100 {
-        *value = 100;
+    if resp.double_clicked() && *value != home {
+        *value = home;
         resp.mark_changed();
     }
     let cy = rect.center().y;
     let track = Rect::from_min_max(pos2(left, cy - 2.0), pos2(right, cy + 2.0));
     ui.painter()
         .rect_filled(track, Rounding::same(2.0), p.card_hi);
-    if *value != 100 && max > 100 {
+    if *value != home && home > 0 && max > home {
         ui.painter()
-            .circle_filled(pos2(x_of(100), cy), 1.5, p.text_3);
+            .circle_filled(pos2(x_of(home), cy), 1.5, p.text_3);
     }
     let kx = x_of((*value).min(max));
     ui.painter().rect_filled(

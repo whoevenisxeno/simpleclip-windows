@@ -170,8 +170,8 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                 if widgets::quiet_button(ui, Some(icon::PLAY), "Play").clicked() {
                     gallery::play(app, &clip.path);
                 }
-                if !clip.is_image && widgets::quiet_button(ui, Some(icon::CUT), "Trim").clicked() {
-                    app.goto(Screen::Trim(clip.path.clone()));
+                if !clip.is_image && widgets::quiet_button(ui, Some(icon::CUT), "Edit").clicked() {
+                    app.goto(Screen::Edit(clip.path.clone()));
                     done = true;
                 }
                 if widgets::quiet_button(ui, Some(icon::COPY), "Copy file").clicked() {

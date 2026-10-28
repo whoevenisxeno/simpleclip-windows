@@ -542,7 +542,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             &mut app.gallery.kind,
             &[
                 (ViewKind::Originals, &format!("Clips  {originals_count}")),
-                (ViewKind::Trimmed, &format!("Trimmed  {trimmed_count}")),
+                (ViewKind::Trimmed, &format!("Edited  {trimmed_count}")),
                 (
                     ViewKind::Compressed,
                     &format!("Compressed  {compressed_count}"),
@@ -595,7 +595,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             widgets::secondary(
                 ui,
                 if kind == ViewKind::Trimmed {
-                    "No trimmed clips yet. Open a clip and choose Trim."
+                    "No edited clips yet. Open a clip and choose Edit."
                 } else if kind == ViewKind::Compressed {
                     "No compressed clips yet. Open a clip and choose Compress for Discord."
                 } else {
@@ -926,8 +926,8 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
         play(app, &clip.path);
         ui.close_menu();
     }
-    if !clip.is_image && item(ui, "Trim") {
-        app.goto(Screen::Trim(clip.path.clone()));
+    if !clip.is_image && item(ui, "Edit") {
+        app.goto(Screen::Edit(clip.path.clone()));
         ui.close_menu();
     }
     ui.separator();
@@ -1121,9 +1121,9 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
                         reveal(&clip.path);
                     }
                     if !clip.is_image
-                        && widgets::icon_button(ui, icon::CUT, "Trim", "Trim", false).clicked()
+                        && widgets::icon_button(ui, icon::CUT, "Edit", "Edit", false).clicked()
                     {
-                        app.goto(Screen::Trim(clip.path.clone()));
+                        app.goto(Screen::Edit(clip.path.clone()));
                     }
                 });
             });

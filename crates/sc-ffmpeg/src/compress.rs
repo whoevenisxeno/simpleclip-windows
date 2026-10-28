@@ -22,7 +22,7 @@ fn err(e: ff::Error) -> Error {
     Error::Ffmpeg(e.to_string())
 }
 
-fn source_fps(path: &Path) -> Result<u32> {
+pub(crate) fn source_fps(path: &Path) -> Result<u32> {
     let ictx = ff::format::input(&path).map_err(err)?;
     let s = ictx
         .streams()
@@ -55,7 +55,7 @@ fn pick_size(w: u32, h: u32, fps: u32, video_kbps: f64) -> (u32, u32) {
     )
 }
 
-fn decode_audio_mix(path: &Path, tracks: usize) -> Vec<f32> {
+pub(crate) fn decode_audio_mix(path: &Path, tracks: usize) -> Vec<f32> {
     let stop = Arc::new(AtomicBool::new(false));
     let streams: Vec<Vec<f32>> = (0..tracks)
         .map(|n| {

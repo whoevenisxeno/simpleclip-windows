@@ -2,6 +2,26 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.5.0
+
+### Added
+- A real clip editor. The Trim screen is now Edit, with a timeline that shows the whole clip as a strip of pictures. Click to move the playhead, press Split here (or S) to cut the clip into pieces, select a piece and drag its edges, and press Delete piece (or Delete) to remove it. Removing a piece from the middle is just a cut. The player skips the parts you removed, and Undo, Redo and Reset (Ctrl+Z, Ctrl+Y) step through your changes.
+- Speed from 0.25x to 4x. The sound keeps its pitch instead of going squeaky or growly.
+- Sound: volume from 0 to 200%, and a mute switch.
+- Fade in and fade out of up to 5 seconds, for the picture and the sound.
+- Crop with handles on the picture, free or locked to 16:9, 9:16, 1:1, 4:5 or 21:9, with a thirds grid.
+- Turn left or right and flip sideways or upside down, with the preview following along.
+- A progress bar with Cancel while an edit is saved. A summary line shows the length, size and what you changed before you save.
+- Frame accurate cuts. Edits are re-encoded, so a cut starts exactly where you put it instead of up to about 2 seconds early. For a plain trim there is a Frame accurate switch; turn it off for the old instant lossless cut.
+
+### Changed
+- Editing no longer needs the SimpleClip service to be running.
+- Open, Trim and the Trimmed tab are now Edit and Edited, and the saved clips are called edited clips.
+- The editor preview is a little smaller so the timeline and tools fit on screen.
+
+### Fixed
+- Trimming could cut up to about 2 seconds early because it snapped to a keyframe. Edits are now exact unless you switch Frame accurate off.
+
 ## 6.4.0
 
 ### Added

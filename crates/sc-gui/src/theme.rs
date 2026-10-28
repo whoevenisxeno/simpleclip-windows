@@ -101,8 +101,6 @@ pub mod icon {
     pub const TAG: &str = "\u{E8EC}";
     pub const ADD: &str = "\u{E710}";
     pub const MORE: &str = "\u{E712}";
-    pub const VOLUME: &str = "\u{E767}";
-    pub const MUTE: &str = "\u{E74F}";
     pub const COPY: &str = "\u{E8C8}";
     pub const SHARE: &str = "\u{E72D}";
 }

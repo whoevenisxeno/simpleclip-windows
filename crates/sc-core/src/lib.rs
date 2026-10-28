@@ -2,6 +2,7 @@ pub mod audio;
 pub mod buffer;
 pub mod capture;
 pub mod config;
+pub mod edit;
 pub mod encode;
 pub mod error;
 pub mod ipc;

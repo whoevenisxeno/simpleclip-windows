@@ -11,7 +11,7 @@ pub enum Screen {
     Wizard,
     Dashboard,
     Gallery,
-    Trim(PathBuf),
+    Edit(PathBuf),
     Settings,
 }
 
@@ -47,7 +47,7 @@ pub struct ScApp {
     pub toast: Option<Toast>,
     pub devices: Devices,
     pub gallery: screens::gallery::Cache,
-    pub trim: screens::trim::TrimState,
+    pub editor: screens::editor::EditorState,
     pub settings: screens::settings::SettingsState,
     shown_opened: Option<PathBuf>,
     pub thumbs: crate::thumbs::Thumbs,
@@ -198,7 +198,7 @@ impl ScApp {
             toast: None,
             devices: Devices::default(),
             gallery: Default::default(),
-            trim: Default::default(),
+            editor: Default::default(),
             settings: Default::default(),
             shown_opened: None,
             thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
@@ -231,7 +231,7 @@ impl ScApp {
     }
 
     pub fn goto(&mut self, screen: Screen) {
-        if let Screen::Trim(path) = &screen {
+        if let Screen::Edit(path) = &screen {
             self.gallery.opened = Some(path.clone());
         }
         self.flush_config();
@@ -239,8 +239,8 @@ impl ScApp {
             self.settings.query.clear();
             self.settings.dupes = None;
         }
-        if !matches!(screen, Screen::Trim(_)) {
-            self.trim.stop_player();
+        if !matches!(screen, Screen::Edit(_)) {
+            self.editor.stop_player();
         }
         self.screen = screen;
     }
@@ -355,7 +355,9 @@ impl eframe::App for ScApp {
                                     match self.screen.clone() {
                                         Screen::Dashboard => screens::dashboard::view(self, ui),
                                         Screen::Gallery => screens::gallery::view(self, ui),
-                                        Screen::Trim(path) => screens::trim::view(self, ui, &path),
+                                        Screen::Edit(path) => {
+                                            screens::editor::view(self, ui, &path)
+                                        }
                                         Screen::Settings | Screen::Wizard => {}
                                     }
                                     ui.add_space(32.0);
@@ -430,7 +432,7 @@ impl ScApp {
         let clip_count = self.gallery.originals_count(&self.library);
         for (screen, glyph, label) in items {
             let selected = self.screen == screen
-                || matches!((&self.screen, &screen), (Screen::Trim(_), Screen::Gallery));
+                || matches!((&self.screen, &screen), (Screen::Edit(_), Screen::Gallery));
             let badge =
                 (screen == Screen::Gallery && clip_count > 0).then(|| clip_count.to_string());
             if widgets::nav_item(ui, glyph, label, selected, badge.as_deref()).clicked() {
@@ -585,8 +587,9 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("details", true),
     ("bookmarks", true),
     ("newfolder", true),
-    ("trim", true),
-    ("player", true),
+    ("editor", true),
+    ("editor-crop", true),
+    ("editor-rotate", true),
     ("wizard1", true),
     ("wizard2", true),
     ("wizard3", true),
@@ -607,7 +610,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("home", false),
     ("clips", false),
     ("details", false),
-    ("trim", false),
+    ("editor", false),
     ("share", true),
     ("update", true),
     ("uninstall", true),
@@ -781,9 +784,9 @@ impl ScApp {
                 "update-download" | "update-forced" => Screen::Dashboard,
                 "star" => Screen::Dashboard,
                 n if n.starts_with("settings") || n.starts_with("look") => Screen::Settings,
-                "trim" | "player" => {
+                "editor" | "editor-crop" | "editor-rotate" => {
                     let first = self.gallery.first_video();
-                    first.map(Screen::Trim).unwrap_or(Screen::Gallery)
+                    first.map(Screen::Edit).unwrap_or(Screen::Gallery)
                 }
                 _ => Screen::Wizard,
             };
@@ -834,11 +837,8 @@ impl ScApp {
             }
         }
         shot.waited += 1;
-        if name == "player" && shot.waited == 40 {
-            self.trim.demo_select(3.0, 11.0);
-        }
-        if name == "player" && shot.waited == 70 {
-            self.trim.demo_play();
+        if name.starts_with("editor") && shot.waited == 60 {
+            self.editor.demo(name);
         }
         if shot.step == 0 && shot.waited == 1 {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
@@ -853,14 +853,7 @@ impl ScApp {
             )));
         }
         let settled = !self.thumbs.pending() || shot.waited > 1500;
-        if shot.waited
-            >= (if name == "trim" {
-                220
-            } else if name == "player" {
-                140
-            } else {
-                45
-            })
+        if shot.waited >= (if name.starts_with("editor") { 220 } else { 45 })
             && settled
             && !shot.requested
         {

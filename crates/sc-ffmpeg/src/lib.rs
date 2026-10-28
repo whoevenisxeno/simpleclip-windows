@@ -3,18 +3,21 @@
 mod audio_encoder;
 mod compress;
 mod convert;
+mod edit;
 mod encoder;
 #[cfg(target_os = "linux")]
 mod hw;
 mod mux;
 mod player;
 mod recorder;
+mod stretch;
 mod thumb;
 mod trim;
 
 pub use audio_encoder::AacEncoder;
 pub use compress::{compress_to_size, Compressed};
 pub use convert::Bgra2Nv12;
+pub use edit::{render as render_edit, Progress as EditProgress, Rendered, CANCELLED};
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
 pub use player::{media_info, spawn_audio, spawn_video, MediaInfo, VideoFrame, AUDIO_RATE};

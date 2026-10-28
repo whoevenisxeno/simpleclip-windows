@@ -7,7 +7,7 @@ something good happens you press a hotkey and those seconds are written to an MP
 record button and nothing to start before you play.
 
 I started this as a Linux tool and then wanted the same thing on Windows, so this repo is
-the Windows version: a background service, a small app for browsing and trimming clips, and an
+the Windows version: a background service, a small app for browsing and editing clips, and an
 installer. I'm not trying to replace ShadowPlay or Medal. I wanted something small that does one
 job and does not need an account.
 
@@ -33,19 +33,22 @@ job and does not need an account.
 - **Clip gallery.** Previews, search, and grouping by game, date, folder or bookmark.
 - **Rename, folders, bookmarks, notes.** All inside the app. Bookmarks are labels you create and
   colour yourself. Nothing is ever bookmarked automatically.
-- **Trim with a live player.** The player is built into the app. It plays and loops only the part
-  you selected, and follows the handles while you drag them, so you see the cut as you make it.
-  Then either keep the original and make a trimmed copy, or replace the original (it goes to the Recycle
-  Bin, not deleted for good). Trimming copies the stream without re-encoding, so it is instant and
-  lossless, but cuts land on keyframes.
-- **Trimmed clips stay separate.** They get their own view and a small badge, and they are left out
+- **Edit with a live player and a timeline.** Open a clip and cut it exactly where you want. Split
+  it at the playhead, delete any piece (so you can remove a section from the middle), drag the edges
+  of a piece, and undo or redo as far back as you like. A strip of pictures shows the whole clip, and
+  the player skips the parts you cut. Then add what you need: speed from 0.25x to 4x with the pitch
+  kept, volume or mute, fade in and fade out, crop to any shape or to 16:9, 9:16, 1:1, 4:5 or 21:9,
+  and turn or flip the picture. Save it as a new clip, or replace the original (it goes to the
+  Recycle Bin, not deleted for good). Edits are re-encoded so cuts are frame accurate. A plain trim
+  can still be done as an instant lossless cut, which snaps to the nearest earlier keyframe.
+- **Edited clips stay separate.** They get their own view and a small badge, and they are left out
   of the normal clip list and the Recent row on Home. You can also send them to a folder of your
   choice.
 - **Share a clip.** "Copy file" puts the clip on the clipboard, so pasting into Discord or a
   chat attaches it. "Compress for Discord" makes a smaller copy that fits 10, 25 or 50 MB, scaling
-  the picture down only as far as it must. The original stays. Right after you save a trim, a
+  the picture down only as far as it must. The original stays. Right after you save an edit, a
   prompt offers both, and once a clip is compressed it offers to copy that file. Compressed copies
-  get their own Compressed section next to Trimmed, so they never clutter your clips.
+  get their own Compressed section next to Edited, so they never clutter your clips.
 - **Presets.** Three built in (Balanced, Light, Sharp) and your own. A preset holds the frame rate,
   quality, sound and replay length, and nothing about your displays, devices, folders or theme.
 - **Themes.** Ten colour themes plus the default, which follows Windows light and dark. You pick one
@@ -87,18 +90,18 @@ Grouped by folder:
 
 ![Clips grouped by folder](docs/screenshots/clips-folders-dark.png)
 
-Trimmed clips only:
+Edited clips only:
 
-![Trimmed clips view](docs/screenshots/clips-trimmed-dark.png)
+![Edited clips view](docs/screenshots/clips-trimmed-dark.png)
 
 ### Sharing
 
-After saving a trim, SimpleClip asks what you want to do with it. You can turn the prompt off in
+After saving an edit, SimpleClip asks what you want to do with it. You can turn the prompt off in
 Settings.
 
-![Share prompt after a trim](docs/screenshots/share-prompt.png)
+![Share prompt after an edit](docs/screenshots/share-prompt.png)
 
-Compressed copies are listed apart from your clips, next to the Trimmed ones:
+Compressed copies are listed apart from your clips, next to the Edited ones:
 
 ![Compressed clips](docs/screenshots/clips-compressed.png)
 
@@ -126,9 +129,9 @@ Create and recolour bookmarks:
 
 ![Bookmark manager](docs/screenshots/bookmarks-dark.png)
 
-### Trim
+### Edit
 
-![Trim screen](docs/screenshots/trim-dark.png)
+![Editor](docs/screenshots/editor-dark.png)
 
 ### Settings
 
@@ -279,8 +282,11 @@ Being straight about this so you don't hit it by surprise:
   not implemented yet.
 - **`warn-at-gb` and `post_save_hook` are in the config but do nothing.**
 - **`ram-cap-mb` is only used to estimate and validate the buffer size**, it is not a hard limit.
-- **Trim cuts on keyframes.** That is the price of not re-encoding. With the default 2 second
-  keyframe spacing at 60 fps, cuts can land up to about 2 seconds off.
+- **Quick trims and `sc trim` cut on keyframes.** That is the price of not re-encoding. With the
+  default 2 second keyframe spacing at 60 fps, cuts can land up to about 2 seconds early. The editor
+  avoids this by default because it re-encodes.
+- **The editor preview plays at normal speed.** A speed change and the fades only show in the saved
+  clip. Several audio tracks are mixed into one when you save an edit.
 - **Exclusive-fullscreen games** can capture as black with Windows Graphics Capture. Borderless
   or windowed fullscreen works. This is a Windows limitation, not something I can fix here.
 - **Only the AMD (AMF) encoder path has been tested.** The NVENC and QuickSync paths are written
@@ -315,15 +321,15 @@ cargo test --workspace
 ```
 sc-core     config, the IPC messages, the ring buffer
 sc-capture  Windows Graphics Capture video and WASAPI audio
-sc-ffmpeg   encoders, muxing, trim, thumbnails (FFmpeg through ffmpeg-next)
+sc-ffmpeg   encoders, muxing, edit rendering, trim, thumbnails (FFmpeg through ffmpeg-next)
 scd         the background service: pipeline, tray, hotkeys, popup, IPC server
 sc          the command line client
 sc-gui      the app (egui)
 ```
 
 The service and the clients talk over a named pipe, `simpleclip.sock`, using one JSON message per
-line. The app asks the service for previews and trims, because the service is the one that owns
-FFmpeg. Design notes and the reasoning behind choices are in [docs/DECISIONS.md](docs/DECISIONS.md).
+line. The app asks the service for previews, because the service is the one that owns FFmpeg.
+Editing runs inside the app itself, so it works even when the service is stopped. Design notes and the reasoning behind choices are in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Origin and licence
 
