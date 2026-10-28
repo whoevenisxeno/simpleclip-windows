@@ -1342,42 +1342,18 @@ fn paint_icon(painter: &egui::Painter, c: egui::Pos2, icon: Icon, color: egui::C
 }
 
 fn cleanup(app: &mut ScApp, ui: &mut Ui) {
-    let plan = app.settings.dupes.clone();
     let mut scan = false;
-    let mut confirm = false;
-    let mut cancel = false;
     section(ui, Some("Clean up"), |s| {
-        let hint = match &plan {
-            Some(p) => format!(
-                "Found {} duplicate {} ({}). Move them to the Recycle Bin?",
-                p.remove.len(),
-                if p.remove.len() == 1 { "clip" } else { "clips" },
-                gallery::size_label(p.bytes())
-            ),
-            None => "Keeps the compressed copy of a clip, else the trimmed one, else the original."
-                .to_string(),
-        };
-        s.row("Remove duplicate clips", Some(&hint), |ui| match &plan {
-            Some(p) => {
-                if widgets::primary_button(ui, None, &format!("Yes, delete {}", p.remove.len()))
-                    .clicked()
-                {
-                    confirm = true;
-                }
-                if widgets::quiet_button(ui, None, "Cancel").clicked() {
-                    cancel = true;
-                }
-            }
-            None => {
+        s.row(
+            "Remove duplicate clips",
+            Some("Keeps the compressed copy of a clip, else the trimmed one, else the original."),
+            |ui| {
                 if widgets::quiet_button(ui, None, "Remove duplicates\u{2026}").clicked() {
                     scan = true;
                 }
-            }
-        });
+            },
+        );
     });
-    if cancel {
-        app.settings.dupes = None;
-    }
     if scan {
         let items = gallery::video_files(app)
             .into_iter()
@@ -1390,38 +1366,243 @@ fn cleanup(app: &mut ScApp, ui: &mut Ui) {
             app.settings.dupes = Some(found);
         }
     }
-    if confirm {
-        if let Some(found) = app.settings.dupes.take() {
-            let (mut done, mut freed, mut failed) = (0usize, 0u64, 0usize);
-            for item in &found.remove {
-                if !item.path.exists() {
-                    continue;
-                }
-                if gallery::delete(&item.path) {
-                    app.library.forget(&item.path);
-                    app.thumbs.forget(&item.path);
-                    done += 1;
-                    freed += item.bytes;
-                } else {
-                    failed += 1;
-                }
-            }
-            app.gallery.rescan();
-            if failed > 0 {
-                app.toast(
-                    format!("Moved {done} to the Recycle Bin, {failed} could not be moved"),
-                    ToastKind::Warn,
-                );
-            } else {
-                app.toast(
-                    format!(
-                        "Moved {done} {} to the Recycle Bin ({})",
-                        if done == 1 { "clip" } else { "clips" },
-                        gallery::size_label(freed)
-                    ),
-                    ToastKind::Ok,
-                );
-            }
+    if app.settings.dupes.is_some() {
+        match dupes_dialog(app, &ui.ctx().clone()) {
+            Some(true) => remove_duplicates(app),
+            Some(false) => app.settings.dupes = None,
+            None => {}
         }
     }
+}
+
+fn remove_duplicates(app: &mut ScApp) {
+    let Some(found) = app.settings.dupes.take() else {
+        return;
+    };
+    let (mut done, mut freed, mut failed) = (0usize, 0u64, 0usize);
+    for item in &found.remove {
+        if !item.path.exists() {
+            continue;
+        }
+        if gallery::delete(&item.path) {
+            app.library.forget(&item.path);
+            app.thumbs.forget(&item.path);
+            done += 1;
+            freed += item.bytes;
+        } else {
+            failed += 1;
+        }
+    }
+    app.gallery.rescan();
+    if failed > 0 {
+        app.toast(
+            format!("Moved {done} to the Recycle Bin, {failed} could not be moved"),
+            ToastKind::Warn,
+        );
+    } else {
+        app.toast(
+            format!(
+                "Moved {done} {} to the Recycle Bin ({} freed)",
+                if done == 1 { "clip" } else { "clips" },
+                gallery::size_label(freed)
+            ),
+            ToastKind::Ok,
+        );
+    }
+}
+
+fn dupes_dialog(app: &mut ScApp, ctx: &egui::Context) -> Option<bool> {
+    let plan = app.settings.dupes.clone()?;
+    let p = crate::theme::pal(ctx);
+    let removing = plan.remove.len();
+    let staying: usize = plan.groups.iter().map(|g| g.keep.len()).sum();
+    let mut answer = None;
+    let closed = crate::screens::sheet::modal(ctx, "dupes-dialog", 600.0, |ui| {
+        ui.label(
+            RichText::new("Remove duplicate clips?")
+                .font(egui::FontId::new(20.0, theme::semibold()))
+                .color(p.text),
+        );
+        ui.add_space(2.0);
+        widgets::secondary(
+            ui,
+            "These are extra versions of clips you also have. For each clip the best version stays: compressed, then trimmed, then the original.",
+        );
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let w = ((ui.available_width() - 20.0) / 3.0).floor();
+            stat_tile(
+                ui,
+                w,
+                "Will be removed",
+                &format!(
+                    "{removing} {}",
+                    if removing == 1 { "clip" } else { "clips" }
+                ),
+                p.red,
+            );
+            stat_tile(
+                ui,
+                w,
+                "Space freed",
+                &gallery::size_label(plan.bytes()),
+                p.green,
+            );
+            stat_tile(
+                ui,
+                w,
+                "Staying",
+                &format!("{staying} {}", if staying == 1 { "clip" } else { "clips" }),
+                p.text,
+            );
+        });
+        ui.add_space(14.0);
+        egui::ScrollArea::vertical()
+            .id_salt("dupes-list")
+            .max_height(300.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                for group in &plan.groups {
+                    egui::Frame::none()
+                        .fill(p.card_hi)
+                        .rounding(egui::Rounding::same(theme::radius::CONTROL))
+                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            for item in &group.keep {
+                                dupe_row(ui, app, item, "Keeps", p.green, false);
+                            }
+                            for item in &group.remove {
+                                dupe_row(ui, app, item, "Removes", p.red, true);
+                            }
+                        });
+                }
+            });
+        ui.add_space(12.0);
+        widgets::secondary(
+            ui,
+            "They go to the Recycle Bin, so you can still restore them from there.",
+        );
+        ui.add_space(12.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let label = format!(
+                "Move {removing} {} to the Recycle Bin",
+                if removing == 1 { "clip" } else { "clips" }
+            );
+            if widgets::primary_button(ui, None, &label).clicked() {
+                answer = Some(true);
+            }
+            if widgets::quiet_button(ui, None, "Cancel").clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if closed && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
+}
+
+fn stat_tile(ui: &mut Ui, width: f32, label: &str, value: &str, color: egui::Color32) {
+    let p = pal_ui(ui);
+    egui::Frame::none()
+        .fill(p.card_hi)
+        .rounding(egui::Rounding::same(theme::radius::CONTROL))
+        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+        .show(ui, |ui| {
+            ui.set_width(width - 28.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(
+                    RichText::new(label.to_uppercase())
+                        .font(egui::FontId::new(10.5, theme::semibold()))
+                        .color(p.text_3),
+                );
+                ui.label(
+                    RichText::new(value)
+                        .font(egui::FontId::new(17.0, theme::semibold()))
+                        .color(color),
+                );
+            });
+        });
+}
+
+fn dupe_row(
+    ui: &mut Ui,
+    app: &mut ScApp,
+    item: &crate::dupes::Item,
+    tag: &str,
+    color: egui::Color32,
+    muted: bool,
+) {
+    let p = pal_ui(ui);
+    let name = item
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("clip")
+        .to_string();
+    let kind = crate::dupes::kind_of(&item.path);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        let size = vec2(64.0, 36.0);
+        let tint = if muted {
+            egui::Color32::from_white_alpha(120)
+        } else {
+            egui::Color32::WHITE
+        };
+        match app.thumbs.get(&item.path, false) {
+            Some(tex) => {
+                ui.add(
+                    egui::Image::new(egui::load::SizedTexture::new(tex.id(), size))
+                        .rounding(egui::Rounding::same(6.0))
+                        .tint(tint),
+                );
+            }
+            None => {
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, egui::Rounding::same(6.0), p.card);
+            }
+        }
+        let text_w = (ui.available_width() - 96.0).max(80.0);
+        ui.allocate_ui_with_layout(vec2(text_w, 36.0), Layout::top_down(Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.add(
+                egui::Label::new(RichText::new(&name).size(13.0).color(if muted {
+                    p.text_2
+                } else {
+                    p.text
+                }))
+                .truncate(),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "{} \u{2022} {}",
+                    kind.label(),
+                    gallery::size_label(item.bytes)
+                ))
+                .size(12.0)
+                .color(p.text_3),
+            );
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let galley = ui.painter().layout_no_wrap(
+                tag.to_string(),
+                egui::FontId::new(11.5, theme::semibold()),
+                color,
+            );
+            let (rect, _) = ui.allocate_exact_size(galley.size() + vec2(20.0, 8.0), Sense::hover());
+            ui.painter().rect_filled(
+                rect,
+                egui::Rounding::same(rect.height() / 2.0),
+                color.linear_multiply(0.16),
+            );
+            ui.painter()
+                .galley(rect.center() - galley.size() / 2.0, galley, color);
+        });
+    });
 }

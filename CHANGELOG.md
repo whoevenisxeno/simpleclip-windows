@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.3.0
+
+### Changed
+- The small cards that pop up when a clip is saved, and when SimpleClip starts (with the news that an update is available), are redrawn. They are now fully solid with smooth rounded corners and a soft shadow instead of slightly see-through with jagged corners, and they follow your SimpleClip theme and accent colour (or Windows light and dark with the default theme). The update card now says "SimpleClip X is available".
+- Removing duplicate clips now opens a proper confirmation. It shows how many clips go, how much space it frees and how many stay, then lists each clip with its picture, kind and size, marked Keeps or Removes, before anything is moved to the Recycle Bin.
+
 ## 6.2.0
 
 ### Added

@@ -272,6 +272,7 @@ pub fn announce_startup(daemon: Daemon) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_secs(3));
+            let mut title = "SimpleClip is running".to_string();
             let mut lines = vec![format!("{hotkey} saves the last {secs}s")];
             if check {
                 let current = env!("CARGO_PKG_VERSION");
@@ -285,16 +286,22 @@ pub fn announce_startup(daemon: Daemon) {
                         std::thread::sleep(std::time::Duration::from_secs(3));
                     }
                 }
-                lines.push(match result {
-                    Ok(Some(r)) => format!("Update {} is available. Open SimpleClip.", r.version),
-                    Ok(None) => format!("You are up to date ({current})"),
-                    Err(_) => "Couldn't check for updates".to_string(),
-                });
+                match result {
+                    Ok(Some(r)) => {
+                        title = format!("SimpleClip {} is available", r.version);
+                        lines.insert(
+                            0,
+                            "Open SimpleClip to update. It only takes a moment.".to_string(),
+                        );
+                    }
+                    Ok(None) => lines.push(format!("You are up to date ({current})")),
+                    Err(_) => lines.push("Couldn't check for updates".to_string()),
+                }
             }
             crate::popup::show(crate::popup::Popup {
                 kind: crate::popup::Kind::Info,
                 compact: false,
-                title: "SimpleClip is running".into(),
+                title,
                 lines,
             });
         })

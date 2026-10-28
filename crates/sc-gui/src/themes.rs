@@ -323,6 +323,29 @@ mod tests {
     }
 
     #[test]
+    fn the_popup_palette_matches_every_theme() {
+        let same = |p: &Palette, l: sc_core::look::Look| {
+            let rgb = |c: Color32| [c.r(), c.g(), c.b()];
+            assert_eq!(rgb(p.card), l.card);
+            assert_eq!(rgb(p.line), l.line);
+            assert_eq!(rgb(p.text), l.text);
+            assert_eq!(rgb(p.text_2), l.text_2);
+            assert_eq!(rgb(p.text_3), l.text_3);
+            assert_eq!(rgb(p.accent), l.accent);
+            assert_eq!(rgb(p.green), l.green);
+            assert_eq!(rgb(p.red), l.red);
+            assert_eq!(p.dark, l.dark);
+        };
+        same(&DARK, sc_core::look::look("system", None, true));
+        same(&LIGHT, sc_core::look::look("system", None, false));
+        for t in THEMES {
+            if let Some(p) = t.pal {
+                same(&p, sc_core::look::look(t.id, None, true));
+            }
+        }
+    }
+
+    #[test]
     fn text_stays_readable_on_every_theme() {
         fn lum(c: Color32) -> f32 {
             let f = |v: u8| {

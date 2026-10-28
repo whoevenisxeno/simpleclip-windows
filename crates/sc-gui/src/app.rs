@@ -737,14 +737,19 @@ impl ScApp {
                     "settings-storage" => self.settings.tab = Tab::Storage,
                     "settings-dupes" => {
                         self.settings.tab = Tab::Storage;
-                        self.settings.dupes = Some(crate::dupes::Plan {
-                            remove: (0..3)
-                                .map(|i| crate::dupes::Item {
-                                    path: std::path::PathBuf::from(format!("demo-{i}.mp4")),
-                                    bytes: 11_000_000,
-                                })
-                                .collect(),
-                        });
+                        let demo = |name: &str, mb: u64| crate::dupes::Item {
+                            path: std::path::PathBuf::from(format!("{name}.mp4")),
+                            bytes: mb * 1_048_576,
+                        };
+                        let found = crate::dupes::plan(vec![
+                            demo("sc-apex-20261026-193000", 52),
+                            demo("sc-apex-20261026-193000-trim", 14),
+                            demo("sc-apex-20261026-193000-trim-10mb", 9),
+                            demo("sc-valorant-20261027-211500", 61),
+                            demo("sc-valorant-20261027-211500-25mb", 24),
+                            demo("sc-cs2-20261026-180000", 48),
+                        ]);
+                        self.settings.dupes = Some(found);
                     }
                     "settings-hotkeys" => self.settings.tab = Tab::Hotkeys,
                     "settings-card" => self.settings.tab = Tab::SaveCard,

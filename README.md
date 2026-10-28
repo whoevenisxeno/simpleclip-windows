@@ -54,7 +54,7 @@ job and does not need an account.
 - **Settings in tabs.** Capture, Sound, Quality, Storage, Hotkeys, Save card, Look and System, with a search box that finds any setting and a badge that shows when your changes are saved.
 - **Screen picker.** Choose which display to record from live pictures of your screens, in Settings and in the setup guide.
 - **Last opened ring.** The clip you opened last gets a soft ring, so you do not lose your place in a long list.
-- **Duplicate cleanup.** One button in Settings > Storage removes the extra versions of a clip (original, trimmed, compressed) and keeps the best one, after asking.
+- **Duplicate cleanup.** One button in Settings > Storage finds the extra versions of a clip (original, trimmed, compressed), shows you exactly what stays and what goes and how much space it frees, and only then moves the rest to the Recycle Bin.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
   an "Update available" button appears at the top right, shows the changelog, and updates in place

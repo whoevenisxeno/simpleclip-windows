@@ -3600,7 +3600,7 @@ dependencies = [
 
 [[package]]
 name = "sc"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3612,7 +3612,7 @@ dependencies = [
 
 [[package]]
 name = "sc-capture"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "ashpd",
  "crossbeam-channel",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "sc-core"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -3644,7 +3644,7 @@ dependencies = [
 
 [[package]]
 name = "sc-ffmpeg"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "crossbeam-channel",
  "ffmpeg-next",
@@ -3655,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "sc-gui"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "anyhow",
  "clipboard-win",
@@ -3679,7 +3679,7 @@ dependencies = [
 
 [[package]]
 name = "scd"
-version = "6.2.0"
+version = "6.3.0"
 dependencies = [
  "anyhow",
  "clap",

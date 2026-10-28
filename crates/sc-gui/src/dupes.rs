@@ -7,9 +7,33 @@ pub struct Item {
     pub bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Original,
+    Trimmed,
+    Compressed,
+}
+
+impl Kind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Original => "Original",
+            Kind::Trimmed => "Trimmed",
+            Kind::Compressed => "Compressed",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Group {
+    pub keep: Vec<Item>,
+    pub remove: Vec<Item>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Plan {
     pub remove: Vec<Item>,
+    pub groups: Vec<Group>,
 }
 
 impl Plan {
@@ -50,6 +74,25 @@ fn source_of(stem: &str) -> Option<&str> {
     strip_compress(stem).or_else(|| strip_trim(stem))
 }
 
+pub fn kind_of(path: &Path) -> Kind {
+    let stem = stem_of(path);
+    if strip_compress(&stem).is_some() {
+        Kind::Compressed
+    } else if strip_trim(&stem).is_some() {
+        Kind::Trimmed
+    } else {
+        Kind::Original
+    }
+}
+
+fn root_of(stem: &str) -> String {
+    let mut current = stem;
+    while let Some(source) = source_of(current) {
+        current = source;
+    }
+    current.to_string()
+}
+
 fn stem_of(path: &Path) -> String {
     path.file_stem()
         .and_then(|s| s.to_str())
@@ -71,15 +114,36 @@ pub fn plan(items: Vec<Item>) -> Plan {
             current = source;
         }
     }
-    let remove = items
+    let doomed: Vec<bool> = stems
         .iter()
-        .zip(&stems)
-        .filter(|(_, stem)| {
-            has_descendant.contains(stem.as_str()) && seen.get(stem.as_str()) == Some(&1)
-        })
+        .map(|stem| has_descendant.contains(stem.as_str()) && seen.get(stem.as_str()) == Some(&1))
+        .collect();
+    let remove: Vec<Item> = items
+        .iter()
+        .zip(&doomed)
+        .filter(|(_, d)| **d)
         .map(|(item, _)| item.clone())
         .collect();
-    Plan { remove }
+    let mut order: Vec<String> = Vec::new();
+    let mut by_root: HashMap<String, Group> = HashMap::new();
+    for ((item, stem), gone) in items.iter().zip(&stems).zip(&doomed) {
+        let root = root_of(stem);
+        let group = by_root.entry(root.clone()).or_insert_with(|| {
+            order.push(root.clone());
+            Group::default()
+        });
+        if *gone {
+            group.remove.push(item.clone());
+        } else {
+            group.keep.push(item.clone());
+        }
+    }
+    let groups = order
+        .into_iter()
+        .filter_map(|root| by_root.remove(&root))
+        .filter(|g| !g.remove.is_empty())
+        .collect();
+    Plan { remove, groups }
 }
 
 #[cfg(test)]
@@ -159,5 +223,40 @@ mod tests {
         let plan = plan(vec![item("a"), item("a-trim")]);
         assert_eq!(plan.remove.len(), 1);
         assert_eq!(plan.bytes(), 10);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    fn item(name: &str, bytes: u64) -> Item {
+        Item {
+            path: PathBuf::from(format!("C:/Clips/{name}.mp4")),
+            bytes,
+        }
+    }
+
+    #[test]
+    fn a_group_shows_what_stays_and_what_goes() {
+        let plan = plan(vec![
+            item("a", 100),
+            item("a-trim", 40),
+            item("a-trim-10mb", 10),
+            item("other", 5),
+        ]);
+        assert_eq!(plan.groups.len(), 1);
+        let g = &plan.groups[0];
+        assert_eq!(g.keep.len(), 1);
+        assert_eq!(kind_of(&g.keep[0].path), Kind::Compressed);
+        assert_eq!(g.remove.len(), 2);
+        assert_eq!(plan.bytes(), 140);
+    }
+
+    #[test]
+    fn kinds_are_read_from_the_name() {
+        assert_eq!(kind_of(Path::new("x/a.mp4")), Kind::Original);
+        assert_eq!(kind_of(Path::new("x/a-trim2.mp4")), Kind::Trimmed);
+        assert_eq!(kind_of(Path::new("x/a-trim-25mb.mp4")), Kind::Compressed);
     }
 }
