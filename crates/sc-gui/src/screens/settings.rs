@@ -1,41 +1,295 @@
 use crate::app::ScApp;
 use crate::theme::{self, pal_ui};
 use crate::widgets::{self, section};
-use egui::{RichText, Ui};
+use egui::{vec2, Align, Layout, RichText, Sense, Ui};
 use sc_core::config::{AudioTracks, FolderPolicy, PopupPosition, PopupStyle, MAX_VOLUME_PERCENT};
 use std::time::Duration;
 
-/// Settings are saved automatically a moment after each change (see `ScApp`).
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Capture,
+    Sound,
+    Quality,
+    Storage,
+    Hotkeys,
+    SaveCard,
+    Look,
+    System,
+}
+
+const TABS: [(Tab, &str, &str); 8] = [
+    (
+        Tab::Capture,
+        "Capture",
+        "What gets recorded into the buffer.",
+    ),
+    (
+        Tab::Sound,
+        "Sound",
+        "Game and app audio, plus an optional microphone.",
+    ),
+    (
+        Tab::Quality,
+        "Quality",
+        "Sharper looks better and takes more space.",
+    ),
+    (Tab::Storage, "Storage", "Where clips and trims are kept."),
+    (
+        Tab::Hotkeys,
+        "Hotkeys",
+        "Click Change, then press the keys. Any key works, the backtick included.",
+    ),
+    (
+        Tab::SaveCard,
+        "Save card",
+        "The small card that appears when a clip is saved.",
+    ),
+    (
+        Tab::Look,
+        "Look",
+        "Pick a theme and an accent colour. The default follows Windows light and dark.",
+    ),
+    (
+        Tab::System,
+        "System",
+        "Startup, sharing, updates and housekeeping.",
+    ),
+];
+
+#[derive(Default)]
+pub struct SettingsState {
+    pub tab: Tab,
+    pub query: String,
+}
+
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
-    widgets::page_title(ui, "Settings", Some("Changes are saved automatically."));
-
-    if let Some(err) = app.autosave.error.clone() {
-        widgets::notice(ui, p.red, &format!("Not saved: {err}"));
-        ui.add_space(10.0);
-    } else if app
-        .autosave
-        .saved_at
-        .is_some_and(|t| t.elapsed() < Duration::from_secs(3))
-    {
-        widgets::notice(ui, p.green, "Saved");
-        ui.add_space(10.0);
-        ui.ctx().request_repaint_after(Duration::from_millis(500));
-    }
-
     app.devices.ensure(&app.link);
 
-    presets_section(app, ui);
-    recording(app, ui);
-    audio(app, ui);
-    quality(app, ui);
-    saving(app, ui);
-    shortcuts(app, ui);
-    appearance(app, ui);
-    general(app, ui);
-    ui.add_space(18.0);
-    notifications(app, ui);
-    advanced(app, ui);
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            widgets::page_title(ui, "Settings", Some("Changes are saved automatically."));
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add_space(4.0);
+            status_pill(app, ui);
+            ui.add_space(6.0);
+            search_box(ui, &mut app.settings.query);
+        });
+    });
+    ui.add_space(4.0);
+
+    widgets::set_search_query(ui.ctx(), &app.settings.query);
+    widgets::reset_rows(ui.ctx());
+    let searching = !widgets::search_query(ui.ctx()).is_empty();
+
+    let height = (ui.available_height() - 12.0).max(200.0);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 28.0;
+        ui.allocate_ui_with_layout(vec2(168.0, height), Layout::top_down(Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            for (tab, label, _) in TABS {
+                let selected = !searching && app.settings.tab == tab;
+                if rail_item(ui, label, selected).clicked() {
+                    app.settings.tab = tab;
+                    app.settings.query.clear();
+                }
+            }
+            ui.add_space(10.0);
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, p.line);
+            ui.add_space(10.0);
+            if rail_item(ui, "Setup guide", false).clicked() {
+                app.wizard = Default::default();
+                app.goto(crate::app::Screen::Wizard);
+            }
+        });
+        ui.vertical(|ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("settings-pane")
+                .auto_shrink([false, false])
+                .max_height(height)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width() - 8.0);
+                    if searching {
+                        results(app, ui);
+                    } else {
+                        let (tab, title, sub) = TABS
+                            .iter()
+                            .find(|(t, _, _)| *t == app.settings.tab)
+                            .copied()
+                            .unwrap_or(TABS[0]);
+                        ui.label(
+                            RichText::new(title)
+                                .font(egui::FontId::new(22.0, theme::semibold()))
+                                .color(p.text),
+                        );
+                        ui.add_space(-4.0);
+                        ui.label(RichText::new(sub).size(13.5).color(p.text_2));
+                        ui.add_space(14.0);
+                        pane(app, ui, tab);
+                        ui.add_space(24.0);
+                    }
+                });
+        });
+    });
+}
+
+fn pane(app: &mut ScApp, ui: &mut Ui, tab: Tab) {
+    match tab {
+        Tab::Capture => {
+            presets_section(app, ui);
+            recording(app, ui);
+        }
+        Tab::Sound => audio(app, ui),
+        Tab::Quality => quality(app, ui),
+        Tab::Storage => saving(app, ui),
+        Tab::Hotkeys => shortcuts(app, ui),
+        Tab::SaveCard => notifications(app, ui),
+        Tab::Look => appearance(app, ui),
+        Tab::System => {
+            general(app, ui);
+            advanced(app, ui);
+            reset_section(app, ui);
+            #[cfg(windows)]
+            uninstall_section(app, ui);
+        }
+    }
+}
+
+fn results(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    let frame = egui::Frame::none()
+        .fill(p.card)
+        .rounding(egui::Rounding::same(theme::radius::CARD))
+        .stroke(egui::Stroke::new(1.0_f32, p.line))
+        .shadow(theme::card_shadow(&p))
+        .inner_margin(egui::Margin::symmetric(16.0, 0.0));
+    let mut prepared = frame.begin(ui);
+    {
+        let inner = &mut prepared.content_ui;
+        inner.set_width(inner.available_width());
+        inner.spacing_mut().item_spacing.y = 0.0;
+        for (tab, _, _) in TABS {
+            pane(app, inner, tab);
+        }
+    }
+    if widgets::rows_drawn(ui.ctx()) > 0 {
+        prepared.end(ui);
+    } else {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            ui.label(
+                RichText::new("Nothing matches that search.")
+                    .size(14.0)
+                    .color(p.text_2),
+            );
+        });
+    }
+}
+
+fn status_pill(app: &ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    let (color, text) = if let Some(err) = &app.autosave.error {
+        (p.red, format!("Not saved: {err}"))
+    } else if app.settings_dirty() {
+        (p.orange, "Saving\u{2026}".to_string())
+    } else {
+        (p.green, "All changes saved".to_string())
+    };
+    egui::Frame::none()
+        .fill(color.linear_multiply(0.14))
+        .rounding(egui::Rounding::same(14.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 7.0;
+                widgets::dot(ui, color);
+                ui.label(RichText::new(text).size(12.5).color(color));
+            });
+        });
+}
+
+fn search_box(ui: &mut Ui, query: &mut String) {
+    let p = pal_ui(ui);
+    egui::Frame::none()
+        .fill(p.card_hi)
+        .rounding(egui::Rounding::same(theme::radius::CONTROL))
+        .inner_margin(egui::Margin::symmetric(11.0, 5.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if theme::has_icons(ui.ctx()) {
+                    ui.label(
+                        RichText::new(theme::icon::SEARCH)
+                            .font(egui::FontId::new(14.0, theme::icons()))
+                            .color(p.text_3),
+                    );
+                }
+                ui.add(
+                    egui::TextEdit::singleline(query)
+                        .hint_text("Search settings")
+                        .frame(false)
+                        .desired_width(170.0),
+                );
+            });
+        });
+}
+
+fn rail_item(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let p = pal_ui(ui);
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
+    let on = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("on"), selected, 0.16);
+    let round = egui::Rounding::same(theme::radius::CONTROL - 1.0);
+    if on < 1.0 {
+        ui.painter().rect_filled(
+            rect,
+            round,
+            p.text.linear_multiply(0.06 * hover * (1.0 - on)),
+        );
+    }
+    if on > 0.0 {
+        ui.painter()
+            .rect_filled(rect, round, theme::mix(p.bg, p.card, on));
+        ui.painter().rect_stroke(
+            rect,
+            round,
+            egui::Stroke::new(1.0_f32, p.line.linear_multiply(on)),
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_center_size(
+                egui::pos2(rect.left() + 3.0, rect.center().y),
+                vec2(3.0, 16.0 * on),
+            ),
+            egui::Rounding::same(1.5),
+            p.accent,
+        );
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 14.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::new(
+            14.0,
+            if selected {
+                theme::semibold()
+            } else {
+                egui::FontFamily::Proportional
+            },
+        ),
+        if selected { p.text } else { p.text_2 },
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
 }
 
 /// Pick one of a few common values; a value that isn't in the list (set by
@@ -138,7 +392,7 @@ fn monitor_label(m: &sc_core::capture::MonitorInfo) -> String {
 }
 
 fn audio(app: &mut ScApp, ui: &mut Ui) {
-    section(ui, Some("Audio"), |s| {
+    section(ui, None, |s| {
         s.row("System sound", Some("Game and app audio"), |ui| {
             widgets::toggle(ui, &mut app.cfg.audio.desktop_enabled);
         });
@@ -197,7 +451,7 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
             );
         }
     });
-    if cfg!(windows) && app.cfg.audio.mic_enabled {
+    if cfg!(windows) && app.cfg.audio.mic_enabled && widgets::search_query(ui.ctx()).is_empty() {
         let p = pal_ui(ui);
         ui.label(
             RichText::new("If the microphone records silence, allow desktop apps in Windows Settings \u{203A} Privacy \u{203A} Microphone.")
@@ -254,7 +508,7 @@ fn device_combo(
 }
 
 fn quality(app: &mut ScApp, ui: &mut Ui) {
-    section(ui, Some("Quality"), |s| {
+    section(ui, None, |s| {
         s.row(
             "Video quality",
             Some(&quality_hint(app.cfg.encode.bitrate_kbps)),
@@ -330,7 +584,7 @@ fn quality_hint(kbps: u32) -> String {
 }
 
 fn saving(app: &mut ScApp, ui: &mut Ui) {
-    section(ui, Some("Saving"), |s| {
+    section(ui, None, |s| {
         s.row("Clips folder", Some("Where saved clips go"), |ui| {
             let dir = app.cfg.save.resolve_dir();
             if widgets::quiet_button(ui, Some(theme::icon::FOLDER), "Open").clicked() {
@@ -395,7 +649,7 @@ fn saving(app: &mut ScApp, ui: &mut Ui) {
 }
 
 fn shortcuts(app: &mut ScApp, ui: &mut Ui) {
-    section(ui, Some("Shortcuts"), |s| {
+    section(ui, None, |s| {
         s.row("Save clip", Some("Works in games and full screen"), |ui| {
             widgets::hotkey_field(ui, &mut app.cfg.hotkeys.save, "hk-save");
         });
@@ -417,7 +671,7 @@ fn shortcuts(app: &mut ScApp, ui: &mut Ui) {
 }
 
 fn general(app: &mut ScApp, ui: &mut Ui) {
-    section(ui, Some("General"), |s| {
+    section(ui, None, |s| {
         s.row(
             "Ask about sharing after trimming",
             Some("Offers to copy the clip or compress it for Discord"),
@@ -456,7 +710,7 @@ fn position_label(p: PopupPosition) -> &'static str {
 
 /// The card that slides in when a clip is saved, and the sound that goes with it.
 fn notifications(app: &mut ScApp, ui: &mut Ui) {
-    section(ui, Some("Notifications"), |s| {
+    section(ui, None, |s| {
         s.row("Show a card when a clip is saved", None, |ui| {
             widgets::toggle(ui, &mut app.cfg.general.notify);
         });
@@ -553,71 +807,61 @@ fn notifications(app: &mut ScApp, ui: &mut Ui) {
 }
 
 fn advanced(app: &mut ScApp, ui: &mut Ui) {
-    let p = pal_ui(ui);
-    egui::CollapsingHeader::new(RichText::new("Advanced").size(13.0).color(p.text_2))
-        .id_salt("advanced")
-        .show(ui, |ui| {
-            ui.add_space(6.0);
-            section(ui, None, |s| {
-                s.row("File name", Some("Use {app}, {date} and {time}"), |ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut app.cfg.save.filename_template)
-                            .desired_width(220.0),
-                    );
-                });
-                s.row(
-                    "Keyframe interval",
-                    Some("Time between full pictures; shorter makes cuts more exact"),
-                    |ui| {
-                        // Shown in seconds; stored as frames at the current frame rate.
-                        let fps = app.cfg.capture.target_fps.max(1);
-                        let mut secs = ((app.cfg.encode.gop_frames + fps / 2) / fps).max(1);
-                        let before = secs;
-                        choice(ui, &mut secs, &[(1, "1 s"), (2, "2 s"), (4, "4 s")], " s");
-                        if secs != before {
-                            app.cfg.encode.gop_frames = secs * fps;
-                        }
-                    },
+    section(ui, Some("Advanced"), |s| {
+        s.row("File name", Some("Use {app}, {date} and {time}"), |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.cfg.save.filename_template)
+                    .desired_width(250.0),
+            );
+        });
+        s.row(
+            "Keyframe interval",
+            Some("Time between full pictures; shorter makes cuts more exact"),
+            |ui| {
+                // Shown in seconds; stored as frames at the current frame rate.
+                let fps = app.cfg.capture.target_fps.max(1);
+                let mut secs = ((app.cfg.encode.gop_frames + fps / 2) / fps).max(1);
+                let before = secs;
+                choice(ui, &mut secs, &[(1, "1 s"), (2, "2 s"), (4, "4 s")], " s");
+                if secs != before {
+                    app.cfg.encode.gop_frames = secs * fps;
+                }
+            },
+        );
+        s.row(
+            "Memory limit",
+            Some("Most RAM the replay buffer may use"),
+            |ui| {
+                choice(
+                    ui,
+                    &mut app.cfg.buffer.ram_cap_mb,
+                    &[
+                        (512, "512 MB"),
+                        (1024, "1 GB"),
+                        (2048, "2 GB"),
+                        (4096, "4 GB"),
+                    ],
+                    " MB",
                 );
-                s.row(
-                    "Memory limit",
-                    Some("Most RAM the replay buffer may use"),
-                    |ui| {
-                        choice(
-                            ui,
-                            &mut app.cfg.buffer.ram_cap_mb,
-                            &[
-                                (512, "512 MB"),
-                                (1024, "1 GB"),
-                                (2048, "2 GB"),
-                                (4096, "4 GB"),
-                            ],
-                            " MB",
-                        );
-                    },
-                );
-                #[cfg(windows)]
-                {
-                    s.row(
-                        "Check for updates",
-                        Some("Look on GitHub for a newer version"),
-                        |ui| {
-                            widgets::toggle(ui, &mut app.cfg.general.update_check);
-                        },
-                    );
-                    let status = app.updater.status_text();
-                    s.row("Version", Some(&status), |ui| {
-                        if widgets::quiet_button(ui, None, "Check now").clicked() {
-                            app.updater.check(ui.ctx());
-                        }
-                    });
+            },
+        );
+        #[cfg(windows)]
+        {
+            s.row(
+                "Check for updates",
+                Some("Look on GitHub for a newer version"),
+                |ui| {
+                    widgets::toggle(ui, &mut app.cfg.general.update_check);
+                },
+            );
+            let status = app.updater.status_text();
+            s.row("Version", Some(&status), |ui| {
+                if widgets::quiet_button(ui, None, "Check now").clicked() {
+                    app.updater.check(ui.ctx());
                 }
             });
-        });
-
-    reset_section(app, ui);
-    #[cfg(windows)]
-    uninstall_section(app, ui);
+        }
+    });
 }
 
 /// A button at the very bottom to remove SimpleClip. It opens a confirmation
@@ -625,7 +869,6 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
 #[cfg(windows)]
 fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
     let p = pal_ui(ui);
-    ui.add_space(18.0);
     let exe = crate::update::Updater::uninstall_exe()
         // The design-review run shows the dialog even from a portable folder.
         .or_else(|| std::env::var_os("SC_GUI_SHOTS").map(std::path::PathBuf::from));
@@ -751,7 +994,6 @@ fn uninstall_section(app: &mut ScApp, ui: &mut Ui) {
 /// Put every setting back to its default and run the setup guide again. The
 /// old settings are kept next to the new file as `config.toml.bak`.
 fn reset_section(app: &mut ScApp, ui: &mut Ui) {
-    ui.add_space(18.0);
     let id = egui::Id::new("reset-confirm");
     let mut asking: bool = ui.data(|d| d.get_temp(id)).unwrap_or(false);
     let mut go = false;
@@ -790,28 +1032,15 @@ fn reset_section(app: &mut ScApp, ui: &mut Ui) {
 
 /// Colour theme and accent. Picking one applies at once.
 fn appearance(app: &mut ScApp, ui: &mut Ui) {
-    let p = pal_ui(ui);
-    widgets::caption(ui, "Appearance");
-    widgets::card(ui, |ui| {
-        ui.label(
-            RichText::new("Theme")
-                .font(egui::FontId::new(14.0, theme::semibold()))
-                .color(p.text),
-        );
-        ui.add_space(4.0);
-        widgets::theme_picker(ui, &mut app.cfg.general.theme, false);
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Accent color")
-                    .font(egui::FontId::new(14.0, theme::semibold()))
-                    .color(p.text),
-            );
-            ui.add_space(8.0);
+    section(ui, None, |s| {
+        s.full("theme appearance look colors colours palette", |ui| {
+            let accent = app.cfg.general.accent.clone();
+            widgets::theme_picker(ui, &mut app.cfg.general.theme, false, accent.as_deref());
+        });
+        s.row("Accent color", Some("Laid over any theme"), |ui| {
             widgets::accent_picker(ui, &mut app.cfg.general.accent);
         });
     });
-    ui.add_space(18.0);
 }
 
 /// One line describing a preset, for its row.
@@ -911,5 +1140,4 @@ fn presets_section(app: &mut ScApp, ui: &mut Ui) {
             app.toast(format!("Deleted {}", gone.name), crate::app::ToastKind::Ok);
         }
     }
-    ui.add_space(18.0);
 }

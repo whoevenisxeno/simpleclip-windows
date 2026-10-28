@@ -51,6 +51,7 @@ pub struct ScApp {
     pub devices: Devices,
     pub gallery: screens::gallery::Cache,
     pub trim: screens::trim::TrimState,
+    pub settings: screens::settings::SettingsState,
     pub thumbs: crate::thumbs::Thumbs,
     /// Bookmarks and notes for your clips.
     pub library: crate::library::Library,
@@ -176,6 +177,7 @@ impl ScApp {
             devices: Devices::default(),
             gallery: Default::default(),
             trim: Default::default(),
+            settings: Default::default(),
             thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
             library: crate::library::Library::load(),
             sheet: Default::default(),
@@ -207,6 +209,9 @@ impl ScApp {
 
     pub fn goto(&mut self, screen: Screen) {
         self.flush_config();
+        if screen != Screen::Settings {
+            self.settings.query.clear();
+        }
         if !matches!(screen, Screen::Trim(_)) {
             self.trim.stop_player();
         }
@@ -214,6 +219,10 @@ impl ScApp {
     }
 
     /// Write any unsaved settings now (used when leaving the Settings page).
+    pub fn settings_dirty(&self) -> bool {
+        self.cfg != self.saved_cfg
+    }
+
     pub fn flush_config(&mut self) {
         if self.cfg != self.saved_cfg {
             self.save_now();
@@ -253,6 +262,9 @@ impl ScApp {
 
 impl eframe::App for ScApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.screen != Screen::Settings {
+            widgets::set_search_query(ctx, "");
+        }
         // Apply a theme or accent change as soon as it is made.
         let look = (
             self.cfg.general.theme.clone(),
@@ -293,10 +305,23 @@ impl eframe::App for ScApp {
             egui::CentralPanel::default()
                 .frame(egui::Frame::none().fill(p.bg))
                 .show(ctx, |ui| {
+                    if self.screen == Screen::Settings {
+                        let avail = ui.available_width();
+                        let content = avail.min(1040.0) - 56.0;
+                        let side = ((avail - content) / 2.0).max(28.0);
+                        ui.horizontal_top(|ui| {
+                            ui.add_space(side);
+                            ui.vertical(|ui| {
+                                ui.set_width(content.max(320.0));
+                                ui.add_space(20.0);
+                                screens::settings::view(self, ui);
+                            });
+                        });
+                        return;
+                    }
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            // Comfortable reading width, centred when the window is wide.
                             let avail = ui.available_width();
                             let content = avail.min(980.0) - 56.0;
                             let side = ((avail - content) / 2.0).max(28.0);
@@ -309,8 +334,7 @@ impl eframe::App for ScApp {
                                         Screen::Dashboard => screens::dashboard::view(self, ui),
                                         Screen::Gallery => screens::gallery::view(self, ui),
                                         Screen::Trim(path) => screens::trim::view(self, ui, &path),
-                                        Screen::Settings => screens::settings::view(self, ui),
-                                        Screen::Wizard => {}
+                                        Screen::Settings | Screen::Wizard => {}
                                     }
                                     ui.add_space(32.0);
                                 });
@@ -381,37 +405,47 @@ impl ScApp {
             (Screen::Gallery, icon::CLIPS, "Clips"),
             (Screen::Settings, icon::SETTINGS, "Settings"),
         ];
+        let clip_count = self.gallery.originals_count(&self.library);
         for (screen, glyph, label) in items {
             let selected = self.screen == screen
                 || matches!((&self.screen, &screen), (Screen::Trim(_), Screen::Gallery));
-            if widgets::nav_item(ui, glyph, label, selected).clicked() {
+            let badge =
+                (screen == Screen::Gallery && clip_count > 0).then(|| clip_count.to_string());
+            if widgets::nav_item(ui, glyph, label, selected, badge.as_deref()).clicked() {
                 self.goto(screen);
             }
         }
 
-        // Push the status block and guide link to the bottom: spend the remaining
-        // height on a spacer, leaving exactly what they need.
-        const FOOT: f32 = 98.0;
+        const FOOT: f32 = 116.0;
         ui.add_space((ui.available_height() - FOOT).max(8.0));
         self.status_block(ui);
-        ui.add_space(6.0);
-        if ui
-            .add(
-                egui::Label::new(RichText::new("Setup guide").size(12.5).color(p.text_2))
-                    .sense(egui::Sense::click()),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            self.wizard = Default::default();
-            self.goto(Screen::Wizard);
-        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Label::new(RichText::new("Setup guide").size(12.5).color(p.text_2))
+                        .sense(egui::Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                self.wizard = Default::default();
+                self.goto(Screen::Wizard);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                        .size(12.0)
+                        .color(p.text_3),
+                );
+            });
+        });
     }
 
     /// Live state at the foot of the sidebar: a dot, a word, and the buffer.
     fn status_block(&mut self, ui: &mut egui::Ui) {
         let p = theme::pal_ui(ui);
-        let (color, word, sub) = match &self.link {
+        let (color, word, sub, fill) = match &self.link {
             Link::Connected(s) => {
                 use sc_core::capture::CaptureState::*;
                 let (c, w) = match s.state {
@@ -428,9 +462,10 @@ impl ScApp {
                         s.buffer_secs,
                         s.buffer_fill * 100.0
                     ),
+                    Some(s.buffer_fill.clamp(0.0, 1.0)),
                 )
             }
-            Link::Disconnected => (p.text_3, "Not running", "Start from Home".to_string()),
+            Link::Disconnected => (p.text_3, "Not running", "Start from Home".to_string(), None),
         };
         egui::Frame::none()
             .fill(p.card)
@@ -446,6 +481,26 @@ impl ScApp {
                         ui.label(RichText::new(word).font(FontId::new(13.5, theme::semibold())));
                     });
                     ui.label(RichText::new(sub).size(12.0).color(p.text_2));
+                    if let Some(f) = fill {
+                        ui.add_space(4.0);
+                        let (bar, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), 4.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter()
+                            .rect_filled(bar, egui::Rounding::same(2.0), p.card_hi);
+                        let mut done = bar;
+                        done.set_width((bar.width() * f).max(4.0));
+                        ui.painter().rect_filled(
+                            done,
+                            egui::Rounding::same(2.0),
+                            if color == p.orange {
+                                p.orange
+                            } else {
+                                p.accent
+                            },
+                        );
+                    }
                 });
             });
     }
@@ -520,6 +575,17 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("wizard3", true),
     ("wizard4", true),
     ("settings", true),
+    ("settings-sound", true),
+    ("settings-quality", true),
+    ("settings-storage", true),
+    ("settings-hotkeys", true),
+    ("settings-card", true),
+    ("settings-look", true),
+    ("settings-system", true),
+    ("settings-search", true),
+    ("look-accent", true),
+    ("look-sand", true),
+    ("settings-light", false),
     ("home", false),
     ("clips", false),
     ("details", false),
@@ -631,7 +697,32 @@ impl ScApp {
             });
             // Never let the review run write to the real config.
             self.cfg.general.setup_complete = true;
+            let (shot_theme, shot_accent) = match name {
+                "look-accent" => ("ember".to_string(), Some("#e84576".to_string())),
+                "look-sand" => ("sand".to_string(), Some("#0b9cbd".to_string())),
+                _ => (
+                    std::env::var("SC_GUI_THEME").unwrap_or_else(|_| "system".into()),
+                    None,
+                ),
+            };
+            self.cfg.general.theme = shot_theme;
+            self.cfg.general.accent = shot_accent;
             self.saved_cfg = self.cfg.clone();
+            self.settings = Default::default();
+            {
+                use screens::settings::Tab;
+                match name {
+                    "settings-sound" => self.settings.tab = Tab::Sound,
+                    "settings-quality" => self.settings.tab = Tab::Quality,
+                    "settings-storage" => self.settings.tab = Tab::Storage,
+                    "settings-hotkeys" => self.settings.tab = Tab::Hotkeys,
+                    "settings-card" => self.settings.tab = Tab::SaveCard,
+                    "settings-look" | "look-accent" | "look-sand" => self.settings.tab = Tab::Look,
+                    "settings-system" => self.settings.tab = Tab::System,
+                    "settings-search" => self.settings.query = "sound".into(),
+                    _ => {}
+                }
+            }
             self.wizard.step = match name {
                 "wizard1" => 0,
                 "wizard2" => 1,
@@ -652,7 +743,7 @@ impl ScApp {
                 "uninstall" => Screen::Settings,
                 "update-download" | "update-forced" => Screen::Dashboard,
                 "star" => Screen::Dashboard,
-                "settings" => Screen::Settings,
+                n if n.starts_with("settings") || n.starts_with("look") => Screen::Settings,
                 "trim" | "player" => {
                     let first = self.gallery.first_video();
                     first.map(Screen::Trim).unwrap_or(Screen::Gallery)

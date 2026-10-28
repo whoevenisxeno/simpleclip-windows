@@ -299,7 +299,7 @@ impl Updater {
                 let b = egui::Button::new(
                     RichText::new("Update available")
                         .size(12.5)
-                        .color(Color32::WHITE)
+                        .color(theme::on_accent(&p))
                         .font(FontId::new(12.5, theme::semibold())),
                 )
                 .fill(p.accent)

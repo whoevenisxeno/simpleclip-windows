@@ -56,6 +56,13 @@ pub struct Cache {
 }
 
 impl Cache {
+    pub fn originals_count(&self, lib: &crate::library::Library) -> usize {
+        self.clips
+            .iter()
+            .filter(|c| !lib.is_trimmed(&c.path) && !lib.is_compressed(&c.path))
+            .count()
+    }
+
     /// Force a rescan on the next frame.
     pub fn rescan(&mut self) {
         self.scanned = None;
@@ -788,7 +795,7 @@ fn chip(ui: &mut Ui, label: &str, on: bool, dot: Option<[u8; 3]>) -> bool {
     let size = galley.size() + vec2(24.0 + lead, 12.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let (bg, fg) = if on {
-        (p.accent, Color32::WHITE)
+        (p.accent, theme::on_accent(&p))
     } else if resp.hovered() {
         (mix(p.card_hi, p.text, 0.06), p.text)
     } else {

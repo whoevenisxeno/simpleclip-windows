@@ -282,3 +282,21 @@ pub fn card_shadow(p: &Palette) -> egui::Shadow {
         }
     }
 }
+
+pub fn on_accent(p: &Palette) -> Color32 {
+    let lin = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let a = p.accent;
+    let l = 0.2126 * lin(a.r()) + 0.7152 * lin(a.g()) + 0.0722 * lin(a.b());
+    if l > 0.42 {
+        Color32::from_rgb(0x14, 0x14, 0x16)
+    } else {
+        Color32::WHITE
+    }
+}

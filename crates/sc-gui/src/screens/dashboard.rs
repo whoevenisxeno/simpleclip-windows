@@ -79,6 +79,7 @@ fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     stats(app, ui, s);
     ui.add_space(18.0);
     recent(app, ui);
+    hints(app, ui);
 }
 
 /// Buffer ring on the left, the main actions on the right.
@@ -129,11 +130,37 @@ fn hero(app: &mut ScApp, ui: &mut Ui, s: &StatusReport, paused: bool) {
 /// A circular gauge of how full the replay buffer is.
 fn ring(ui: &mut Ui, fill: f32, secs: u32, paused: bool) {
     let p = pal_ui(ui);
-    let size = 132.0;
+    let size = 148.0;
     let (rect, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
     let c = rect.center();
-    let r = size / 2.0 - 8.0;
-    let w = 9.0;
+    let r = size / 2.0 - 16.0;
+    let w = 10.0;
+    let lit =
+        ui.ctx()
+            .animate_value_with_time(ui.id().with("ring-ticks"), fill.clamp(0.0, 1.0), 0.4);
+    for i in 0..60 {
+        let a = std::f32::consts::TAU * (i as f32 / 60.0) - std::f32::consts::FRAC_PI_2;
+        let long = i % 5 == 0;
+        let (r0, r1) = (
+            r + w / 2.0 + 5.0,
+            r + w / 2.0 + if long { 10.0 } else { 8.0 },
+        );
+        let on = (i as f32 / 60.0) < lit;
+        ui.painter().line_segment(
+            [
+                pos2(c.x + r0 * a.cos(), c.y + r0 * a.sin()),
+                pos2(c.x + r1 * a.cos(), c.y + r1 * a.sin()),
+            ],
+            Stroke::new(
+                1.4_f32,
+                if on {
+                    p.text_3
+                } else {
+                    p.text_3.linear_multiply(0.35)
+                },
+            ),
+        );
+    }
     ui.painter().circle_stroke(c, r, Stroke::new(w, p.card_hi));
     let color = if paused { p.orange } else { p.accent };
     let t = ui
@@ -231,7 +258,11 @@ fn tile(ui: &mut Ui, w: f32, label: &str, value: &str) {
             ui.set_width(w - 28.0 - 2.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(RichText::new(label).size(12.0).color(p.text_2));
+                ui.label(
+                    RichText::new(label.to_uppercase())
+                        .font(FontId::new(10.5, theme::semibold()))
+                        .color(p.text_3),
+                );
                 ui.add(
                     egui::Label::new(
                         RichText::new(value)
@@ -319,4 +350,33 @@ fn send(app: &mut ScApp, req: Request) {
         Ok(_) => {}
         Err(e) => app.toast(e.to_string(), ToastKind::Error),
     }
+}
+
+fn hints(app: &ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    ui.add_space(24.0);
+    egui::Frame::none()
+        .fill(p.card)
+        .rounding(egui::Rounding::same(theme::radius::TILE))
+        .stroke(Stroke::new(1.0_f32, p.line))
+        .inner_margin(egui::Margin::symmetric(18.0, 12.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let keys = [
+                    ("Save clip", &app.cfg.hotkeys.save),
+                    ("Screenshot", &app.cfg.hotkeys.screenshot),
+                    ("Open SimpleClip", &app.cfg.hotkeys.open),
+                ];
+                for (label, combo) in keys {
+                    if combo.is_empty() {
+                        continue;
+                    }
+                    ui.label(RichText::new(label).size(13.0).color(p.text_2));
+                    widgets::keycaps(ui, combo);
+                    ui.add_space(16.0);
+                }
+            });
+        });
 }

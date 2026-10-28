@@ -105,7 +105,7 @@ fn welcome(ui: &mut Ui) {
                 "No record button, no account, no uploads.",
             ),
         ] {
-            s.full(|ui| {
+            s.full("", |ui| {
                 ui.label(
                     RichText::new(title)
                         .font(FontId::new(15.0, theme::semibold()))
@@ -125,7 +125,8 @@ fn look(app: &mut ScApp, ui: &mut Ui) {
         "Choose a look",
         "Pick the colors you like. SimpleClip is the default. You can change this any time in Settings.",
     );
-    widgets::theme_picker(ui, &mut app.cfg.general.theme, true);
+    let accent = app.cfg.general.accent.clone();
+    widgets::theme_picker(ui, &mut app.cfg.general.theme, true, accent.as_deref());
     ui.add_space(16.0);
     ui.horizontal(|ui| {
         ui.label(

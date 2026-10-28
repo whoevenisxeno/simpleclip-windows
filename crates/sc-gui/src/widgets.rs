@@ -60,13 +60,52 @@ pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
         .inner
 }
 
-/// An inset grouped list (like iOS/macOS Settings): rows separated by hairlines.
+const SEARCH_ID: &str = "settings-search";
+const ROWS_ID: &str = "settings-rows";
+
+pub fn search_query(ctx: &egui::Context) -> String {
+    ctx.data(|d| d.get_temp::<String>(egui::Id::new(SEARCH_ID)))
+        .unwrap_or_default()
+}
+
+pub fn set_search_query(ctx: &egui::Context, query: &str) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(SEARCH_ID), query.trim().to_lowercase()));
+}
+
+pub fn reset_rows(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(ROWS_ID), 0usize));
+}
+
+pub fn rows_drawn(ctx: &egui::Context) -> usize {
+    ctx.data(|d| d.get_temp::<usize>(egui::Id::new(ROWS_ID)))
+        .unwrap_or(0)
+}
+
+fn bump_rows(ctx: &egui::Context) {
+    let n = rows_drawn(ctx) + 1;
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(ROWS_ID), n));
+}
+
+pub fn matches_query(ctx: &egui::Context, texts: &[&str]) -> bool {
+    let q = search_query(ctx);
+    q.is_empty() || texts.iter().any(|t| t.to_lowercase().contains(&q))
+}
+
 pub struct Section<'a> {
     ui: &'a mut Ui,
     first: bool,
+    flat: bool,
 }
 
 pub fn section<R>(ui: &mut Ui, header: Option<&str>, add: impl FnOnce(&mut Section) -> R) -> R {
+    if !search_query(ui.ctx()).is_empty() {
+        let mut s = Section {
+            ui,
+            first: true,
+            flat: true,
+        };
+        return add(&mut s);
+    }
     if let Some(h) = header {
         caption(ui, h);
     }
@@ -80,36 +119,50 @@ pub fn section<R>(ui: &mut Ui, header: Option<&str>, add: impl FnOnce(&mut Secti
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
-            let mut s = Section { ui, first: true };
+            let mut s = Section {
+                ui,
+                first: true,
+                flat: false,
+            };
             add(&mut s)
         })
         .inner;
-    ui.add_space(8.0);
+    ui.add_space(20.0);
     out
 }
 
 impl Section<'_> {
     fn divider(&mut self) {
-        if !self.first {
+        let draw = if self.flat {
+            rows_drawn(self.ui.ctx()) > 0
+        } else {
+            !self.first
+        };
+        if draw {
             let p = pal_ui(self.ui);
             let w = self.ui.available_width();
             let (r, _) = self.ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
             self.ui.painter().rect_filled(r, 0.0, p.line);
         }
         self.first = false;
+        if self.flat {
+            bump_rows(self.ui.ctx());
+        }
     }
 
-    /// A row: label (and optional hint) on the left, a control on the right.
     pub fn row(&mut self, label: &str, hint: Option<&str>, control: impl FnOnce(&mut Ui)) {
+        if self.flat && !matches_query(self.ui.ctx(), &[label, hint.unwrap_or("")]) {
+            return;
+        }
         self.divider();
         let p = pal_ui(self.ui);
-        let h = if hint.is_some() { 58.0 } else { 48.0 };
+        let h = if hint.is_some() { 60.0 } else { 50.0 };
         let w = self.ui.available_width();
         self.ui
             .allocate_ui_with_layout(vec2(w, h), Layout::left_to_right(Align::Center), |ui| {
+                ui.set_min_height(h);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    // Centre the text block in the row (the vertical fills its height).
                     let text_h = if hint.is_some() { 36.0 } else { 20.0 };
                     ui.add_space(((h - text_h) / 2.0).max(0.0));
                     ui.label(RichText::new(label).size(14.0).color(p.text));
@@ -121,8 +174,10 @@ impl Section<'_> {
             });
     }
 
-    /// A full-width row for free-form content (previews, notes).
-    pub fn full(&mut self, add: impl FnOnce(&mut Ui)) {
+    pub fn full(&mut self, keywords: &str, add: impl FnOnce(&mut Ui)) {
+        if self.flat && !matches_query(self.ui.ctx(), &[keywords]) {
+            return;
+        }
         self.divider();
         self.ui.add_space(10.0);
         add(self.ui);
@@ -272,7 +327,7 @@ pub fn button(ui: &mut Ui, tone: Tone, glyph: Option<&str>, label: &str) -> Resp
     // 32 high: on the 8pt grid, and comfortably above the 28px desktop minimum.
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(40.0), 32.0), Sense::click());
     let (bg, fg) = match tone {
-        Tone::Primary => (p.accent, Color32::WHITE),
+        Tone::Primary => (p.accent, theme::on_accent(&p)),
         Tone::Quiet => (p.card_hi, p.text),
     };
     // Hover is a quiet fill change that eases in; a press goes a step darker.
@@ -642,19 +697,23 @@ pub fn notice(ui: &mut Ui, color: Color32, text: &str) {
         });
 }
 
-/// Draw a vertical-centred row icon + label inside a rect (sidebar items).
-pub fn nav_item(ui: &mut Ui, glyph: &str, label: &str, selected: bool) -> Response {
+pub fn nav_item(
+    ui: &mut Ui,
+    glyph: &str,
+    label: &str,
+    selected: bool,
+    badge: Option<&str>,
+) -> Response {
     let p = pal_ui(ui);
     let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-    // The wash eases in and out rather than flicking on.
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 38.0), Sense::click());
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
     let on = ui
         .ctx()
         .animate_bool_with_time(resp.id.with("on"), selected, 0.16);
-    let round = Rounding::same(theme::radius::SMALL);
+    let round = Rounding::same(theme::radius::CONTROL - 1.0);
     if on < 1.0 {
         ui.painter().rect_filled(
             rect,
@@ -664,19 +723,30 @@ pub fn nav_item(ui: &mut Ui, glyph: &str, label: &str, selected: bool) -> Respon
     }
     if on > 0.0 {
         ui.painter()
-            .rect_filled(rect, round, p.accent.linear_multiply(0.18 * on));
+            .rect_filled(rect, round, mix(p.sidebar, p.card, on));
+        ui.painter().rect_stroke(
+            rect,
+            round,
+            Stroke::new(1.0_f32, p.line.linear_multiply(on)),
+        );
+        let bar = Rect::from_center_size(
+            pos2(rect.left() + 3.0, rect.center().y),
+            vec2(3.0, 16.0 * on),
+        );
+        ui.painter().rect_filled(bar, Rounding::same(1.5), p.accent);
     }
-    let fg = if selected { p.accent } else { p.text };
-    let mut x = rect.left() + 12.0;
+    let fg = if selected { p.text } else { p.text_2 };
+    let icon_col = if selected { p.accent } else { p.text_2 };
+    let mut x = rect.left() + 14.0;
     if theme::has_icons(ui.ctx()) {
         ui.painter().text(
             pos2(x + 9.0, rect.center().y),
             Align2::CENTER_CENTER,
             glyph,
             FontId::new(16.0, theme::icons()),
-            fg,
+            icon_col,
         );
-        x += 28.0;
+        x += 29.0;
     }
     ui.painter().text(
         pos2(x, rect.center().y),
@@ -692,6 +762,15 @@ pub fn nav_item(ui: &mut Ui, glyph: &str, label: &str, selected: bool) -> Respon
         ),
         fg,
     );
+    if let Some(b) = badge {
+        ui.painter().text(
+            pos2(rect.right() - 12.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            b,
+            FontId::new(12.0, egui::FontFamily::Proportional),
+            p.text_3,
+        );
+    }
     if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -838,7 +917,17 @@ pub fn swatches(ui: &mut Ui, colors: &[[u8; 3]], selected: Option<[u8; 3]>) -> O
 // ----------------------------------------------------------------- themes --
 
 /// A tiny picture of the app in one palette: sidebar, a card and an accent.
-fn theme_preview(painter: &egui::Painter, rect: Rect, p: &theme::Palette) {
+fn theme_preview(
+    painter: &egui::Painter,
+    rect: Rect,
+    base: &theme::Palette,
+    accent: Option<Color32>,
+) {
+    let mut pal = *base;
+    if let Some(a) = accent {
+        pal.accent = a;
+    }
+    let p = &pal;
     let r = Rounding::same(9.0);
     painter.rect_filled(rect, r, p.bg);
     let side = Rect::from_min_max(
@@ -888,9 +977,15 @@ fn theme_preview(painter: &egui::Painter, rect: Rect, p: &theme::Palette) {
 
 /// A grid of theme tiles. Returns true when the choice changed. `compact` makes
 /// the tiles smaller (the setup guide).
-pub fn theme_picker(ui: &mut Ui, current: &mut String, compact: bool) -> bool {
+pub fn theme_picker(
+    ui: &mut Ui,
+    current: &mut String,
+    compact: bool,
+    accent: Option<&str>,
+) -> bool {
+    let accent = accent.and_then(crate::themes::parse_hex);
     let p = pal_ui(ui);
-    let (tw, th) = if compact { (98.0, 60.0) } else { (132.0, 80.0) };
+    let (tw, th) = if compact { (80.0, 52.0) } else { (132.0, 80.0) };
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 8.0);
@@ -899,12 +994,17 @@ pub fn theme_picker(ui: &mut Ui, current: &mut String, compact: bool) -> bool {
             let (rect, resp) = ui.allocate_exact_size(vec2(tw, th + 22.0), Sense::click());
             let tile = Rect::from_min_size(rect.min, vec2(tw, th));
             match &t.pal {
-                Some(pal) => theme_preview(ui.painter(), tile, pal),
+                Some(pal) => theme_preview(ui.painter(), tile, pal, accent),
                 None => {
                     // The default follows Windows, so show both halves.
-                    theme_preview(ui.painter(), tile, &theme::DARK);
+                    theme_preview(ui.painter(), tile, &theme::DARK, accent);
                     let right = Rect::from_min_max(pos2(tile.center().x, tile.top()), tile.max);
-                    theme_preview(&ui.painter().with_clip_rect(right), tile, &theme::LIGHT);
+                    theme_preview(
+                        &ui.painter().with_clip_rect(right),
+                        tile,
+                        &theme::LIGHT,
+                        accent,
+                    );
                 }
             }
             let (stroke, width) = if selected {

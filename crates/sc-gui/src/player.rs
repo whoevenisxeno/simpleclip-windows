@@ -452,8 +452,22 @@ impl Player {
             .as_ref()
             .map(|i| (i.width.max(1) as f32, i.height.max(1) as f32))
             .unwrap_or((16.0, 9.0));
-        let w = ui.available_width().min(640.0);
-        let size = vec2(w, (w * ih / iw).round().min(420.0));
+        let avail = ui.available_width();
+        let h_cap = 420.0;
+        let w = avail.min(h_cap * iw / ih).min(820.0);
+        let size = vec2(w, (w * ih / iw).round());
+        let pad = ((avail - w) / 2.0).max(0.0);
+        ui.horizontal(|ui| {
+            ui.add_space(pad);
+            ui.vertical(|ui| {
+                ui.set_width(w);
+                self.draw(ui, size);
+            });
+        });
+    }
+
+    fn draw(&mut self, ui: &mut Ui, size: egui::Vec2) {
+        let p = pal_ui(ui);
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
         ui.painter()
             .rect_filled(rect, Rounding::same(10.0), egui::Color32::BLACK);
