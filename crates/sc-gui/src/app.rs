@@ -49,6 +49,7 @@ pub struct ScApp {
     pub gallery: screens::gallery::Cache,
     pub trim: screens::trim::TrimState,
     pub settings: screens::settings::SettingsState,
+    shown_opened: Option<PathBuf>,
     pub thumbs: crate::thumbs::Thumbs,
     pub library: crate::library::Library,
     pub sheet: screens::sheet::SheetState,
@@ -199,6 +200,7 @@ impl ScApp {
             gallery: Default::default(),
             trim: Default::default(),
             settings: Default::default(),
+            shown_opened: None,
             thumbs: crate::thumbs::Thumbs::new(cc.egui_ctx.clone()),
             library: crate::library::Library::load(),
             sheet: Default::default(),
@@ -380,6 +382,10 @@ impl eframe::App for ScApp {
         self.library.flush_if_due();
         if self.library.is_dirty() {
             ctx.request_repaint_after(Duration::from_millis(600));
+        }
+        if self.gallery.opened != self.shown_opened {
+            self.shown_opened = self.gallery.opened.clone();
+            ctx.request_repaint();
         }
         self.show_toast(ctx);
         self.drive_shot(ctx);

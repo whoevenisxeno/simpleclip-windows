@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.1.1
+
+### Fixed
+- The ring around the clip you just opened did not show up until you came back to the window and moved the mouse, because opening a clip hands the screen to your video player. It now draws straight away, so it is already there when you return.
+
 ## 6.1.0
 
 ### Added
