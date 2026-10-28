@@ -315,7 +315,7 @@ fn recent(app: &mut ScApp, ui: &mut Ui) {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let resp = crate::screens::gallery::preview(app, ui, &clip, vec2(w, h));
                 if resp.clicked() {
-                    crate::screens::gallery::open_path(&clip.path);
+                    crate::screens::gallery::play(app, &clip.path);
                 }
                 ui.add(
                     egui::Label::new(

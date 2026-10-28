@@ -111,7 +111,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             ui.spacing_mut().item_spacing.y = 3.0;
             for (tab, label, _) in TABS {
                 let selected = !searching && app.settings.tab == tab;
-                if rail_item(ui, label, selected).clicked() {
+                if rail_item(ui, label, selected, tab_icon(tab)).clicked() {
                     app.settings.tab = tab;
                     app.settings.query.clear();
                 }
@@ -120,7 +120,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, p.line);
             ui.add_space(10.0);
-            if rail_item(ui, "Setup guide", false).clicked() {
+            if rail_item(ui, "Setup guide", false, Icon::Star).clicked() {
                 app.wizard = Default::default();
                 app.goto(crate::app::Screen::Wizard);
             }
@@ -292,7 +292,7 @@ fn search_box(ui: &mut Ui, query: &mut String) {
         });
 }
 
-fn rail_item(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+fn rail_item(ui: &mut Ui, label: &str, selected: bool, icon: Icon) -> egui::Response {
     let p = pal_ui(ui);
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
@@ -327,8 +327,14 @@ fn rail_item(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
             p.accent,
         );
     }
+    paint_icon(
+        ui.painter(),
+        egui::pos2(rect.left() + 25.0, rect.center().y),
+        icon,
+        if selected { p.accent } else { p.text_2 },
+    );
     ui.painter().text(
-        egui::pos2(rect.left() + 14.0, rect.center().y),
+        egui::pos2(rect.left() + 45.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::new(
@@ -1184,6 +1190,147 @@ fn presets_section(app: &mut ScApp, ui: &mut Ui) {
             let gone = app.presets.remove(i);
             let _ = presets::save(&app.presets);
             app.toast(format!("Deleted {}", gone.name), crate::app::ToastKind::Ok);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Icon {
+    Monitor,
+    Sound,
+    Gauge,
+    Drive,
+    Keys,
+    Bell,
+    Palette,
+    Sliders,
+    Star,
+}
+
+fn tab_icon(tab: Tab) -> Icon {
+    match tab {
+        Tab::Capture => Icon::Monitor,
+        Tab::Sound => Icon::Sound,
+        Tab::Quality => Icon::Gauge,
+        Tab::Storage => Icon::Drive,
+        Tab::Hotkeys => Icon::Keys,
+        Tab::SaveCard => Icon::Bell,
+        Tab::Look => Icon::Palette,
+        Tab::System => Icon::Sliders,
+    }
+}
+
+fn arc(center: egui::Pos2, radius: f32, from: f32, to: f32) -> Vec<egui::Pos2> {
+    (0..=14)
+        .map(|i| {
+            let a = (from + (to - from) * i as f32 / 14.0).to_radians();
+            egui::pos2(center.x + radius * a.cos(), center.y + radius * a.sin())
+        })
+        .collect()
+}
+
+fn paint_icon(painter: &egui::Painter, c: egui::Pos2, icon: Icon, color: egui::Color32) {
+    let s = egui::Stroke::new(1.5_f32, color);
+    let at = |x: f32, y: f32| egui::pos2(c.x + x, c.y + y);
+    let line = |pts: &[(f32, f32)], closed: bool| {
+        let v: Vec<egui::Pos2> = pts.iter().map(|(x, y)| at(*x, *y)).collect();
+        painter.add(if closed {
+            egui::Shape::closed_line(v, s)
+        } else {
+            egui::Shape::line(v, s)
+        });
+    };
+    match icon {
+        Icon::Monitor => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(at(0.0, -1.0), vec2(14.0, 10.0)),
+                2.0,
+                s,
+            );
+            line(&[(0.0, 4.0), (0.0, 6.5)], false);
+            line(&[(-3.5, 6.5), (3.5, 6.5)], false);
+        }
+        Icon::Sound => {
+            line(
+                &[
+                    (-7.0, -2.5),
+                    (-4.0, -2.5),
+                    (-0.5, -6.0),
+                    (-0.5, 6.0),
+                    (-4.0, 2.5),
+                    (-7.0, 2.5),
+                ],
+                true,
+            );
+            painter.add(egui::Shape::line(arc(at(1.0, 0.0), 3.5, -50.0, 50.0), s));
+            painter.add(egui::Shape::line(arc(at(1.0, 0.0), 7.0, -50.0, 50.0), s));
+        }
+        Icon::Gauge => {
+            painter.add(egui::Shape::line(arc(at(0.0, 3.5), 7.5, 180.0, 360.0), s));
+            line(&[(0.0, 3.5), (3.5, -1.5)], false);
+            line(&[(-7.5, 3.5), (-6.0, 3.5)], false);
+            line(&[(7.5, 3.5), (6.0, 3.5)], false);
+        }
+        Icon::Drive => {
+            line(&[(-7.0, 1.0), (-5.0, -5.0), (5.0, -5.0), (7.0, 1.0)], false);
+            painter.rect_stroke(
+                egui::Rect::from_min_max(at(-7.0, 1.0), at(7.0, 6.0)),
+                2.0,
+                s,
+            );
+            painter.circle_filled(at(-3.5, 3.5), 1.0, color);
+        }
+        Icon::Keys => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(at(0.0, 0.0), vec2(16.0, 11.0)),
+                2.5,
+                s,
+            );
+            for x in [-4.0, 0.0, 4.0] {
+                painter.circle_filled(at(x, -1.8), 0.9, color);
+            }
+            line(&[(-4.0, 2.0), (4.0, 2.0)], false);
+        }
+        Icon::Bell => {
+            line(
+                &[
+                    (-6.0, 4.5),
+                    (-4.5, 3.0),
+                    (-4.5, -1.0),
+                    (-3.0, -4.0),
+                    (0.0, -5.5),
+                    (3.0, -4.0),
+                    (4.5, -1.0),
+                    (4.5, 3.0),
+                    (6.0, 4.5),
+                ],
+                true,
+            );
+            line(&[(-1.5, 7.0), (1.5, 7.0)], false);
+        }
+        Icon::Palette => {
+            painter.circle_stroke(at(0.0, 0.0), 7.5, s);
+            for (x, y) in [(-3.5, -1.5), (0.0, -4.0), (3.5, -1.5)] {
+                painter.circle_filled(at(x, y), 1.1, color);
+            }
+            painter.circle_filled(at(1.5, 3.0), 1.1, color);
+        }
+        Icon::Sliders => {
+            line(&[(-7.0, -3.5), (-4.6, -3.5)], false);
+            line(&[(0.6, -3.5), (7.0, -3.5)], false);
+            line(&[(-7.0, 3.5), (0.6, 3.5)], false);
+            line(&[(5.4, 3.5), (7.0, 3.5)], false);
+            painter.circle_stroke(at(-2.0, -3.5), 2.4, s);
+            painter.circle_stroke(at(3.0, 3.5), 2.4, s);
+        }
+        Icon::Star => {
+            let mut pts = Vec::new();
+            for i in 0..10 {
+                let r = if i % 2 == 0 { 7.5 } else { 3.2 };
+                let a = (-90.0 + 36.0 * i as f32).to_radians();
+                pts.push(at(r * a.cos(), r * a.sin()));
+            }
+            painter.add(egui::Shape::closed_line(pts, s));
         }
     }
 }

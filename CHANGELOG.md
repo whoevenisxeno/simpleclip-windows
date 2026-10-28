@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.1.0
+
+### Added
+- A soft ring around the clip you opened last, so you can find it again in a long list. It shows on the Clips page and in Home's Recent clips, after you play a clip, trim it, or open it from its menu or details.
+- Icons beside each section in Settings (Capture, Sound, Quality, Storage, Hotkeys, Save card, Look, System and Setup guide).
+
 ## 6.0.1
 
 ### Added

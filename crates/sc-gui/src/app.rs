@@ -229,6 +229,9 @@ impl ScApp {
     }
 
     pub fn goto(&mut self, screen: Screen) {
+        if let Screen::Trim(path) = &screen {
+            self.gallery.opened = Some(path.clone());
+        }
         self.flush_config();
         if screen != Screen::Settings {
             self.settings.query.clear();
@@ -742,6 +745,7 @@ impl ScApp {
             self.shot_demo_data();
             self.sheet = Default::default();
             self.gallery.reset_view();
+            self.gallery.opened = self.gallery.first_video();
             self.screen = match name {
                 "home" => Screen::Dashboard,
                 "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed"

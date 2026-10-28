@@ -154,7 +154,7 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                 let resp =
                     gallery::preview(app, ui, &clip, vec2(left_w, (left_w * 9.0 / 16.0).round()));
                 if resp.on_hover_text("Play").clicked() {
-                    gallery::open_path(&clip.path);
+                    gallery::play(app, &clip.path);
                 }
                 ui.label(
                     RichText::new(format!(
@@ -168,7 +168,7 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                 ui.add_space(6.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 if widgets::quiet_button(ui, Some(icon::PLAY), "Play").clicked() {
-                    gallery::open_path(&clip.path);
+                    gallery::play(app, &clip.path);
                 }
                 if !clip.is_image && widgets::quiet_button(ui, Some(icon::CUT), "Trim").clicked() {
                     app.goto(Screen::Trim(clip.path.clone()));
@@ -347,6 +347,9 @@ fn rename(app: &mut ScApp, clip: &Clip) {
 
 fn after_file_change(app: &mut ScApp, old: &std::path::Path, new: &std::path::Path) {
     app.library.rekey(old, new);
+    if app.gallery.opened.as_deref() == Some(old) {
+        app.gallery.opened = Some(new.to_path_buf());
+    }
     app.thumbs.forget(old);
     app.gallery.rescan();
     if app.sheet.open.as_deref() == Some(old) {

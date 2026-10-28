@@ -38,6 +38,7 @@ enum GroupBy {
 
 #[derive(Default)]
 pub struct Cache {
+    pub opened: Option<PathBuf>,
     clips: Vec<Clip>,
     dirs: Vec<PathBuf>,
     scanned: Option<Instant>,
@@ -330,6 +331,11 @@ pub fn size_label(bytes: u64) -> String {
     } else {
         format!("{:.0} MB", bytes as f64 / MB)
     }
+}
+
+pub fn play(app: &mut ScApp, path: &Path) {
+    app.gallery.opened = Some(path.to_path_buf());
+    open_path(path);
 }
 
 pub fn open_path(path: &Path) {
@@ -846,7 +852,7 @@ pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> e
         let (_, resp) = ui.allocate_exact_size(size, Sense::click());
         return resp;
     }
-    match app.thumbs.get(&clip.path, clip.is_image) {
+    let resp = match app.thumbs.get(&clip.path, clip.is_image) {
         Some(tex) => ui.add(
             egui::Image::new(egui::load::SizedTexture::new(tex.id(), size))
                 .fit_to_exact_size(size)
@@ -871,7 +877,16 @@ pub fn preview(app: &mut ScApp, ui: &mut Ui, clip: &Clip, size: egui::Vec2) -> e
             );
             resp
         }
+    };
+    if app.gallery.opened.as_deref() == Some(clip.path.as_path()) {
+        let ring = resp.rect.expand(3.0);
+        ui.painter().with_clip_rect(ring.expand(4.0)).rect_stroke(
+            ring,
+            Rounding::same(12.5),
+            egui::Stroke::new(2.0_f32, p.accent.linear_multiply(0.7)),
+        );
     }
+    resp
 }
 
 pub fn recent_title(c: &Clip) -> String {
@@ -897,7 +912,7 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
     let item = |ui: &mut Ui, label: &str| ui.add(egui::Button::new(label).frame(false)).clicked();
 
     if item(ui, "Play") {
-        open_path(&clip.path);
+        play(app, &clip.path);
         ui.close_menu();
     }
     if !clip.is_image && item(ui, "Trim") {
@@ -1011,7 +1026,7 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
         resp.context_menu(|ui| clip_menu(app, ui, clip));
         let hovered = ui.rect_contains_pointer(rect);
         if resp.clicked() {
-            open_path(&clip.path);
+            play(app, &clip.path);
         }
 
         let badge = if app.library.is_compressed(&clip.path) {
