@@ -289,6 +289,11 @@ pub fn announce_startup(daemon: Daemon) {
                 match result {
                     Ok(Some(r)) => {
                         title = format!("SimpleClip {} is available", r.version);
+                        if first_time_for(&mut LAST_ANNOUNCED.lock().unwrap(), &r.version)
+                            && daemon.config.read().unwrap().general.update_sound
+                        {
+                            play_update_sound();
+                        }
                         lines.insert(
                             0,
                             "Open SimpleClip to update. It only takes a moment.".to_string(),
@@ -327,6 +332,66 @@ pub fn init_dpi() {
 }
 
 static SAVE_WAV: &[u8] = include_bytes!("../../../assets/sounds/save.wav");
+static UPDATE_WAV: &[u8] = include_bytes!("../../../assets/sounds/update.wav");
+
+pub fn play_update_sound() {
+    unsafe {
+        let _ = PlaySoundW(
+            windows::core::PCWSTR(UPDATE_WAV.as_ptr() as *const u16),
+            None,
+            SND_MEMORY | SND_ASYNC | SND_NODEFAULT,
+        );
+    }
+}
+
+const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+static LAST_ANNOUNCED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn first_time_for(last: &mut Option<String>, version: &str) -> bool {
+    if last.as_deref() == Some(version) {
+        return false;
+    }
+    *last = Some(version.to_string());
+    true
+}
+
+pub fn announce_update(daemon: &Daemon, version: &str, with_card: bool) {
+    if !first_time_for(&mut LAST_ANNOUNCED.lock().unwrap(), version) {
+        return;
+    }
+    let cfg = daemon.config.read().unwrap().clone();
+    if with_card && cfg.general.notify {
+        crate::popup::configure(&cfg.general);
+        crate::popup::show(crate::popup::Popup {
+            kind: crate::popup::Kind::Info,
+            compact: false,
+            title: format!("SimpleClip {version} is available"),
+            lines: vec![
+                "Open SimpleClip to update. It only takes a moment.".to_string(),
+                format!("You have {}", env!("CARGO_PKG_VERSION")),
+            ],
+        });
+    }
+    if cfg.general.update_sound {
+        play_update_sound();
+    }
+}
+
+pub fn watch_updates(daemon: Daemon) {
+    std::thread::Builder::new()
+        .name("sc-update-watch".into())
+        .spawn(move || loop {
+            std::thread::sleep(UPDATE_EVERY);
+            if !daemon.config.read().unwrap().general.update_check {
+                continue;
+            }
+            if let Ok(Some(release)) = sc_core::update::fetch_latest(env!("CARGO_PKG_VERSION")) {
+                announce_update(&daemon, &release.version, true);
+            }
+        })
+        .ok();
+}
 
 pub fn play_save_sound(g: &sc_core::config::GeneralSettings) {
     use windows::core::HSTRING;
@@ -606,5 +671,19 @@ mod tests {
         let (y, mo, d, h, mi, s) = local_time();
         assert!(y >= 2024 && (1..=12).contains(&mo) && (1..=31).contains(&d));
         assert!(h < 24 && mi < 60 && s < 61);
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn a_version_is_announced_once() {
+        let mut last = None;
+        assert!(first_time_for(&mut last, "6.4.0"));
+        assert!(!first_time_for(&mut last, "6.4.0"));
+        assert!(first_time_for(&mut last, "6.5.0"));
+        assert!(!first_time_for(&mut last, "6.5.0"));
     }
 }

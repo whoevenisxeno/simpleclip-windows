@@ -116,6 +116,7 @@ pub struct HotkeySettings {
 pub struct GeneralSettings {
     pub update_check: bool,
     pub save_sound: bool,
+    pub update_sound: bool,
     pub save_sound_file: Option<PathBuf>,
     pub popup_style: PopupStyle,
     pub popup_position: PopupPosition,
@@ -241,6 +242,7 @@ impl Default for GeneralSettings {
         Self {
             update_check: true,
             save_sound: true,
+            update_sound: true,
             save_sound_file: None,
             popup_style: PopupStyle::Detailed,
             popup_position: PopupPosition::TopRight,

@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.4.0
+
+### Added
+- SimpleClip now looks for a new version every 30 minutes while it runs (it used to look when it started, and the window every 6 hours). When it finds one it pops up a themed card, "SimpleClip X is available", and plays a short two-note chime that is different from the clip saved sound. You are told once per version, not every half hour. The check at start-up plays the chime too.
+- Settings > System > Advanced > Sound when an update is found turns the chime off, with a Preview button to hear it. The card shows only if popups are on, and none of it happens if Check for updates is off.
+
 ## 6.3.0
 
 ### Changed

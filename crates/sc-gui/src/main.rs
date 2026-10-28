@@ -12,6 +12,8 @@ mod presets;
 mod screens;
 #[cfg(windows)]
 mod screenshot;
+#[cfg(windows)]
+mod sound;
 mod star;
 mod theme;
 mod themes;

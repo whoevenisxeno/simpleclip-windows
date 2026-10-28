@@ -917,9 +917,19 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
         {
             s.row(
                 "Check for updates",
-                Some("Look on GitHub for a newer version"),
+                Some("Looks on GitHub every 30 minutes for a newer version"),
                 |ui| {
                     widgets::toggle(ui, &mut app.cfg.general.update_check);
+                },
+            );
+            s.row(
+                "Sound when an update is found",
+                Some("A short chime, different from the clip saved sound"),
+                |ui| {
+                    widgets::toggle(ui, &mut app.cfg.general.update_sound);
+                    if widgets::quiet_button(ui, None, "Preview").clicked() {
+                        crate::sound::play_update();
+                    }
                 },
             );
             let status = app.updater.status_text();

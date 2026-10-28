@@ -100,6 +100,7 @@ fn main() -> Result<()> {
             })
             .context("ipc thread")?;
         win::announce_startup(daemon.clone());
+        win::watch_updates(daemon.clone());
         win::run_tray(daemon);
         tracing::info!("scd quitting");
         Ok(())

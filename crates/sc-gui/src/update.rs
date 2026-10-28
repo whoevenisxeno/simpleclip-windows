@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const PAGE: &str = "https://github.com/whoevenisxeno/simpleclip-windows/releases/latest";
-const RECHECK: Duration = Duration::from_secs(6 * 3600);
+const RECHECK: Duration = Duration::from_secs(30 * 60);
 pub const FORCE_AFTER_MAJORS: u64 = 5;
 
 #[derive(Clone, Debug, PartialEq)]
