@@ -431,6 +431,21 @@ impl Pipeline {
     }
 
     #[cfg(windows)]
+    pub fn grab(&self, region: [f32; 4]) -> Result<(u32, u32, Vec<u8>)> {
+        let frame = self
+            ._capture
+            .latest_frame()
+            .context("no frame captured yet")?;
+        sc_core::region::crop_gray(
+            &frame.data,
+            frame.stride as usize,
+            frame.width,
+            frame.height,
+            region,
+        )
+        .context("that part of the screen is empty")
+    }
+
     pub fn screenshot(&self, path: &Path) -> Result<()> {
         let frame = self
             ._capture

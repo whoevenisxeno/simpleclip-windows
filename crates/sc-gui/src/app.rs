@@ -792,7 +792,7 @@ impl ScApp {
                     "settings-look" | "look-accent" | "look-sand" => self.settings.tab = Tab::Look,
                     "settings-system" => self.settings.tab = Tab::System,
                     "settings-addon" => {
-                        self.settings.tab = Tab::System;
+                        self.settings.tab = Tab::Addons;
                         #[cfg(windows)]
                         {
                             self.settings.addon.asking = true;

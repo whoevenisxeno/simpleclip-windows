@@ -152,6 +152,20 @@ impl Daemon {
         Err("screenshots aren't supported on this platform yet".into())
     }
 
+    pub fn grab_region(&self, region: [f32; 4]) -> Result<(u32, u32, Vec<u8>), String> {
+        #[cfg(windows)]
+        {
+            let guard = self.pipeline.lock().unwrap();
+            let p = guard.as_ref().ok_or("capture is not running")?;
+            p.grab(region).map_err(|e| format!("{e:#}"))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = region;
+            Err("grabbing the screen isn't supported on this platform yet".into())
+        }
+    }
+
     pub fn set_paused(&self, paused: bool) {
         #[cfg(any(target_os = "linux", windows))]
         {

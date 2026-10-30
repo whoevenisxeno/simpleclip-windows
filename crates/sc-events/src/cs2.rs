@@ -18,6 +18,7 @@ pub struct Payload {
 #[derive(Debug, Default, Deserialize)]
 struct Provider {
     steamid: Option<String>,
+    appid: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -37,6 +38,10 @@ struct MapInfo {
 }
 
 impl Payload {
+    pub fn is_cs2(&self) -> bool {
+        self.provider.as_ref().and_then(|p| p.appid) == Some(730)
+    }
+
     fn local_state(&self) -> Option<(Option<i64>, u32)> {
         let me = self.provider.as_ref()?.steamid.as_deref()?;
         let player = self.player.as_ref()?;
@@ -110,14 +115,14 @@ fn read_body(stream: &mut TcpStream) -> Option<Vec<u8>> {
     Some(data[head_end..head_end + wanted].to_vec())
 }
 
-pub fn serve(listener: TcpListener, mut on_payload: impl FnMut(Payload)) {
+pub fn serve(listener: TcpListener, mut on_body: impl FnMut(Vec<u8>)) {
     for conn in listener.incoming() {
         let Ok(mut stream) = conn else { continue };
         let body = read_body(&mut stream);
         let _ =
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-        if let Some(payload) = body.and_then(|b| serde_json::from_slice::<Payload>(&b).ok()) {
-            on_payload(payload);
+        if let Some(body) = body {
+            on_body(body);
         }
     }
 }
@@ -192,12 +197,15 @@ pub fn locate() -> Vec<PathBuf> {
 }
 
 pub fn install(dirs: &[PathBuf], port: u16) -> usize {
-    let text = cfg_text(port);
+    install_text(dirs, &cfg_text(port))
+}
+
+pub fn install_text(dirs: &[PathBuf], text: &str) -> usize {
     dirs.iter()
         .filter(|d| {
             let path = d.join(CFG_NAME);
             std::fs::read_to_string(&path).is_ok_and(|have| have == text)
-                || std::fs::write(&path, &text).is_ok()
+                || std::fs::write(&path, text).is_ok()
         })
         .count()
 }
@@ -287,7 +295,13 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || serve(listener, move |p| tx.send(p).unwrap()));
+        std::thread::spawn(move || {
+            serve(listener, move |body| {
+                if let Ok(p) = serde_json::from_slice::<Payload>(&body) {
+                    tx.send(p).unwrap();
+                }
+            })
+        });
         let body = format!(
             r#"{{"provider":{{"steamid":"{ME}"}},"map":{{"round":5}},"player":{{"steamid":"{ME}","state":{{"round_kills":2}}}}}}"#
         );
@@ -308,7 +322,13 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || serve(listener, move |p| tx.send(p).unwrap()));
+        std::thread::spawn(move || {
+            serve(listener, move |body| {
+                if let Ok(p) = serde_json::from_slice::<Payload>(&body) {
+                    tx.send(p).unwrap();
+                }
+            })
+        });
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
         s.write_all(b"POST / HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n{}")
             .unwrap();

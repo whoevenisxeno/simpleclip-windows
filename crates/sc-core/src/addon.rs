@@ -43,6 +43,8 @@ pub struct EventsStatus {
     pub version: String,
     pub cs2: String,
     pub league: String,
+    pub r6: String,
+    pub dota2: String,
     pub last_event: Option<String>,
     pub updated: u64,
 }
@@ -110,6 +112,7 @@ mod tests {
             league: "waiting".into(),
             last_event: Some("Double kill".into()),
             updated: 1000,
+            ..Default::default()
         };
         write_status(&dir, &s).unwrap();
         assert_eq!(read_status(&dir), Some(s.clone()));

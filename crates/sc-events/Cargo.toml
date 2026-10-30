@@ -21,5 +21,8 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_WinRT", "Win32_System_Diagnostics_ToolHelp", "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams"] }
 winreg = "0.56.0"
+
+[dev-dependencies]
+png = "0.18.1"

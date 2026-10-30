@@ -136,6 +136,7 @@ fn main() -> Result<()> {
         Response::Probed { duration_secs } => println!("{duration_secs:.2}s"),
         Response::Thumbnail { path } => println!("{}", path.display()),
         Response::Ok | Response::Pong => println!("ok"),
+        Response::Region { width, height, .. } => println!("{width}x{height} picture"),
         Response::Error { message } => {
             eprintln!("error: {message}");
             std::process::exit(1);

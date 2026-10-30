@@ -15,6 +15,7 @@ struct Running {
     dir: PathBuf,
     port: u16,
     saves: Receiver<Option<u32>>,
+    popups: Receiver<(String, String)>,
 }
 
 impl Drop for Running {
@@ -46,6 +47,7 @@ fn start(name: &str, events: &str) -> Running {
         .create_sync()
         .unwrap();
     let (tx, saves) = mpsc::channel();
+    let (popup_tx, popups) = mpsc::channel();
     std::thread::spawn(move || {
         for conn in listener.incoming() {
             let Ok(conn) = conn else { continue };
@@ -53,14 +55,19 @@ fn start(name: &str, events: &str) -> Running {
             let Ok(Some(env)) = ipc::read_message::<_, Request>(&mut reader, IPC_VERSION) else {
                 continue;
             };
-            let secs = match env.payload {
-                Request::Save { last_secs } => last_secs,
-                _ => None,
-            };
-            let _ = tx.send(secs);
-            let reply = Response::Saved {
-                path: "clip.mp4".into(),
-                duration_secs: 1.0,
+            let reply = match env.payload {
+                Request::Save { last_secs } => {
+                    let _ = tx.send(last_secs);
+                    Response::Saved {
+                        path: "clip.mp4".into(),
+                        duration_secs: 1.0,
+                    }
+                }
+                Request::Popup { title, line } => {
+                    let _ = popup_tx.send((title, line));
+                    Response::Ok
+                }
+                _ => Response::Ok,
             };
             let mut writer = &conn;
             let _ = ipc::write_message(&mut writer, &Envelope::new(env.id, reply));
@@ -83,6 +90,7 @@ fn start(name: &str, events: &str) -> Running {
         dir,
         port,
         saves,
+        popups,
     }
 }
 
@@ -105,8 +113,12 @@ fn wait_for_status(
 
 fn post(port: u16, round: i64, kills: u32) {
     let body = format!(
-        r#"{{"provider":{{"steamid":"{ME}"}},"map":{{"round":{round}}},"player":{{"steamid":"{ME}","state":{{"round_kills":{kills}}}}}}}"#
+        r#"{{"provider":{{"steamid":"{ME}","appid":730}},"map":{{"round":{round}}},"player":{{"steamid":"{ME}","state":{{"round_kills":{kills}}}}}}}"#
     );
+    post_body(port, &body);
+}
+
+fn post_body(port: u16, body: &str) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let request = format!(
         "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{body}",
@@ -185,4 +197,45 @@ fn the_add_on_exits_when_the_program_that_started_it_is_gone() {
     }
     let _ = std::fs::remove_dir_all(&dir);
     assert!(exited, "the add-on kept running without its parent");
+}
+
+#[test]
+fn a_dota_streak_makes_the_running_add_on_ask_simpleclip_for_a_clip() {
+    let run = start(
+        "dota",
+        "enabled = true\nmin-kills = 2\nsave-secs = 15\ncs2 = false\nleague = false\nr6 = false\ndota2 = true",
+    );
+    let status = wait_for_status(&run, |s| s.dota2 == "not-found");
+    assert_eq!((status.cs2.as_str(), status.r6.as_str()), ("off", "off"));
+    for kills in [3, 4, 5] {
+        let body = format!(
+            r#"{{"provider":{{"appid":570}},"map":{{"matchid":"42"}},"player":{{"kills":{kills}}}}}"#
+        );
+        post_body(run.port, &body);
+    }
+    let asked = run.saves.recv_timeout(Duration::from_secs(15)).unwrap();
+    assert_eq!(asked, Some(15));
+    let status = wait_for_status(&run, |s| s.last_event.is_some());
+    assert!(status.last_event.unwrap().contains("Double kill in Dota 2"));
+}
+
+#[test]
+fn test_mode_shows_a_notification_and_saves_nothing() {
+    let run = start(
+        "test-mode",
+        "enabled = true\ntest-mode = true\nmin-kills = 2\nsave-secs = 12\ncs2 = true\nleague = false\nr6 = false\ndota2 = false",
+    );
+    wait_for_status(&run, |s| s.cs2 == "not-found");
+    for kills in [0, 1, 2] {
+        post(run.port, 3, kills);
+    }
+    let (title, line) = run.popups.recv_timeout(Duration::from_secs(15)).unwrap();
+    assert_eq!(title, "Game events test");
+    assert!(line.contains("Double kill in CS2"), "{line}");
+    let status = wait_for_status(&run, |s| s.last_event.is_some());
+    assert!(status
+        .last_event
+        .unwrap()
+        .contains("test notification shown"));
+    assert!(run.saves.recv_timeout(Duration::from_secs(6)).is_err());
 }

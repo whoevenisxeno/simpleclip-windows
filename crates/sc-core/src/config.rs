@@ -254,8 +254,11 @@ pub struct EventsSettings {
     pub enabled: bool,
     pub cs2: bool,
     pub league: bool,
+    pub r6: bool,
+    pub dota2: bool,
     pub min_kills: u32,
     pub save_secs: u32,
+    pub test_mode: bool,
 }
 
 impl Default for EventsSettings {
@@ -264,8 +267,11 @@ impl Default for EventsSettings {
             enabled: false,
             cs2: true,
             league: true,
+            r6: true,
+            dota2: true,
             min_kills: 2,
             save_secs: 20,
+            test_mode: false,
         }
     }
 }
@@ -729,8 +735,11 @@ mod events_tests {
             enabled: true,
             cs2: false,
             league: true,
+            r6: false,
+            dota2: true,
             min_kills: 3,
             save_secs: 30,
+            test_mode: true,
         };
         let back: Config = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
         assert_eq!(back.events, cfg.events);

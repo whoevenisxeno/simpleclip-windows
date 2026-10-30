@@ -32,4 +32,33 @@ impl Saver for DaemonSaver {
             Err(e) => Err(format!("{e:#}")),
         }
     }
+
+    fn announce(&mut self, title: &str, line: &str) -> Result<(), String> {
+        match request(Request::Popup {
+            title: title.to_string(),
+            line: line.to_string(),
+        }) {
+            Ok(Response::Ok) => Ok(()),
+            Ok(Response::Error { message }) => Err(message),
+            Ok(_) => Err("unexpected answer from SimpleClip".to_string()),
+            Err(e) => Err(format!("{e:#}")),
+        }
+    }
+}
+
+pub fn grab_region(region: [f32; 4]) -> Result<(u32, u32, Vec<u8>), String> {
+    let [x0, y0, x1, y1] = region;
+    match request(Request::GrabRegion { x0, y0, x1, y1 }) {
+        Ok(Response::Region {
+            width,
+            height,
+            gray,
+        }) => sc_core::b64::decode(&gray)
+            .filter(|d| d.len() == (width as usize) * (height as usize))
+            .map(|d| (width, height, d))
+            .ok_or_else(|| "SimpleClip sent a damaged picture".to_string()),
+        Ok(Response::Error { message }) => Err(message),
+        Ok(_) => Err("unexpected answer from SimpleClip".to_string()),
+        Err(e) => Err(format!("{e:#}")),
+    }
 }

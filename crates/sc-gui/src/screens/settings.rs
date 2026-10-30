@@ -20,10 +20,11 @@ pub enum Tab {
     Hotkeys,
     SaveCard,
     Look,
+    Addons,
     System,
 }
 
-const TABS: [(Tab, &str, &str); 8] = [
+const TABS: [(Tab, &str, &str); 9] = [
     (
         Tab::Capture,
         "Capture",
@@ -54,6 +55,11 @@ const TABS: [(Tab, &str, &str); 8] = [
         Tab::Look,
         "Look",
         "Pick a theme and an accent colour. The default follows Windows light and dark.",
+    ),
+    (
+        Tab::Addons,
+        "Add-ons",
+        "Optional extras. Nothing here is installed until you turn it on.",
     ),
     (
         Tab::System,
@@ -215,10 +221,14 @@ fn pane(app: &mut ScApp, ui: &mut Ui, tab: Tab) {
         Tab::Hotkeys => shortcuts(app, ui),
         Tab::SaveCard => notifications(app, ui),
         Tab::Look => appearance(app, ui),
-        Tab::System => {
-            general(app, ui);
+        Tab::Addons => {
             #[cfg(windows)]
             addons_section(app, ui);
+            #[cfg(not(windows))]
+            let _ = (app, ui);
+        }
+        Tab::System => {
+            general(app, ui);
             advanced(app, ui);
             reset_section(app, ui);
             #[cfg(windows)]
@@ -894,7 +904,7 @@ fn addons_section(app: &mut ScApp, ui: &mut Ui) {
 
 #[cfg(windows)]
 fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui: &mut Ui) {
-    use crate::addon::{cs2_text, league_text, Busy};
+    use crate::addon::{cs2_text, dota_text, league_text, r6_text, Busy};
     let p = pal_ui(ui);
     let busy = addon.busy();
     let installed = addon.installed().is_some();
@@ -902,11 +912,13 @@ fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui
     let (mut ask, mut remove) = (false, false);
     let cs2_line = cs2_text(status.as_ref(), events.enabled && events.cs2);
     let league_line = league_text(status.as_ref(), events.enabled && events.league);
-    section(ui, Some("Add-ons"), |s| {
+    let r6_line = r6_text(status.as_ref(), events.enabled && events.r6);
+    let dota_line = dota_text(status.as_ref(), events.enabled && events.dota2);
+    section(ui, None, |s| {
         s.row(
             "Game events",
             Some(
-                "Experimental. Saves a clip by itself on a multi-kill in CS2 or League of Legends",
+                "Experimental. Saves a clip by itself on a multi-kill in Rainbow Six Siege, CS2, Dota 2 or League of Legends",
             ),
             |ui| match (&busy, installed) {
                 (Some(Busy::Working { label, percent }), _) => {
@@ -930,8 +942,14 @@ fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui
             },
         );
         if installed && busy.is_none() {
+            s.row("Rainbow Six Siege", Some(&r6_line), |ui| {
+                widgets::toggle(ui, &mut events.r6);
+            });
             s.row("Counter-Strike 2", Some(&cs2_line), |ui| {
                 widgets::toggle(ui, &mut events.cs2);
+            });
+            s.row("Dota 2", Some(&dota_line), |ui| {
+                widgets::toggle(ui, &mut events.dota2);
             });
             s.row("League of Legends", Some(&league_line), |ui| {
                 widgets::toggle(ui, &mut events.league);
@@ -968,6 +986,13 @@ fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui
                             (60, "1 min"),
                         ],
                     );
+                },
+            );
+            s.row(
+                "Test mode",
+                Some("Shows a notification instead of saving a clip, to see what it detects"),
+                |ui| {
+                    widgets::toggle(ui, &mut events.test_mode);
                 },
             );
         }
@@ -1010,7 +1035,7 @@ fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui
                 ui.add_space(8.0);
                 widgets::secondary(
                     ui,
-                    "It saves a clip by itself when you get a multi-kill in Counter-Strike 2 or League of Legends. For CS2 it adds one small file to the game's cfg folder, and it only talks to your own computer. You can turn it off or remove it here at any time.",
+                    "It saves a clip by itself when you get a multi-kill in Rainbow Six Siege, Counter-Strike 2, Dota 2 or League of Legends. For CS2 and Dota 2 it adds one small file to the game's cfg folder. For Rainbow Six Siege it reads the kill feed on your screen, and only looks for your own kills. It only talks to your own computer. You can turn it off or remove it here at any time.",
                 );
                 ui.add_space(8.0);
                 widgets::secondary(
@@ -1516,6 +1541,7 @@ enum Icon {
     Bell,
     Palette,
     Sliders,
+    Addons,
     Star,
 }
 
@@ -1528,6 +1554,7 @@ fn tab_icon(tab: Tab) -> Icon {
         Tab::Hotkeys => Icon::Keys,
         Tab::SaveCard => Icon::Bell,
         Tab::Look => Icon::Palette,
+        Tab::Addons => Icon::Addons,
         Tab::System => Icon::Sliders,
     }
 }
@@ -1634,6 +1661,15 @@ fn paint_icon(painter: &egui::Painter, c: egui::Pos2, icon: Icon, color: egui::C
             line(&[(5.4, 3.5), (7.0, 3.5)], false);
             painter.circle_stroke(at(-2.0, -3.5), 2.4, s);
             painter.circle_stroke(at(3.0, 3.5), 2.4, s);
+        }
+        Icon::Addons => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(at(0.0, 0.0), vec2(13.0, 13.0)),
+                3.0,
+                s,
+            );
+            line(&[(-3.5, 0.0), (3.5, 0.0)], false);
+            line(&[(0.0, -3.5), (0.0, 3.5)], false);
         }
         Icon::Star => {
             let mut pts = Vec::new();
@@ -2071,6 +2107,7 @@ mod addon_card_tests {
             league: league.into(),
             last_event: None,
             updated: now_secs(),
+            ..Default::default()
         }
     }
 
@@ -2158,5 +2195,121 @@ mod addon_card_tests {
         frames(&mut h, &mut ev, &mut addon);
         assert!(h.has("Counter-Strike 2 was not found in your Steam folders"));
         assert!(h.has("Waiting for a match"));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod addon_games_tests {
+    use super::*;
+    use crate::addon::Events;
+    use crate::testkit::Harness;
+    use sc_core::addon::{now_secs, EventsStatus};
+
+    fn frames(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events) {
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                addons_card(ev, addon, ui)
+            });
+        }
+    }
+
+    #[test]
+    fn every_game_has_a_row_with_its_own_status() {
+        let mut h = Harness::new();
+        let mut ev = EventsSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut addon = Events::default();
+        addon.pretend(
+            Some("9.9.9"),
+            Some(EventsStatus {
+                r6: "watching".into(),
+                dota2: "waiting".into(),
+                cs2: "connected".into(),
+                league: "in-game".into(),
+                updated: now_secs(),
+                ..Default::default()
+            }),
+        );
+        frames(&mut h, &mut ev, &mut addon);
+        for name in [
+            "Rainbow Six Siege",
+            "Counter-Strike 2",
+            "Dota 2",
+            "League of Legends",
+        ] {
+            assert!(h.has(name), "{name}");
+        }
+        assert!(h.has("Watching the kill feed"));
+        assert!(h.has("Connected to the game"));
+        assert!(h.has("In a match"));
+    }
+
+    #[test]
+    fn each_game_can_be_switched_off_on_its_own() {
+        let mut h = Harness::new();
+        let mut ev = EventsSettings {
+            enabled: true,
+            r6: false,
+            dota2: false,
+            ..Default::default()
+        };
+        let mut addon = Events::default();
+        addon.pretend(Some("9.9.9"), None);
+        frames(&mut h, &mut ev, &mut addon);
+        assert!(h.has("Rainbow Six Siege"));
+        assert!(h.has("Off"));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod addon_test_mode_tests {
+    use super::*;
+    use crate::addon::Events;
+    use crate::testkit::Harness;
+
+    fn frames(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events) {
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                addons_card(ev, addon, ui)
+            });
+        }
+    }
+
+    #[test]
+    fn test_mode_has_a_switch_that_starts_off() {
+        let mut h = Harness::new();
+        let mut ev = EventsSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut addon = Events::default();
+        addon.pretend(Some("9.9.9"), None);
+        frames(&mut h, &mut ev, &mut addon);
+        assert!(h.has("Test mode"));
+        assert!(h.has("Shows a notification instead of saving a clip, to see what it detects"));
+        assert!(!ev.test_mode);
+    }
+
+    #[test]
+    fn clicking_the_switch_turns_test_mode_on_and_off() {
+        let mut h = Harness::new();
+        let mut ev = EventsSettings {
+            enabled: true,
+            ..Default::default()
+        };
+        let mut addon = Events::default();
+        addon.pretend(Some("9.9.9"), None);
+        frames(&mut h, &mut ev, &mut addon);
+        let row = h.at("Test mode", 0).unwrap();
+        let toggle_at = egui::pos2(h.right - 40.0, row.center().y);
+        h.click(toggle_at, &mut |ui| addons_card(&mut ev, &mut addon, ui));
+        assert!(ev.test_mode);
+        frames(&mut h, &mut ev, &mut addon);
+        let row = h.at("Test mode", 0).unwrap();
+        let toggle_at = egui::pos2(h.right - 40.0, row.center().y);
+        h.click(toggle_at, &mut |ui| addons_card(&mut ev, &mut addon, ui));
+        assert!(!ev.test_mode);
     }
 }

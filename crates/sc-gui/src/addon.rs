@@ -251,6 +251,37 @@ pub fn cs2_text(status: Option<&EventsStatus>, wanted: bool) -> String {
     }
 }
 
+pub fn dota_text(status: Option<&EventsStatus>, wanted: bool) -> String {
+    if !wanted {
+        return "Off".to_string();
+    }
+    match status.map(|s| s.dota2.as_str()) {
+        None => "Starting…".to_string(),
+        Some("connected") => "Connected to the game".to_string(),
+        Some("waiting") => {
+            "Ready. Start the game, or restart it once if it was already open".to_string()
+        }
+        Some("not-found") => "Dota 2 was not found in your Steam folders".to_string(),
+        Some("port-busy") => "Another program is using the port it needs".to_string(),
+        Some(_) => "Off".to_string(),
+    }
+}
+
+pub fn r6_text(status: Option<&EventsStatus>, wanted: bool) -> String {
+    if !wanted {
+        return "Off".to_string();
+    }
+    match status.map(|s| s.r6.as_str()) {
+        None => "Starting…".to_string(),
+        Some("watching") => "Watching the kill feed".to_string(),
+        Some("waiting") => "Waiting for the game. Reads the kill feed on screen".to_string(),
+        Some("ocr-missing") => {
+            "Windows text recognition is not installed. Add an English language pack".to_string()
+        }
+        Some(_) => "Off".to_string(),
+    }
+}
+
 pub fn league_text(status: Option<&EventsStatus>, wanted: bool) -> String {
     if !wanted {
         return "Off".to_string();
@@ -391,6 +422,25 @@ mod tests {
         assert!(cs2_text(Some(&s), true).contains("port"));
         s.league = "waiting".into();
         assert_eq!(league_text(Some(&s), true), "Waiting for a match");
+    }
+
+    #[test]
+    fn the_newer_games_read_plainly_too() {
+        let mut s = EventsStatus {
+            r6: "watching".into(),
+            dota2: "connected".into(),
+            ..Default::default()
+        };
+        assert_eq!(r6_text(Some(&s), true), "Watching the kill feed");
+        assert_eq!(dota_text(Some(&s), true), "Connected to the game");
+        assert_eq!(r6_text(Some(&s), false), "Off");
+        assert_eq!(dota_text(None, true), "Starting…");
+        s.r6 = "ocr-missing".into();
+        assert!(r6_text(Some(&s), true).contains("language pack"));
+        s.r6 = "waiting".into();
+        assert!(r6_text(Some(&s), true).contains("Waiting for the game"));
+        s.dota2 = "not-found".into();
+        assert!(dota_text(Some(&s), true).contains("not found"));
     }
 
     #[test]

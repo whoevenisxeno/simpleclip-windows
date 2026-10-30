@@ -56,6 +56,16 @@ pub enum Request {
         #[serde(default)]
         mute: bool,
     },
+    GrabRegion {
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+    },
+    Popup {
+        title: String,
+        line: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,13 +94,31 @@ pub struct StatusReport {
 pub enum Response {
     Pong,
     Status(StatusReport),
-    Saved { path: PathBuf, duration_secs: f64 },
-    Probed { duration_secs: f64 },
-    Thumbnail { path: PathBuf },
-    Monitors { monitors: Vec<MonitorInfo> },
-    AudioDevices { devices: Vec<AudioDevice> },
+    Saved {
+        path: PathBuf,
+        duration_secs: f64,
+    },
+    Probed {
+        duration_secs: f64,
+    },
+    Thumbnail {
+        path: PathBuf,
+    },
+    Monitors {
+        monitors: Vec<MonitorInfo>,
+    },
+    AudioDevices {
+        devices: Vec<AudioDevice>,
+    },
+    Region {
+        width: u32,
+        height: u32,
+        gray: String,
+    },
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +168,56 @@ pub fn read_message<R: BufRead, T: for<'de> Deserialize<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_popup_request_round_trips() {
+        let req = Request::Popup {
+            title: "Game events test".into(),
+            line: "Double kill".into(),
+        };
+        let text = serde_json::to_string(&req).unwrap();
+        assert!(text.contains("popup"), "{text}");
+        match serde_json::from_str::<Request>(&text).unwrap() {
+            Request::Popup { title, line } => assert_eq!(
+                (title.as_str(), line.as_str()),
+                ("Game events test", "Double kill")
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn grabbing_a_region_round_trips() {
+        let req = Request::GrabRegion {
+            x0: 0.74,
+            y0: 0.06,
+            x1: 1.0,
+            y1: 0.36,
+        };
+        let text = serde_json::to_string(&req).unwrap();
+        assert!(text.contains("grab_region"), "{text}");
+        match serde_json::from_str::<Request>(&text).unwrap() {
+            Request::GrabRegion { x0, y1, .. } => assert_eq!((x0, y1), (0.74, 0.36)),
+            other => panic!("{other:?}"),
+        }
+        let reply = Response::Region {
+            width: 2,
+            height: 1,
+            gray: crate::b64::encode(&[10, 200]),
+        };
+        let text = serde_json::to_string(&reply).unwrap();
+        match serde_json::from_str::<Response>(&text).unwrap() {
+            Response::Region {
+                width,
+                height,
+                gray,
+            } => {
+                assert_eq!((width, height), (2, 1));
+                assert_eq!(crate::b64::decode(&gray).unwrap(), vec![10, 200]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
     use std::io::BufReader;
 
     #[test]

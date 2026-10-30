@@ -63,6 +63,14 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             },
             Err(message) => Response::Error { message },
         },
+        Request::GrabRegion { x0, y0, x1, y1 } => match daemon.grab_region([x0, y0, x1, y1]) {
+            Ok((width, height, gray)) => Response::Region {
+                width,
+                height,
+                gray: sc_core::b64::encode(&gray),
+            },
+            Err(message) => Response::Error { message },
+        },
         Request::Record => {
             daemon.set_recording(true);
             daemon.set_state(CaptureState::Active);
@@ -71,6 +79,20 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
         Request::Stop => {
             daemon.set_recording(false);
             daemon.set_state(CaptureState::Stopped);
+            Response::Ok
+        }
+        Request::Popup { title, line } => {
+            #[cfg(windows)]
+            {
+                crate::popup::configure(&daemon.config.read().unwrap().general);
+                crate::popup::show(crate::popup::Popup::simple(
+                    crate::popup::Kind::Info,
+                    &title,
+                    &line,
+                ));
+            }
+            #[cfg(not(windows))]
+            let _ = (title, line);
             Response::Ok
         }
         Request::TestNotification => {
