@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.7.3
+
+### Added
+- Your own shortcuts. In Settings > Hotkeys, under More shortcuts, press Add a shortcut to bind any key to an action you choose: save the last 10, 15, 30 seconds, 1, 2 or 5 minutes, take a screenshot, pause or resume recording, open SimpleClip, or open the clips folder. Add up to 12, for example one key for a quick 15 second clip and another for the last 2 minutes. A shortcut that repeats another one is marked and left off, and a length longer than your replay length says that it will save at most that much.
+
 ## 6.7.2
 
 ### Added

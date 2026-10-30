@@ -179,6 +179,52 @@ impl Section<'_> {
             });
     }
 
+    pub fn pair(
+        &mut self,
+        keywords: &str,
+        hint: Option<&str>,
+        left: impl FnOnce(&mut Ui),
+        right: impl FnOnce(&mut Ui),
+    ) {
+        if self.flat && !matches_query(self.ui.ctx(), &[keywords, hint.unwrap_or("")]) {
+            return;
+        }
+        self.divider();
+        let p = pal_ui(self.ui);
+        let w = self.ui.available_width();
+        let hint_text = |ui: &mut Ui| {
+            if let Some(h) = hint {
+                ui.label(RichText::new(h).size(12.0).color(p.text_2));
+            }
+        };
+        if w < 640.0 {
+            self.ui.add_space(10.0);
+            self.ui.horizontal(|ui| left(ui));
+            hint_text(self.ui);
+            self.ui.add_space(6.0);
+            self.ui.allocate_ui_with_layout(
+                vec2(w, 36.0),
+                Layout::right_to_left(Align::Center),
+                |ui| right(ui),
+            );
+            self.ui.add_space(10.0);
+            return;
+        }
+        let h = if hint.is_some() { 66.0 } else { 54.0 };
+        self.ui
+            .allocate_ui_with_layout(vec2(w, h), Layout::left_to_right(Align::Center), |ui| {
+                ui.set_min_height(h);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    let content = if hint.is_some() { 52.0 } else { 32.0 };
+                    ui.add_space(((h - content) / 2.0).max(0.0));
+                    ui.horizontal(|ui| left(ui));
+                    hint_text(ui);
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| right(ui));
+            });
+    }
+
     pub fn full(&mut self, keywords: &str, add: impl FnOnce(&mut Ui)) {
         if self.flat && !matches_query(self.ui.ctx(), &[keywords]) {
             return;

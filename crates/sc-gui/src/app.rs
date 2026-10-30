@@ -151,6 +151,23 @@ impl ScApp {
             cfg.audio.desktop_device.clear();
             cfg.audio.mic_device = None;
             cfg.hotkeys = Default::default();
+            cfg.hotkeys.extra = vec![
+                sc_core::config::ExtraHotkey {
+                    keys: "CTRL+F1".into(),
+                    action: sc_core::config::HotkeyAction::SaveLast,
+                    secs: 15,
+                },
+                sc_core::config::ExtraHotkey {
+                    keys: "CTRL+F2".into(),
+                    action: sc_core::config::HotkeyAction::TogglePause,
+                    secs: 30,
+                },
+                sc_core::config::ExtraHotkey {
+                    keys: String::new(),
+                    action: sc_core::config::HotkeyAction::SaveLast,
+                    secs: 120,
+                },
+            ];
             cfg.audio.mic_enabled = true;
             cfg.general.setup_complete = true;
             cfg.general.theme = "system".into();

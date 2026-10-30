@@ -16,7 +16,7 @@ job and does not need an account.
 
 - **Always-on replay buffer.** Windows Graphics Capture for video, WASAPI for sound, encoded on the
   GPU the whole time and kept in RAM.
-- **Hotkeys.** `Alt+F10` saves a clip, `Alt+F9` saves a screenshot, `Alt+F8` brings the SimpleClip window up (press it again to minimise it). All three can be changed in Settings, and any key can be used, the backtick included.
+- **Hotkeys.** `Alt+F10` saves a clip, `Alt+F9` saves a screenshot, `Alt+F8` brings the SimpleClip window up (press it again to minimise it). All three can be changed in Settings, and any key can be used, the backtick included. Settings > Hotkeys also lets you add up to 12 shortcuts of your own, each doing something you pick: save the last 10 seconds to 5 minutes, take a screenshot, pause or resume, open SimpleClip, or open the clips folder.
 - **Hardware encoding.** It tries NVENC (NVIDIA), AMF (AMD), QuickSync (Intel), then software x264,
   then Media Foundation, and uses the first one that works.
 - **Audio.** Game and app sound, plus an optional microphone. The mic can be mixed into one track
@@ -263,6 +263,11 @@ warn-at-gb = 50
 save = "ALT+F10"
 screenshot = "ALT+F9"
 open = "ALT+F8"                # brings the SimpleClip window up; empty turns it off
+
+[[hotkeys.extra]]               # optional, repeat for more shortcuts
+keys = "CTRL+F1"
+action = "save-last"            # or screenshot, toggle-pause, open-app, open-folder
+secs = 15                       # only used by save-last
 
 [general]
 autostart = true

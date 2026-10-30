@@ -3,7 +3,10 @@ use crate::screens::gallery;
 use crate::theme::{self, pal_ui};
 use crate::widgets::{self, section};
 use egui::{vec2, Align, Layout, RichText, Sense, Ui};
-use sc_core::config::{AudioTracks, FolderPolicy, PopupPosition, PopupStyle, MAX_VOLUME_PERCENT};
+use sc_core::config::{
+    describe_secs, AudioTracks, ExtraHotkey, FolderPolicy, HotkeyAction, HotkeySettings,
+    PopupPosition, PopupStyle, MAX_EXTRA_HOTKEYS, MAX_VOLUME_PERCENT, SAVE_LAST_CHOICES,
+};
 use std::time::Duration;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -764,6 +767,104 @@ fn shortcuts(app: &mut ScApp, ui: &mut Ui) {
             });
         }
     });
+    if cfg!(windows) {
+        extra_shortcuts(
+            &mut app.cfg.hotkeys,
+            app.cfg.buffer.replay_duration_secs,
+            ui,
+        );
+    }
+}
+
+fn extra_shortcuts(h: &mut HotkeySettings, buffer_secs: u32, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    let mut remove = None;
+    let mut add = false;
+    let count = h.extra.len();
+    section(ui, Some("More shortcuts"), |s| {
+        s.row(
+            "Your own shortcuts",
+            Some("Another clip length, a screenshot, pause and more"),
+            |ui| {
+                let room = count < MAX_EXTRA_HOTKEYS;
+                if ui
+                    .add_enabled_ui(room, |ui| {
+                        widgets::quiet_button(ui, Some(theme::icon::ADD), "Add a shortcut")
+                    })
+                    .inner
+                    .clicked()
+                {
+                    add = true;
+                }
+            },
+        );
+        for i in 0..count {
+            let duplicate = h.duplicate_of(i);
+            let entry = &mut h.extra[i];
+            let hint = if let Some(other) = duplicate {
+                Some(format!("Already used by “{other}”, so this one is off"))
+            } else if entry.keys.trim().is_empty() {
+                Some("Press Change to pick the keys".to_string())
+            } else if entry.action == HotkeyAction::SaveLast && entry.secs > buffer_secs {
+                Some(format!(
+                    "Your replay length is {}, so this saves at most that much",
+                    describe_secs(buffer_secs)
+                ))
+            } else {
+                None
+            };
+            let keywords = entry.describe();
+            let hint = hint.as_deref();
+            s.pair(
+                &keywords,
+                hint,
+                |ui| {
+                    egui::ComboBox::from_id_salt(("hk-action", i))
+                        .selected_text(entry.action.label())
+                        .width(210.0)
+                        .height(360.0)
+                        .show_ui(ui, |ui| {
+                            for action in HotkeyAction::ALL {
+                                ui.selectable_value(&mut entry.action, action, action.label());
+                            }
+                        });
+                    if entry.action == HotkeyAction::SaveLast {
+                        let mut options = SAVE_LAST_CHOICES.to_vec();
+                        if !options.contains(&entry.secs) {
+                            options.push(entry.secs);
+                            options.sort_unstable();
+                        }
+                        egui::ComboBox::from_id_salt(("hk-secs", i))
+                            .selected_text(describe_secs(entry.secs))
+                            .width(110.0)
+                            .height(360.0)
+                            .show_ui(ui, |ui| {
+                                for secs in options {
+                                    ui.selectable_value(&mut entry.secs, secs, describe_secs(secs));
+                                }
+                            });
+                    }
+                },
+                |ui| {
+                    if widgets::icon_button(ui, theme::icon::DELETE, "Remove", "Remove", true)
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                    widgets::hotkey_field(ui, &mut entry.keys, &format!("hk-extra-{i}"));
+                    if entry.keys.trim().is_empty() {
+                        ui.label(RichText::new("Not set").size(12.5).color(p.text_3));
+                    }
+                },
+            );
+        }
+    });
+    if add {
+        h.extra.push(ExtraHotkey::default());
+    }
+    if let Some(i) = remove {
+        h.extra.remove(i);
+    }
 }
 
 fn general(app: &mut ScApp, ui: &mut Ui) {
@@ -1640,4 +1741,135 @@ fn dupe_row(
                 .galley(rect.center() - galley.size() / 2.0, galley, color);
         });
     });
+}
+
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
+mod shortcut_tests {
+    use super::*;
+    use crate::testkit::Harness;
+
+    fn entry(keys: &str, action: HotkeyAction, secs: u32) -> ExtraHotkey {
+        ExtraHotkey {
+            keys: keys.into(),
+            action,
+            secs,
+        }
+    }
+
+    fn open(h: &mut Harness, hk: &mut HotkeySettings, buffer: u32) {
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                extra_shortcuts(hk, buffer, ui)
+            });
+        }
+    }
+
+    fn click(h: &mut Harness, hk: &mut HotkeySettings, buffer: u32, text: &str, nth: usize) {
+        h.click_nth(text, nth, &mut |ui| extra_shortcuts(hk, buffer, ui));
+        open(h, hk, buffer);
+    }
+
+    #[test]
+    fn the_section_starts_with_just_an_add_button() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        open(&mut h, &mut hk, 30);
+        assert!(h.has("Your own shortcuts"));
+        assert!(h.has("Add a shortcut"));
+        assert!(!h.has("Not set"));
+    }
+
+    #[test]
+    fn adding_a_shortcut_starts_as_save_the_last_thirty_seconds() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        open(&mut h, &mut hk, 30);
+        click(&mut h, &mut hk, 30, "Add a shortcut", 0);
+        assert_eq!(hk.extra, vec![ExtraHotkey::default()]);
+        assert!(h.has("Save the last…"));
+        assert!(h.has("30 seconds"));
+        assert!(h.has("Not set"));
+        assert!(h.has("Press Change to pick the keys"));
+    }
+
+    #[test]
+    fn removing_one_leaves_the_others() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        hk.extra = vec![
+            entry("CTRL+F1", HotkeyAction::SaveLast, 15),
+            entry("CTRL+F2", HotkeyAction::Screenshot, 30),
+        ];
+        open(&mut h, &mut hk, 30);
+        click(&mut h, &mut hk, 30, theme::icon::DELETE, 0);
+        assert_eq!(hk.extra.len(), 1);
+        assert_eq!(hk.extra[0].keys, "CTRL+F2");
+        assert_eq!(hk.extra[0].action, HotkeyAction::Screenshot);
+    }
+
+    #[test]
+    fn the_add_button_stops_at_the_limit() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        hk.extra = (0..MAX_EXTRA_HOTKEYS)
+            .map(|i| entry(&format!("CTRL+F{}", i + 1), HotkeyAction::Screenshot, 30))
+            .collect();
+        open(&mut h, &mut hk, 30);
+        click(&mut h, &mut hk, 30, "Add a shortcut", 0);
+        assert_eq!(hk.extra.len(), MAX_EXTRA_HOTKEYS);
+    }
+
+    #[test]
+    fn a_repeated_key_says_what_it_clashes_with() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        hk.extra = vec![entry(&hk.save.clone(), HotkeyAction::Screenshot, 30)];
+        open(&mut h, &mut hk, 30);
+        assert!(h.has("Already used by “Save clip”, so this one is off"));
+    }
+
+    #[test]
+    fn a_length_longer_than_the_replay_buffer_is_flagged() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        hk.extra = vec![entry("CTRL+F1", HotkeyAction::SaveLast, 120)];
+        open(&mut h, &mut hk, 30);
+        assert!(h.has("Your replay length is 30 seconds, so this saves at most that much"));
+        let mut hk2 = HotkeySettings::default();
+        hk2.extra = vec![entry("CTRL+F1", HotkeyAction::SaveLast, 120)];
+        let mut h2 = Harness::new();
+        open(&mut h2, &mut hk2, 300);
+        assert!(!h2.has("Your replay length is 5 minutes, so this saves at most that much"));
+    }
+
+    #[test]
+    fn the_action_can_be_changed_and_the_length_follows() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        hk.extra = vec![entry("CTRL+F1", HotkeyAction::SaveLast, 60)];
+        open(&mut h, &mut hk, 300);
+        assert!(h.has("1 minute"));
+        click(&mut h, &mut hk, 300, "Save the last…", 0);
+        for action in HotkeyAction::ALL {
+            assert!(h.has(action.label()), "{}", action.label());
+        }
+        click(&mut h, &mut hk, 300, "Pause or resume recording", 0);
+        assert_eq!(hk.extra[0].action, HotkeyAction::TogglePause);
+        assert!(!h.has("1 minute"));
+    }
+
+    #[test]
+    fn the_length_can_be_picked_from_the_choices() {
+        let mut h = Harness::new();
+        let mut hk = HotkeySettings::default();
+        hk.extra = vec![entry("CTRL+F1", HotkeyAction::SaveLast, 30)];
+        open(&mut h, &mut hk, 300);
+        click(&mut h, &mut hk, 300, "30 seconds", 0);
+        for secs in SAVE_LAST_CHOICES {
+            assert!(h.has(&describe_secs(secs)), "{secs}");
+        }
+        click(&mut h, &mut hk, 300, "2 minutes", 0);
+        assert_eq!(hk.extra[0].secs, 120);
+    }
 }

@@ -112,6 +112,100 @@ pub struct HotkeySettings {
     pub save: String,
     pub screenshot: String,
     pub open: String,
+    pub extra: Vec<ExtraHotkey>,
+}
+
+pub const MAX_EXTRA_HOTKEYS: usize = 12;
+pub const SAVE_LAST_CHOICES: [u32; 6] = [10, 15, 30, 60, 120, 300];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HotkeyAction {
+    SaveLast,
+    Screenshot,
+    TogglePause,
+    OpenApp,
+    OpenFolder,
+}
+
+impl HotkeyAction {
+    pub const ALL: [HotkeyAction; 5] = [
+        HotkeyAction::SaveLast,
+        HotkeyAction::Screenshot,
+        HotkeyAction::TogglePause,
+        HotkeyAction::OpenApp,
+        HotkeyAction::OpenFolder,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HotkeyAction::SaveLast => "Save the last…",
+            HotkeyAction::Screenshot => "Take a screenshot",
+            HotkeyAction::TogglePause => "Pause or resume recording",
+            HotkeyAction::OpenApp => "Open SimpleClip",
+            HotkeyAction::OpenFolder => "Open the clips folder",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct ExtraHotkey {
+    pub keys: String,
+    pub action: HotkeyAction,
+    pub secs: u32,
+}
+
+impl Default for ExtraHotkey {
+    fn default() -> Self {
+        Self {
+            keys: String::new(),
+            action: HotkeyAction::SaveLast,
+            secs: 30,
+        }
+    }
+}
+
+impl ExtraHotkey {
+    pub fn describe(&self) -> String {
+        match self.action {
+            HotkeyAction::SaveLast => format!("Save the last {}", describe_secs(self.secs)),
+            other => other.label().to_string(),
+        }
+    }
+}
+
+pub fn describe_secs(secs: u32) -> String {
+    if secs >= 60 && secs.is_multiple_of(60) {
+        let m = secs / 60;
+        format!("{m} minute{}", if m == 1 { "" } else { "s" })
+    } else {
+        format!("{secs} seconds")
+    }
+}
+
+impl HotkeySettings {
+    pub fn duplicate_of(&self, index: usize) -> Option<String> {
+        let keys = self.extra.get(index)?.keys.trim().to_ascii_uppercase();
+        if keys.is_empty() {
+            return None;
+        }
+        let same = |other: &str| other.trim().to_ascii_uppercase() == keys;
+        if same(&self.save) {
+            return Some("Save clip".to_string());
+        }
+        if same(&self.screenshot) {
+            return Some("Take screenshot".to_string());
+        }
+        if same(&self.open) {
+            return Some("Open SimpleClip".to_string());
+        }
+        self.extra
+            .iter()
+            .take(index)
+            .find(|e| same(&e.keys))
+            .map(|e| e.describe())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -216,12 +310,14 @@ impl Default for HotkeySettings {
                 save: "ALT+F10".to_string(),
                 screenshot: "ALT+F9".to_string(),
                 open: "ALT+F8".to_string(),
+                extra: Vec::new(),
             }
         } else {
             Self {
                 save: "SUPER+F10".to_string(),
                 screenshot: "SUPER+F9".to_string(),
                 open: "SUPER+F8".to_string(),
+                extra: Vec::new(),
             }
         }
     }
@@ -358,6 +454,21 @@ impl Config {
                 "audio.sync-offset-ms must be within {MAX_SYNC_OFFSET_MS}"
             )));
         }
+        if self.hotkeys.extra.len() > MAX_EXTRA_HOTKEYS {
+            return Err(Error::Config(format!(
+                "hotkeys.extra can have at most {MAX_EXTRA_HOTKEYS} shortcuts"
+            )));
+        }
+        if self
+            .hotkeys
+            .extra
+            .iter()
+            .any(|e| e.action == HotkeyAction::SaveLast && !(1..=MAX_REPLAY_SECS).contains(&e.secs))
+        {
+            return Err(Error::Config(format!(
+                "hotkeys.extra secs must be 1..={MAX_REPLAY_SECS}"
+            )));
+        }
         let est = self.estimated_buffer_mb();
         if est > self.buffer.ram_cap_mb {
             return Err(Error::Config(format!(
@@ -445,5 +556,106 @@ mod recovery_tests {
         assert!(dir.join("config.toml.bad").exists());
         assert!(Config::load(&path).is_ok(), "defaults were written back");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
+mod extra_hotkey_tests {
+    use super::*;
+
+    fn extra(keys: &str, action: HotkeyAction, secs: u32) -> ExtraHotkey {
+        ExtraHotkey {
+            keys: keys.into(),
+            action,
+            secs,
+        }
+    }
+
+    #[test]
+    fn a_config_without_extra_shortcuts_has_none() {
+        let cfg: Config = toml::from_str("[hotkeys]\nsave = \"CTRL+G\"\n").unwrap();
+        assert!(cfg.hotkeys.extra.is_empty());
+    }
+
+    #[test]
+    fn extra_shortcuts_survive_a_round_trip() {
+        let mut cfg = Config::default();
+        cfg.hotkeys.extra = vec![
+            extra("CTRL+F1", HotkeyAction::SaveLast, 120),
+            extra("CTRL+F2", HotkeyAction::TogglePause, 30),
+            extra("", HotkeyAction::OpenFolder, 30),
+        ];
+        let text = toml::to_string(&cfg).unwrap();
+        assert!(text.contains("save-last"), "{text}");
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back.hotkeys.extra, cfg.hotkeys.extra);
+    }
+
+    #[test]
+    fn a_shortcut_missing_its_length_gets_thirty_seconds() {
+        let cfg: Config =
+            toml::from_str("[[hotkeys.extra]]\nkeys = \"F5\"\naction = \"save-last\"\n").unwrap();
+        assert_eq!(cfg.hotkeys.extra[0].secs, 30);
+    }
+
+    #[test]
+    fn silly_lengths_and_too_many_shortcuts_are_refused() {
+        let mut cfg = Config::default();
+        cfg.hotkeys.extra = vec![extra("F5", HotkeyAction::SaveLast, 0)];
+        assert!(cfg.validate().is_err());
+        cfg.hotkeys.extra = vec![extra("F5", HotkeyAction::SaveLast, 301)];
+        assert!(cfg.validate().is_err());
+        cfg.hotkeys.extra = vec![extra("F5", HotkeyAction::SaveLast, 300)];
+        assert!(cfg.validate().is_ok());
+        cfg.hotkeys.extra = (0..=MAX_EXTRA_HOTKEYS)
+            .map(|i| extra(&format!("F{}", i + 1), HotkeyAction::Screenshot, 30))
+            .collect();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn a_length_only_matters_for_saving() {
+        let mut cfg = Config::default();
+        cfg.hotkeys.extra = vec![extra("F5", HotkeyAction::Screenshot, 0)];
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn descriptions_read_naturally() {
+        assert_eq!(
+            extra("F5", HotkeyAction::SaveLast, 15).describe(),
+            "Save the last 15 seconds"
+        );
+        assert_eq!(
+            extra("F5", HotkeyAction::SaveLast, 120).describe(),
+            "Save the last 2 minutes"
+        );
+        assert_eq!(
+            extra("F5", HotkeyAction::SaveLast, 60).describe(),
+            "Save the last 1 minute"
+        );
+        assert_eq!(
+            extra("F5", HotkeyAction::TogglePause, 30).describe(),
+            "Pause or resume recording"
+        );
+    }
+
+    #[test]
+    fn duplicates_name_what_they_clash_with() {
+        let mut h = HotkeySettings::default();
+        h.extra = vec![
+            extra("alt+f10", HotkeyAction::Screenshot, 30),
+            extra("CTRL+F1", HotkeyAction::SaveLast, 60),
+            extra("ctrl+f1", HotkeyAction::OpenApp, 30),
+            extra("", HotkeyAction::OpenApp, 30),
+            extra("CTRL+F9", HotkeyAction::OpenApp, 30),
+        ];
+        assert_eq!(h.duplicate_of(0).as_deref(), Some("Save clip"));
+        assert_eq!(h.duplicate_of(1), None);
+        assert_eq!(h.duplicate_of(2).as_deref(), Some("Save the last 1 minute"));
+        assert_eq!(h.duplicate_of(3), None);
+        assert_eq!(h.duplicate_of(4), None);
+        assert_eq!(h.duplicate_of(9), None);
     }
 }

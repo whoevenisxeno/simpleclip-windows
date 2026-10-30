@@ -106,6 +106,7 @@ pub fn spawn_hotkey(daemon: Daemon) {
 const SAVE_ID: i32 = 0x5C01;
 const SHOT_ID: i32 = 0x5C02;
 const OPEN_ID: i32 = 0x5C03;
+const EXTRA_BASE: i32 = 0x5C10;
 
 struct Binding {
     id: i32,
@@ -173,29 +174,62 @@ impl Binding {
     }
 }
 
+fn sync_extras(extras: &mut Vec<Binding>, wanted: &[sc_core::config::ExtraHotkey]) {
+    while extras.len() > wanted.len() {
+        if let Some(mut gone) = extras.pop() {
+            gone.sync("");
+        }
+    }
+    while extras.len() < wanted.len() {
+        extras.push(Binding::new(EXTRA_BASE + extras.len() as i32, "shortcut"));
+    }
+    for (binding, want) in extras.iter_mut().zip(wanted) {
+        if binding.registered.as_ref().is_some_and(|r| r != &want.keys) {
+            binding.sync("");
+        }
+    }
+    let mut taken: Vec<String> = Vec::new();
+    for (binding, want) in extras.iter_mut().zip(wanted) {
+        let keys = want.keys.trim().to_ascii_uppercase();
+        if !keys.is_empty() && taken.contains(&keys) {
+            binding.sync("");
+            continue;
+        }
+        taken.push(keys);
+        binding.sync(&want.keys);
+    }
+}
+
 fn hotkey_loop(daemon: Daemon) {
     let mut save = Binding::new(SAVE_ID, "save");
     let mut shot = Binding::new(SHOT_ID, "screenshot");
     let mut open = Binding::new(OPEN_ID, "open");
+    let mut extras: Vec<Binding> = Vec::new();
     loop {
-        let (want_save, want_shot, want_open) = {
+        let (want_save, want_shot, want_open, want_extra) = {
             let cfg = daemon.config.read().unwrap();
             (
                 cfg.hotkeys.save.clone(),
                 cfg.hotkeys.screenshot.clone(),
                 cfg.hotkeys.open.clone(),
+                cfg.hotkeys.extra.clone(),
             )
         };
         save.sync(&want_save);
         shot.sync(&want_shot);
         open.sync(&want_open);
+        sync_extras(&mut extras, &want_extra);
         let mut msg = MSG::default();
         while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
             if msg.message != WM_HOTKEY {
                 continue;
             }
             let id = msg.wParam.0 as i32;
-            if let Some(b) = [&save, &shot, &open].into_iter().find(|b| b.id == id) {
+            if let Some(b) = [&save, &shot, &open]
+                .into_iter()
+                .chain(extras.iter())
+                .find(|b| b.id == id)
+            {
                 tracing::info!(what = b.what, "hotkey pressed");
                 if b.uses_alt {
                     mask_alt();
@@ -204,7 +238,7 @@ fn hotkey_loop(daemon: Daemon) {
             let d = daemon.clone();
             match id {
                 SAVE_ID => {
-                    std::thread::spawn(move || save_from_hotkey(&d));
+                    std::thread::spawn(move || save_from_hotkey(&d, None));
                 }
                 SHOT_ID => {
                     std::thread::spawn(move || screenshot_from_hotkey(&d));
@@ -212,10 +246,39 @@ fn hotkey_loop(daemon: Daemon) {
                 OPEN_ID => {
                     std::thread::spawn(open_gui);
                 }
+                id if id >= EXTRA_BASE => {
+                    let index = (id - EXTRA_BASE) as usize;
+                    let chosen = want_extra.get(index).cloned();
+                    if let Some(h) = chosen {
+                        std::thread::spawn(move || run_action(&d, h.action, h.secs));
+                    }
+                }
                 _ => {}
             }
         }
         std::thread::sleep(Duration::from_millis(40));
+    }
+}
+
+fn run_action(daemon: &Daemon, action: sc_core::config::HotkeyAction, secs: u32) {
+    use sc_core::config::HotkeyAction::*;
+    match action {
+        SaveLast => save_from_hotkey(daemon, Some(secs)),
+        Screenshot => screenshot_from_hotkey(daemon),
+        TogglePause => {
+            let paused = daemon.capture_state() != CaptureState::Paused;
+            daemon.set_paused(paused);
+            notify(
+                "SimpleClip",
+                if paused {
+                    "Recording paused"
+                } else {
+                    "Recording resumed"
+                },
+            );
+        }
+        OpenApp => open_gui(),
+        OpenFolder => open_folder(&daemon.config.read().unwrap().save.resolve_dir()),
     }
 }
 
@@ -241,8 +304,8 @@ fn mask_alt() {
     }
 }
 
-fn save_from_hotkey(daemon: &Daemon) {
-    if let Err(e) = daemon.save_clip(None) {
+fn save_from_hotkey(daemon: &Daemon, last_secs: Option<u32>) {
+    if let Err(e) = daemon.save_clip(last_secs) {
         tracing::warn!(error = %e, "hotkey save failed");
         notify("SimpleClip", &format!("Couldn't save clip: {e}"));
     }
@@ -554,7 +617,7 @@ pub fn run_tray(daemon: Daemon) {
             let id = e.id;
             if id == save_id {
                 let d = d.clone();
-                std::thread::spawn(move || save_from_hotkey(&d));
+                std::thread::spawn(move || save_from_hotkey(&d, None));
             } else if id == shot_id {
                 let d = d.clone();
                 std::thread::spawn(move || screenshot_from_hotkey(&d));
@@ -683,5 +746,64 @@ mod update_tests {
         assert!(!first_time_for(&mut last, "6.4.0"));
         assert!(first_time_for(&mut last, "6.5.0"));
         assert!(!first_time_for(&mut last, "6.5.0"));
+    }
+}
+
+#[cfg(test)]
+mod extra_hotkey_tests {
+    use super::*;
+    use sc_core::config::{ExtraHotkey, HotkeyAction};
+
+    fn want(keys: &str) -> ExtraHotkey {
+        ExtraHotkey {
+            keys: keys.to_string(),
+            action: HotkeyAction::Screenshot,
+            secs: 30,
+        }
+    }
+
+    fn registered(extras: &[Binding]) -> Vec<Option<String>> {
+        extras.iter().map(|b| b.registered.clone()).collect()
+    }
+
+    fn some(keys: &str) -> Option<String> {
+        Some(keys.to_string())
+    }
+
+    fn k(n: u32) -> String {
+        format!("CTRL+ALT+SHIFT+F{n}")
+    }
+
+    #[test]
+    fn extra_shortcuts_register_one_each_and_skip_repeats() {
+        let mut extras = Vec::new();
+        sync_extras(
+            &mut extras,
+            &[want(&k(13)), want(&k(13).to_lowercase()), want(&k(14))],
+        );
+        assert_eq!(registered(&extras), vec![some(&k(13)), None, some(&k(14))]);
+        sync_extras(&mut extras, &[]);
+        assert!(extras.is_empty());
+    }
+
+    #[test]
+    fn removing_the_first_shortcut_keeps_the_rest_working() {
+        let mut extras = Vec::new();
+        sync_extras(&mut extras, &[want(&k(15)), want(&k(16)), want(&k(17))]);
+        sync_extras(&mut extras, &[want(&k(16)), want(&k(17))]);
+        assert_eq!(registered(&extras), vec![some(&k(16)), some(&k(17))]);
+        assert!(extras.iter().all(|b| b.failed.is_none()));
+        sync_extras(&mut extras, &[]);
+    }
+
+    #[test]
+    fn changing_a_shortcuts_keys_moves_its_registration() {
+        let mut extras = Vec::new();
+        sync_extras(&mut extras, &[want(&k(18))]);
+        sync_extras(&mut extras, &[want(&k(19))]);
+        assert_eq!(registered(&extras), vec![some(&k(19))]);
+        sync_extras(&mut extras, &[want("")]);
+        assert_eq!(registered(&extras), vec![None]);
+        sync_extras(&mut extras, &[]);
     }
 }
