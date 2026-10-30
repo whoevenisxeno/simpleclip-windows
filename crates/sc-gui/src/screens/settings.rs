@@ -4,8 +4,9 @@ use crate::theme::{self, pal_ui};
 use crate::widgets::{self, section};
 use egui::{vec2, Align, Layout, RichText, Sense, Ui};
 use sc_core::config::{
-    describe_secs, AudioTracks, ExtraHotkey, FolderPolicy, HotkeyAction, HotkeySettings,
-    PopupPosition, PopupStyle, MAX_EXTRA_HOTKEYS, MAX_VOLUME_PERCENT, SAVE_LAST_CHOICES,
+    describe_secs, AudioTracks, EventsSettings, ExtraHotkey, FolderPolicy, HotkeyAction,
+    HotkeySettings, PopupPosition, PopupStyle, MAX_EXTRA_HOTKEYS, MAX_VOLUME_PERCENT,
+    SAVE_LAST_CHOICES,
 };
 use std::time::Duration;
 
@@ -66,6 +67,8 @@ pub struct SettingsState {
     pub tab: Tab,
     pub query: String,
     pub dupes: Option<crate::dupes::Plan>,
+    #[cfg(windows)]
+    pub addon: crate::addon::Events,
 }
 
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
@@ -214,6 +217,8 @@ fn pane(app: &mut ScApp, ui: &mut Ui, tab: Tab) {
         Tab::Look => appearance(app, ui),
         Tab::System => {
             general(app, ui);
+            #[cfg(windows)]
+            addons_section(app, ui);
             advanced(app, ui);
             reset_section(app, ui);
             #[cfg(windows)]
@@ -864,6 +869,171 @@ fn extra_shortcuts(h: &mut HotkeySettings, buffer_secs: u32, ui: &mut Ui) {
     }
     if let Some(i) = remove {
         h.extra.remove(i);
+    }
+}
+
+#[cfg(windows)]
+fn addons_section(app: &mut ScApp, ui: &mut Ui) {
+    use crate::addon::Finished;
+    app.settings.addon.refresh();
+    if let Some(done) = app.settings.addon.poll() {
+        match done {
+            Finished::Installed(_) => {
+                app.cfg.events.enabled = true;
+                app.toast("Game events are on", ToastKind::Ok);
+            }
+            Finished::Removed => {
+                app.cfg.events.enabled = false;
+                app.toast("The game events add-on was removed", ToastKind::Ok);
+            }
+            Finished::Failed(e) => app.toast(e, ToastKind::Warn),
+        }
+    }
+    addons_card(&mut app.cfg.events, &mut app.settings.addon, ui);
+}
+
+#[cfg(windows)]
+fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui: &mut Ui) {
+    use crate::addon::{cs2_text, league_text, Busy};
+    let p = pal_ui(ui);
+    let busy = addon.busy();
+    let installed = addon.installed().is_some();
+    let status = addon.status().cloned();
+    let (mut ask, mut remove) = (false, false);
+    let cs2_line = cs2_text(status.as_ref(), events.enabled && events.cs2);
+    let league_line = league_text(status.as_ref(), events.enabled && events.league);
+    section(ui, Some("Add-ons"), |s| {
+        s.row(
+            "Game events",
+            Some(
+                "Experimental. Saves a clip by itself on a multi-kill in CS2 or League of Legends",
+            ),
+            |ui| match (&busy, installed) {
+                (Some(Busy::Working { label, percent }), _) => {
+                    let text = match percent {
+                        Some(n) => format!("{label}\u{2026} {n}%"),
+                        None => format!("{label}\u{2026}"),
+                    };
+                    ui.label(RichText::new(text).size(13.0).color(p.text_2));
+                }
+                (None, false) => {
+                    if widgets::quiet_button(ui, None, "Turn on\u{2026}").clicked() {
+                        ask = true;
+                    }
+                }
+                (None, true) => {
+                    widgets::toggle(ui, &mut events.enabled);
+                    if widgets::quiet_button(ui, None, "Remove").clicked() {
+                        remove = true;
+                    }
+                }
+            },
+        );
+        if installed && busy.is_none() {
+            s.row("Counter-Strike 2", Some(&cs2_line), |ui| {
+                widgets::toggle(ui, &mut events.cs2);
+            });
+            s.row("League of Legends", Some(&league_line), |ui| {
+                widgets::toggle(ui, &mut events.league);
+            });
+            s.row(
+                "Save a clip at",
+                Some("The smallest streak that counts"),
+                |ui| {
+                    widgets::segmented(
+                        ui,
+                        &mut events.min_kills,
+                        &[
+                            (1, "Any kill"),
+                            (2, "Double"),
+                            (3, "Triple"),
+                            (4, "Quadra"),
+                            (5, "Penta"),
+                        ],
+                    );
+                },
+            );
+            s.row(
+                "Clip length",
+                Some("How much before the moment is saved"),
+                |ui| {
+                    widgets::segmented(
+                        ui,
+                        &mut events.save_secs,
+                        &[
+                            (10, "10 s"),
+                            (15, "15 s"),
+                            (20, "20 s"),
+                            (30, "30 s"),
+                            (60, "1 min"),
+                        ],
+                    );
+                },
+            );
+        }
+    });
+    if ask {
+        addon.asking = true;
+    }
+    if remove {
+        events.enabled = false;
+        addon.start_remove(ui.ctx());
+    }
+    if addon.asking {
+        let (mut go, mut cancel) = (false, false);
+        egui::Window::new("addon-window")
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .auto_sized()
+            .frame(
+                egui::Frame::none()
+                    .fill(p.card)
+                    .rounding(egui::Rounding::same(theme::radius::SHEET))
+                    .stroke(egui::Stroke::new(1.0_f32, p.line))
+                    .inner_margin(egui::Margin::same(20.0))
+                    .shadow(theme::float_shadow(&p)),
+            )
+            .show(ui.ctx(), |ui| {
+                ui.set_width(460.0);
+                ui.label(
+                    RichText::new("Turn on game events?")
+                        .font(egui::FontId::new(18.0, theme::semibold()))
+                        .color(p.text),
+                );
+                ui.add_space(6.0);
+                widgets::secondary(
+                    ui,
+                    "This is an optional add-on, so it is not part of SimpleClip until you choose it. SimpleClip will download it from the SimpleClip releases on GitHub, check its checksum, and install it in your SimpleClip data folder.",
+                );
+                ui.add_space(8.0);
+                widgets::secondary(
+                    ui,
+                    "It saves a clip by itself when you get a multi-kill in Counter-Strike 2 or League of Legends. For CS2 it adds one small file to the game's cfg folder, and it only talks to your own computer. You can turn it off or remove it here at any time.",
+                );
+                ui.add_space(8.0);
+                widgets::secondary(
+                    ui,
+                    "It is experimental, so it may miss a kill or save one you did not expect.",
+                );
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if widgets::primary_button(ui, None, "Download and turn on").clicked() {
+                        go = true;
+                    }
+                    if widgets::quiet_button(ui, None, "Not now").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if go {
+            addon.start_install(ui.ctx());
+        }
+        if cancel {
+            addon.asking = false;
+        }
     }
 }
 
@@ -1871,5 +2041,122 @@ mod shortcut_tests {
         }
         click(&mut h, &mut hk, 300, "2 minutes", 0);
         assert_eq!(hk.extra[0].secs, 120);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod addon_card_tests {
+    use super::*;
+    use crate::addon::Events;
+    use crate::testkit::Harness;
+    use sc_core::addon::{now_secs, EventsStatus};
+
+    fn frames(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events) {
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                addons_card(ev, addon, ui)
+            });
+        }
+    }
+
+    fn click(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events, text: &str) {
+        h.click_text(text, &mut |ui| addons_card(ev, addon, ui));
+        frames(h, ev, addon);
+    }
+
+    fn live(cs2: &str, league: &str) -> EventsStatus {
+        EventsStatus {
+            version: "9.9.9".into(),
+            cs2: cs2.into(),
+            league: league.into(),
+            last_event: None,
+            updated: now_secs(),
+        }
+    }
+
+    #[test]
+    fn before_it_is_installed_there_is_only_a_turn_on_button() {
+        let mut h = Harness::new();
+        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
+        frames(&mut h, &mut ev, &mut addon);
+        assert!(h.has("Game events"));
+        assert!(h.has("Turn on…"));
+        assert!(!h.has("Counter-Strike 2"));
+        assert!(!h.has("Remove"));
+        assert!(!h.has("Turn on game events?"));
+    }
+
+    #[test]
+    fn turning_on_asks_first_and_not_now_changes_nothing() {
+        let mut h = Harness::new();
+        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
+        frames(&mut h, &mut ev, &mut addon);
+        click(&mut h, &mut ev, &mut addon, "Turn on…");
+        assert!(addon.asking);
+        assert!(h.has("Turn on game events?"));
+        assert!(h.has("Download and turn on"));
+        assert!(h.has("Not now"));
+        click(&mut h, &mut ev, &mut addon, "Not now");
+        assert!(!addon.asking);
+        assert!(!h.has("Turn on game events?"));
+        assert!(!ev.enabled);
+        assert!(addon.busy().is_none());
+    }
+
+    #[test]
+    fn once_installed_the_options_appear() {
+        let mut h = Harness::new();
+        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
+        addon.pretend(Some("9.9.9"), Some(live("connected", "in-game")));
+        ev.enabled = true;
+        frames(&mut h, &mut ev, &mut addon);
+        assert!(h.has("Remove"));
+        assert!(h.has("Counter-Strike 2"));
+        assert!(h.has("Connected to the game"));
+        assert!(h.has("League of Legends"));
+        assert!(h.has("In a match"));
+        assert!(h.has("Save a clip at"));
+        assert!(h.has("Clip length"));
+        assert!(!h.has("Turn on…"));
+    }
+
+    #[test]
+    fn the_status_lines_are_off_while_the_add_on_is_off() {
+        let mut h = Harness::new();
+        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
+        addon.pretend(Some("9.9.9"), Some(live("connected", "in-game")));
+        frames(&mut h, &mut ev, &mut addon);
+        assert!(!h.has("Connected to the game"));
+        assert!(h.has("Off"));
+    }
+
+    #[test]
+    fn the_streak_and_the_clip_length_can_be_chosen() {
+        let mut h = Harness::new();
+        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
+        addon.pretend(Some("9.9.9"), None);
+        ev.enabled = true;
+        frames(&mut h, &mut ev, &mut addon);
+        assert_eq!(ev.min_kills, 2);
+        click(&mut h, &mut ev, &mut addon, "Triple");
+        assert_eq!(ev.min_kills, 3);
+        click(&mut h, &mut ev, &mut addon, "Any kill");
+        assert_eq!(ev.min_kills, 1);
+        click(&mut h, &mut ev, &mut addon, "30 s");
+        assert_eq!(ev.save_secs, 30);
+        click(&mut h, &mut ev, &mut addon, "1 min");
+        assert_eq!(ev.save_secs, 60);
+        assert!(ev.validate().is_ok());
+    }
+
+    #[test]
+    fn a_game_with_a_setup_problem_says_so() {
+        let mut h = Harness::new();
+        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
+        ev.enabled = true;
+        addon.pretend(Some("9.9.9"), Some(live("not-found", "waiting")));
+        frames(&mut h, &mut ev, &mut addon);
+        assert!(h.has("Counter-Strike 2 was not found in your Steam folders"));
+        assert!(h.has("Waiting for a match"));
     }
 }

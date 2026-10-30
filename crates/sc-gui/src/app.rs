@@ -634,6 +634,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("settings-card", true),
     ("settings-look", true),
     ("settings-system", true),
+    ("settings-addon", true),
     ("settings-search", true),
     ("settings-dupes", true),
     ("look-accent", true),
@@ -790,6 +791,13 @@ impl ScApp {
                     "settings-card" => self.settings.tab = Tab::SaveCard,
                     "settings-look" | "look-accent" | "look-sand" => self.settings.tab = Tab::Look,
                     "settings-system" => self.settings.tab = Tab::System,
+                    "settings-addon" => {
+                        self.settings.tab = Tab::System;
+                        #[cfg(windows)]
+                        {
+                            self.settings.addon.asking = true;
+                        }
+                    }
                     "settings-search" => self.settings.query = "sound".into(),
                     _ => {}
                 }

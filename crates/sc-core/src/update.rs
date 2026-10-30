@@ -69,6 +69,50 @@ pub fn curl(args: &[&str]) -> Result<Vec<u8>, String> {
     }
 }
 
+fn find_asset(assets: &[serde_json::Value], suffix: &str) -> Result<Option<Asset>, String> {
+    let Some(a) = assets
+        .iter()
+        .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix)))
+    else {
+        return Ok(None);
+    };
+    let url = a["browser_download_url"]
+        .as_str()
+        .ok_or("an update file has no download link")?;
+    if !url.starts_with(DOWNLOAD_PREFIX) {
+        return Err("an update file is not hosted where SimpleClip expects".to_string());
+    }
+    Ok(Some(Asset {
+        url: url.to_string(),
+        size: a["size"].as_u64().unwrap_or(0),
+        sha256: a["digest"]
+            .as_str()
+            .and_then(|d| d.strip_prefix("sha256:"))
+            .map(|h| h.to_ascii_lowercase()),
+    }))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AddonPackage {
+    pub version: String,
+    pub asset: Asset,
+}
+
+pub fn parse_addon(json: &[u8], suffix: &str) -> Result<Option<AddonPackage>, String> {
+    let v: serde_json::Value =
+        serde_json::from_slice(json).map_err(|_| "unexpected reply from GitHub".to_string())?;
+    let tag = v["tag_name"].as_str().ok_or("no release found")?;
+    let assets = v["assets"].as_array().cloned().unwrap_or_default();
+    Ok(find_asset(&assets, suffix)?.map(|asset| AddonPackage {
+        version: tag.trim_start_matches(['v', 'V']).to_string(),
+        asset,
+    }))
+}
+
+pub fn fetch_addon(suffix: &str) -> Result<Option<AddonPackage>, String> {
+    curl(&[API]).and_then(|j| parse_addon(&j, suffix))
+}
+
 pub fn parse_release(json: &[u8], current: &str) -> Result<Option<Release>, String> {
     let v: serde_json::Value =
         serde_json::from_slice(json).map_err(|_| "unexpected reply from GitHub".to_string())?;
@@ -77,28 +121,7 @@ pub fn parse_release(json: &[u8], current: &str) -> Result<Option<Release>, Stri
         return Ok(None);
     }
     let assets = v["assets"].as_array().cloned().unwrap_or_default();
-    let find = |suffix: &str| -> Result<Option<Asset>, String> {
-        let Some(a) = assets
-            .iter()
-            .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix)))
-        else {
-            return Ok(None);
-        };
-        let url = a["browser_download_url"]
-            .as_str()
-            .ok_or("an update file has no download link")?;
-        if !url.starts_with(DOWNLOAD_PREFIX) {
-            return Err("an update file is not hosted where SimpleClip expects".to_string());
-        }
-        Ok(Some(Asset {
-            url: url.to_string(),
-            size: a["size"].as_u64().unwrap_or(0),
-            sha256: a["digest"]
-                .as_str()
-                .and_then(|d| d.strip_prefix("sha256:"))
-                .map(|h| h.to_ascii_lowercase()),
-        }))
-    };
+    let find = |suffix: &str| find_asset(&assets, suffix);
     let (app, full, dlls) = (
         find("-app.zip")?,
         find("-win64.zip")?,
@@ -123,6 +146,35 @@ pub fn fetch_latest(current: &str) -> Result<Option<Release>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_addon_package_is_found_by_its_suffix() {
+        let base = DOWNLOAD_PREFIX;
+        let json = format!(
+            r###"{{"tag_name":"v7.0.0","assets":[
+            {{"name":"SimpleClip-7.0.0-app.zip","browser_download_url":"{base}v7.0.0/SimpleClip-7.0.0-app.zip","size":1}},
+            {{"name":"SimpleClip-7.0.0-events.zip","browser_download_url":"{base}v7.0.0/SimpleClip-7.0.0-events.zip","size":77,"digest":"sha256:ABC"}}]}}"###
+        );
+        let pkg = parse_addon(json.as_bytes(), "-events.zip")
+            .unwrap()
+            .unwrap();
+        assert_eq!(pkg.version, "7.0.0");
+        assert_eq!(pkg.asset.size, 77);
+        assert_eq!(pkg.asset.sha256.as_deref(), Some("abc"));
+        assert!(pkg.asset.url.ends_with("-events.zip"));
+    }
+
+    #[test]
+    fn a_release_without_the_addon_has_none() {
+        let json = br###"{"tag_name":"v7.0.0","assets":[]}"###;
+        assert_eq!(parse_addon(json, "-events.zip").unwrap(), None);
+    }
+
+    #[test]
+    fn an_addon_hosted_elsewhere_is_refused() {
+        let json = br###"{"tag_name":"v7.0.0","assets":[{"name":"x-events.zip","browser_download_url":"https://evil.example/x-events.zip","size":1}]}"###;
+        assert!(parse_addon(json, "-events.zip").is_err());
+    }
 
     #[test]
     fn versions_compare_numerically() {

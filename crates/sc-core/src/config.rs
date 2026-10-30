@@ -242,6 +242,48 @@ pub struct Config {
     pub save: SaveSettings,
     pub hotkeys: HotkeySettings,
     pub general: GeneralSettings,
+    pub events: EventsSettings,
+}
+
+pub const EVENT_SAVE_CHOICES: [u32; 5] = [10, 15, 20, 30, 60];
+pub const EVENT_MAX_KILLS: u32 = 5;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct EventsSettings {
+    pub enabled: bool,
+    pub cs2: bool,
+    pub league: bool,
+    pub min_kills: u32,
+    pub save_secs: u32,
+}
+
+impl Default for EventsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cs2: true,
+            league: true,
+            min_kills: 2,
+            save_secs: 20,
+        }
+    }
+}
+
+impl EventsSettings {
+    pub fn validate(&self) -> Result<()> {
+        if !(1..=EVENT_MAX_KILLS).contains(&self.min_kills) {
+            return Err(Error::Config(format!(
+                "events.min-kills must be 1..={EVENT_MAX_KILLS}"
+            )));
+        }
+        if !(5..=MAX_REPLAY_SECS).contains(&self.save_secs) {
+            return Err(Error::Config(format!(
+                "events.save-secs must be 5..={MAX_REPLAY_SECS}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Default for CaptureSettings {
@@ -469,6 +511,7 @@ impl Config {
                 "hotkeys.extra secs must be 1..={MAX_REPLAY_SECS}"
             )));
         }
+        self.events.validate()?;
         let est = self.estimated_buffer_mb();
         if est > self.buffer.ram_cap_mb {
             return Err(Error::Config(format!(
@@ -657,5 +700,51 @@ mod extra_hotkey_tests {
         assert_eq!(h.duplicate_of(3), None);
         assert_eq!(h.duplicate_of(4), None);
         assert_eq!(h.duplicate_of(9), None);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
+mod events_tests {
+    use super::*;
+
+    #[test]
+    fn game_events_start_switched_off() {
+        let cfg = Config::default();
+        assert!(!cfg.events.enabled);
+        assert_eq!(cfg.events.min_kills, 2);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn an_old_config_has_no_events_section() {
+        let cfg: Config = toml::from_str("[hotkeys]\nsave = \"CTRL+G\"\n").unwrap();
+        assert_eq!(cfg.events, EventsSettings::default());
+    }
+
+    #[test]
+    fn the_events_section_round_trips() {
+        let mut cfg = Config::default();
+        cfg.events = EventsSettings {
+            enabled: true,
+            cs2: false,
+            league: true,
+            min_kills: 3,
+            save_secs: 30,
+        };
+        let back: Config = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(back.events, cfg.events);
+    }
+
+    #[test]
+    fn silly_event_settings_are_refused() {
+        for (kills, secs) in [(0, 20), (6, 20), (2, 4), (2, 301)] {
+            let events = EventsSettings {
+                min_kills: kills,
+                save_secs: secs,
+                ..Default::default()
+            };
+            assert!(events.validate().is_err(), "{kills} {secs}");
+        }
     }
 }

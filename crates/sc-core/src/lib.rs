@@ -1,3 +1,4 @@
+pub mod addon;
 pub mod audio;
 pub mod buffer;
 pub mod capture;

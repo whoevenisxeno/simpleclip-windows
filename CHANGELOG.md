@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.8.0
+
+### Added
+- Game events, an optional experimental add-on. It is not part of SimpleClip until you turn it on in Settings > System > Add-ons, which asks first, then downloads it from the SimpleClip releases on GitHub, checks its checksum and installs it. Once on, it saves a clip by itself when you get a multi-kill in Counter-Strike 2 or League of Legends. You choose which games, the smallest streak that counts (any kill, double, triple, quadra or penta) and how much to save (10 seconds to 1 minute). A streak becomes one clip, saved a few seconds after the last kill so the moment has played out. Counter-Strike 2 uses the game's own state feed (SimpleClip adds one small file to the game's cfg folder, and you restart the game once), League of Legends uses its local live client API, and both only talk to your own computer. The add-on runs as its own small program, started and stopped by SimpleClip, and Remove deletes it again, including the file it added to the game.
+- `[events]` in the config file (`enabled`, `cs2`, `league`, `min-kills`, `save-secs`).
+
 ## 6.7.3
 
 ### Added

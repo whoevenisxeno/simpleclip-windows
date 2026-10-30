@@ -1,0 +1,25 @@
+[package]
+name = "sc-events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sc-events"
+path = "src/main.rs"
+
+[dependencies]
+sc-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+interprocess.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+winreg = "0.56.0"

@@ -66,6 +66,7 @@ job and does not need an account.
 - **Last opened ring.** The clip you opened last gets a soft ring, so you do not lose your place in a long list.
 - **Duplicate cleanup.** One button in Settings > Storage finds the extra versions of a clip (original, trimmed, compressed), shows you exactly what stays and what goes and how much space it frees, and only then moves the rest to the Recycle Bin.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
+- **Game events (optional add-on).** Off by default and not installed with SimpleClip. In Settings > System > Add-ons, Turn on asks first, then downloads a small separate program from the releases on GitHub, verifies it and runs it in the background. It saves a clip by itself on a multi-kill in Counter-Strike 2 or League of Legends, with a choice of games, the smallest streak and the clip length. Experimental. Remove deletes it again.
 - **Update alerts.** Every 6 minutes it checks for a new version and, as long as one is waiting, shows a card each time. The chime plays once per version. A small refresh button next to the version in the bottom left corner checks right away.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
   an "Update available" button appears at the top right, shows the changelog, and updates in place
@@ -268,6 +269,13 @@ open = "ALT+F8"                # brings the SimpleClip window up; empty turns it
 keys = "CTRL+F1"
 action = "save-last"            # or screenshot, toggle-pause, open-app, open-folder
 secs = 15                       # only used by save-last
+
+[events]                        # the optional game events add-on
+enabled = false
+cs2 = true
+league = true
+min-kills = 2                   # 1 to 5
+save-secs = 20
 
 [general]
 autostart = true

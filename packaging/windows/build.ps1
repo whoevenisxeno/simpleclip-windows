@@ -110,6 +110,15 @@ $appZip = Join-Path $root "dist\SimpleClip-$version-app.zip"
 Remove-Item $appZip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$stage\scd.exe", "$stage\sc.exe", "$stage\sc-gui.exe" -DestinationPath $appZip
 Step "Wrote $appZip"
+$eventsStage = Join-Path $root "dist\events"
+Remove-Item $eventsStage -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $eventsStage | Out-Null
+Copy-Item "$root\target\release\sc-events.exe" $eventsStage
+Set-Content (Join-Path $eventsStage 'manifest.json') "{`"name`":`"events`",`"version`":`"$version`"}" -Encoding ascii
+$eventsZip = Join-Path $root "dist\SimpleClip-$version-events.zip"
+Remove-Item $eventsZip -ErrorAction SilentlyContinue
+Compress-Archive -Path "$eventsStage\*" -DestinationPath $eventsZip
+Step "Wrote $eventsZip"
 $dllList = Join-Path $root "dist\SimpleClip-$version-dlls.sha256"
 Get-ChildItem $stage -Filter *.dll | Sort-Object Name | ForEach-Object {
     "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name

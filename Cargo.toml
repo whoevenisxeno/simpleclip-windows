@@ -1,9 +1,9 @@
 ﻿[workspace]
 resolver = "2"
-members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg", "crates/sc-capture"]
+members = ["crates/sc-core", "crates/scd", "crates/sc", "crates/sc-gui", "crates/sc-ffmpeg", "crates/sc-capture", "crates/sc-events"]
 
 [workspace.package]
-version = "6.7.3"
+version = "6.8.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"

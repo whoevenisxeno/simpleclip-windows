@@ -590,7 +590,7 @@ fn libraries_unchanged(r: &Release, dir: &std::path::Path) -> bool {
     seen > 0
 }
 
-fn download_file(
+pub(crate) fn download_file(
     asset: &sc_core::update::Asset,
     dest: &std::path::Path,
     progress: &AtomicU64,

@@ -1,5 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod addons;
 mod audio_mix;
 #[cfg(windows)]
 mod discord;
@@ -89,6 +91,7 @@ fn main() -> Result<()> {
         win::set_autostart(daemon.config.read().unwrap().general.autostart);
         win::spawn_hotkey(daemon.clone());
         discord::spawn(daemon.clone());
+        addons::spawn(daemon.clone());
         let server_daemon = daemon.clone();
         std::thread::Builder::new()
             .name("sc-ipc".into())
