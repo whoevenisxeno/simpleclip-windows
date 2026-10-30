@@ -960,7 +960,7 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
             let status = app.updater.status_text();
             s.row("Version", Some(&status), |ui| {
                 if widgets::quiet_button(ui, None, "Check now").clicked() {
-                    app.updater.check(ui.ctx());
+                    app.updater.check_now(ui.ctx());
                 }
             });
         }

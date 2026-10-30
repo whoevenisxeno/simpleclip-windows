@@ -2,6 +2,14 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.7.2
+
+### Added
+- A small refresh button next to the version in the bottom left corner checks for updates right away. It pulses while it looks, then opens the update card if there is one or tells you that you are on the latest version. The Check now button in Settings does the same.
+
+### Changed
+- While an update is waiting, the popup card now shows at every check (every 6 minutes) instead of once per version, so it cannot be missed. The chime still plays once per version, so it does not repeat. Turning off notifications in Settings still turns the card off.
+
 ## 6.7.1
 
 ### Changed

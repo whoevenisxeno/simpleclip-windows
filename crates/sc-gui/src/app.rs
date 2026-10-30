@@ -372,6 +372,9 @@ impl eframe::App for ScApp {
             self.cfg.general.update_check && self.shot.is_none(),
             self.screen == Screen::Wizard,
         );
+        if let Some((text, ok)) = self.updater.take_notice() {
+            self.toast(text, if ok { ToastKind::Ok } else { ToastKind::Warn });
+        }
         screens::sheet::show(self, ctx);
         screens::share::show(self, ctx);
         #[cfg(windows)]
@@ -462,6 +465,15 @@ impl ScApp {
                         .size(12.0)
                         .color(p.text_3),
                 );
+                let busy = self.updater.checking();
+                let tip = if busy {
+                    "Checking for updates\u{2026}"
+                } else {
+                    "Check for updates"
+                };
+                if widgets::mini_icon_button(ui, icon::REFRESH, "Check", tip, busy).clicked() {
+                    self.updater.check_now(ui.ctx());
+                }
             });
         });
     }

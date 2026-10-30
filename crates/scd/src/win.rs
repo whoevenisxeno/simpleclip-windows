@@ -357,9 +357,7 @@ fn first_time_for(last: &mut Option<String>, version: &str) -> bool {
 }
 
 pub fn announce_update(daemon: &Daemon, version: &str, with_card: bool) {
-    if !first_time_for(&mut LAST_ANNOUNCED.lock().unwrap(), version) {
-        return;
-    }
+    let first = first_time_for(&mut LAST_ANNOUNCED.lock().unwrap(), version);
     let cfg = daemon.config.read().unwrap().clone();
     if with_card && cfg.general.notify {
         crate::popup::configure(&cfg.general);
@@ -373,7 +371,7 @@ pub fn announce_update(daemon: &Daemon, version: &str, with_card: bool) {
             ],
         });
     }
-    if cfg.general.update_sound {
+    if first && cfg.general.update_sound {
         play_update_sound();
     }
 }

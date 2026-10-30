@@ -417,6 +417,68 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, fallback: &str, tip: &str, danger: 
     resp.on_hover_text(tip)
 }
 
+pub fn mini_icon_button(
+    ui: &mut Ui,
+    glyph: &str,
+    fallback: &str,
+    tip: &str,
+    busy: bool,
+) -> Response {
+    let p = pal_ui(ui);
+    let has = theme::has_icons(ui.ctx());
+    let size = if has {
+        vec2(24.0, 24.0)
+    } else {
+        vec2(44.0, 24.0)
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12);
+    ui.painter().rect_filled(
+        rect,
+        Rounding::same(theme::radius::CONTROL - 2.0),
+        mix(
+            p.card_hi,
+            if p.dark {
+                Color32::WHITE
+            } else {
+                Color32::BLACK
+            },
+            0.08 * hover,
+        )
+        .gamma_multiply(hover),
+    );
+    let fg = if busy {
+        let t = ui.input(|i| i.time) as f32;
+        ui.ctx().request_repaint();
+        mix(p.text_3, p.accent, 0.5 + 0.5 * (t * 6.0).sin())
+    } else {
+        mix(p.text_3, p.text, hover)
+    };
+    if has {
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            glyph,
+            FontId::new(13.0, theme::icons()),
+            fg,
+        );
+    } else {
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            fallback,
+            FontId::new(11.5, egui::FontFamily::Proportional),
+            fg,
+        );
+    }
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.on_hover_text(tip)
+}
+
 pub fn dot(ui: &mut Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 4.5, color);

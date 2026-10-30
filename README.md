@@ -66,7 +66,7 @@ job and does not need an account.
 - **Last opened ring.** The clip you opened last gets a soft ring, so you do not lose your place in a long list.
 - **Duplicate cleanup.** One button in Settings > Storage finds the extra versions of a clip (original, trimmed, compressed), shows you exactly what stays and what goes and how much space it frees, and only then moves the rest to the Recycle Bin.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
-- **Update alerts.** Every 6 minutes it checks for a new version and, when there is one, shows a card and plays a chime of its own.
+- **Update alerts.** Every 6 minutes it checks for a new version and, as long as one is waiting, shows a card each time. The chime plays once per version. A small refresh button next to the version in the bottom left corner checks right away.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
   an "Update available" button appears at the top right, shows the changelog, and updates in place
   when you click Update now: it downloads a small package, checks it, and swaps only the changed

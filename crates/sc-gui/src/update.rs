@@ -34,6 +34,8 @@ pub struct Updater {
     package_size: Arc<AtomicU64>,
     installing: Option<Release>,
     ready_since: Option<Instant>,
+    manual: bool,
+    notice: Option<(String, bool)>,
 }
 
 impl Default for Updater {
@@ -49,6 +51,8 @@ impl Default for Updater {
             package_size: Arc::new(AtomicU64::new(0)),
             installing: None,
             ready_since: None,
+            manual: false,
+            notice: None,
         }
     }
 }
@@ -84,6 +88,45 @@ impl Updater {
             };
             Self::set(&state, next, &ctx);
         });
+    }
+
+    pub fn check_now(&mut self, ctx: &egui::Context) {
+        match self.state() {
+            State::Downloading(_) | State::Ready(_) => self.open = true,
+            _ => {
+                self.manual = true;
+                self.check(ctx);
+            }
+        }
+    }
+
+    pub fn checking(&self) -> bool {
+        matches!(self.state(), State::Checking)
+    }
+
+    pub fn take_notice(&mut self) -> Option<(String, bool)> {
+        self.notice.take()
+    }
+
+    fn settle_manual(&mut self) {
+        if !self.manual {
+            return;
+        }
+        match self.state() {
+            State::Available(_) => {
+                self.manual = false;
+                self.open = true;
+            }
+            State::UpToDate => {
+                self.manual = false;
+                self.notice = Some((format!("SimpleClip {CURRENT} is the latest version"), true));
+            }
+            State::Failed(e) => {
+                self.manual = false;
+                self.notice = Some((format!("Couldn’t check: {e}"), false));
+            }
+            _ => {}
+        }
     }
 
     fn download(&mut self, r: Release, ctx: &egui::Context) {
@@ -197,6 +240,7 @@ impl Updater {
         {
             self.check(ctx);
         }
+        self.settle_manual();
         if let State::Ready(p) = self.state() {
             let since = *self.ready_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= Duration::from_millis(1400) {
@@ -674,4 +718,79 @@ fn prepare_update(
         return Err("the update package was incomplete, so it was not installed".to_string());
     }
     Ok(root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settle(u: &mut Updater) {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| u.show(ctx, false, false));
+    }
+
+    fn with_state(state: State, manual: bool) -> Updater {
+        let mut u = Updater::default();
+        *u.state.lock().unwrap() = state;
+        u.manual = manual;
+        u
+    }
+
+    fn release() -> Release {
+        Release {
+            version: "99.0.0".into(),
+            notes: String::new(),
+            app: None,
+            full: None,
+            dlls: None,
+        }
+    }
+
+    #[test]
+    fn a_quick_check_that_finds_nothing_says_so() {
+        let mut u = with_state(State::UpToDate, true);
+        settle(&mut u);
+        let (text, ok) = u.take_notice().unwrap();
+        assert!(ok);
+        assert!(text.contains("latest"), "{text}");
+        assert!(!u.manual);
+        assert!(u.take_notice().is_none());
+    }
+
+    #[test]
+    fn a_quick_check_that_fails_says_why() {
+        let mut u = with_state(State::Failed("offline".into()), true);
+        settle(&mut u);
+        let (text, ok) = u.take_notice().unwrap();
+        assert!(!ok);
+        assert!(text.contains("offline"), "{text}");
+    }
+
+    #[test]
+    fn a_quick_check_that_finds_an_update_opens_it() {
+        let mut u = with_state(State::Available(release()), true);
+        settle(&mut u);
+        assert!(u.open);
+        assert!(u.take_notice().is_none());
+        assert!(!u.manual);
+    }
+
+    #[test]
+    fn the_background_check_stays_quiet() {
+        let mut u = with_state(State::UpToDate, false);
+        settle(&mut u);
+        assert!(u.take_notice().is_none());
+        let mut u = with_state(State::Failed("offline".into()), false);
+        settle(&mut u);
+        assert!(u.take_notice().is_none());
+    }
+
+    #[test]
+    fn a_pending_check_keeps_waiting() {
+        let mut u = with_state(State::Checking, true);
+        settle(&mut u);
+        assert!(u.manual);
+        assert!(u.checking());
+        assert!(u.take_notice().is_none());
+    }
 }
