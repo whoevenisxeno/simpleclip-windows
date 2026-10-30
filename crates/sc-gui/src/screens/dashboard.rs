@@ -41,6 +41,7 @@ fn offline(app: &mut ScApp, ui: &mut Ui) {
 
 fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     let p = pal_ui(ui);
+    let top = ui.cursor().top();
     let paused = s.state == CaptureState::Paused;
     let secs = s.buffer_secs;
 
@@ -79,6 +80,343 @@ fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     ui.add_space(18.0);
     recent(app, ui);
     hints(app, ui);
+    let used = ui.cursor().top() - top;
+    ui.add_space(fold_gap(ui.clip_rect().height(), used));
+    insights(app, ui);
+}
+
+pub const PEEK: f32 = 84.0;
+
+pub fn fold_gap(view: f32, used: f32) -> f32 {
+    (view - 20.0 - used - PEEK).max(36.0)
+}
+
+fn insights(app: &mut ScApp, ui: &mut Ui) {
+    let p = pal_ui(ui);
+    let st = crate::screens::gallery::stats(app);
+    let head = ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Your stats")
+                .font(FontId::new(20.0, theme::semibold()))
+                .color(p.text),
+        );
+        if let Some(d) = st.since {
+            ui.label(
+                RichText::new(format!("since {}", crate::stats::date_label(d)))
+                    .size(13.0)
+                    .color(p.text_3),
+            );
+        }
+    });
+    let low = ui.clip_rect().bottom() - head.response.rect.top() < PEEK + 40.0;
+    let a = ui
+        .ctx()
+        .animate_bool_with_time(ui.id().with("stats-peek"), low, 0.25);
+    if a > 0.01 {
+        ui.painter().text(
+            pos2(ui.max_rect().right(), head.response.rect.center().y),
+            Align2::RIGHT_CENTER,
+            "Scroll down for more",
+            FontId::new(12.5, egui::FontFamily::Proportional),
+            p.accent.linear_multiply(a),
+        );
+    }
+    ui.add_space(8.0);
+    if st.clips + st.shots + st.edited + st.compressed == 0 {
+        widgets::card(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(10.0);
+                widgets::secondary(ui, "Your stats fill in as you save clips.");
+                ui.add_space(10.0);
+            });
+        });
+        return;
+    }
+    let size = crate::screens::gallery::size_label;
+    let gap = 12.0;
+    let w = ((ui.available_width() - gap * 3.0) / 4.0).floor();
+    let plural = |n: usize, one: &str, many: &str| {
+        if n == 1 {
+            format!("1 {one}")
+        } else {
+            format!("{n} {many}")
+        }
+    };
+    let row = |ui: &mut Ui, tiles: [(&str, String, String); 4]| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for (l, v, sub) in tiles {
+                big_tile(ui, w, l, &v, &sub);
+            }
+        });
+    };
+    row(
+        ui,
+        [
+            (
+                "Clips saved",
+                st.clips.to_string(),
+                format!("{} today", st.today),
+            ),
+            (
+                "Screenshots",
+                st.shots.to_string(),
+                "PNG files in your folder".into(),
+            ),
+            (
+                "Space used",
+                size(st.bytes),
+                format!("about {} a clip", size(st.avg_bytes())),
+            ),
+            (
+                "Day streak",
+                plural(st.streak as usize, "day", "days"),
+                format!("best {}", plural(st.best_streak as usize, "day", "days")),
+            ),
+        ],
+    );
+    ui.add_space(gap);
+    let half = ((ui.available_width() - gap) / 2.0).floor();
+    let when = st
+        .hour
+        .map(crate::stats::hour_label)
+        .and_then(|l| {
+            l.split_once(", ")
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+        })
+        .unwrap_or_else(|| ("\u{2013}".into(), String::new()));
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        panel(ui, half, "Last 14 days", |ui| days_chart(ui, &st.days));
+        panel(ui, half, "Top games", |ui| games_chart(ui, &st.games));
+    });
+    ui.add_space(gap);
+    row(
+        ui,
+        [
+            (
+                "This week",
+                st.week.to_string(),
+                "clips in the last 7 days".into(),
+            ),
+            (
+                "Busiest day",
+                st.busiest
+                    .map(|b| plural(b.1, "clip", "clips"))
+                    .unwrap_or_else(|| "\u{2013}".into()),
+                st.busiest
+                    .map(|b| crate::stats::short_date(b.0))
+                    .unwrap_or_default(),
+            ),
+            ("You usually clip", when.0, when.1),
+            (
+                "Edited",
+                (st.edited + st.compressed).to_string(),
+                format!("{} trimmed, {} compressed", st.edited, st.compressed),
+            ),
+        ],
+    );
+    ui.add_space(gap);
+    let games = st.games.iter().filter(|g| g.0 != "Everything else").count();
+    widgets::card(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let bits = [
+                plural(st.clips + st.edited + st.compressed, "video", "videos"),
+                plural(games, "game", "games"),
+                plural(st.marked, "bookmarked clip", "bookmarked clips"),
+                format!("{} on disk", size(st.bytes)),
+            ];
+            for (i, b) in bits.iter().enumerate() {
+                if i > 0 {
+                    ui.label(RichText::new("\u{00B7}").color(p.text_3));
+                }
+                ui.label(RichText::new(b).size(13.0).color(p.text_2));
+            }
+        });
+    });
+}
+
+fn big_tile(ui: &mut Ui, w: f32, label: &str, value: &str, sub: &str) {
+    let p = pal_ui(ui);
+    egui::Frame::none()
+        .fill(p.card)
+        .rounding(egui::Rounding::same(theme::radius::TILE))
+        .stroke(Stroke::new(1.0_f32, p.line))
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .show(ui, |ui| {
+            ui.set_width(w - 28.0 - 2.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(
+                    RichText::new(label.to_uppercase())
+                        .font(FontId::new(10.5, theme::semibold()))
+                        .color(p.text_3),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(value)
+                            .font(FontId::new(22.0, theme::semibold()))
+                            .color(p.text),
+                    )
+                    .truncate(),
+                );
+                ui.add(egui::Label::new(RichText::new(sub).size(12.0).color(p.text_2)).truncate());
+            });
+        });
+}
+
+fn panel(ui: &mut Ui, w: f32, title: &str, body: impl FnOnce(&mut Ui)) {
+    let p = pal_ui(ui);
+    egui::Frame::none()
+        .fill(p.card)
+        .rounding(egui::Rounding::same(theme::radius::TILE))
+        .stroke(Stroke::new(1.0_f32, p.line))
+        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+        .show(ui, |ui| {
+            ui.set_width(w - 32.0 - 2.0);
+            ui.vertical(|ui| {
+                ui.label(
+                    RichText::new(title.to_uppercase())
+                        .font(FontId::new(10.5, theme::semibold()))
+                        .color(p.text_3),
+                );
+                ui.add_space(10.0);
+                body(ui);
+            });
+        });
+}
+
+fn days_chart(ui: &mut Ui, days: &[(time::Date, usize)]) {
+    let p = pal_ui(ui);
+    let h = 120.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let base = rect.bottom() - 18.0;
+    let max = days.iter().map(|d| d.1).max().unwrap_or(0).max(1) as f32;
+    let n = days.len().max(1) as f32;
+    let slot = rect.width() / n;
+    let bw = (slot - 2.0).clamp(4.0, 22.0);
+    ui.painter().line_segment(
+        [pos2(rect.left(), base), pos2(rect.right(), base)],
+        Stroke::new(1.0_f32, p.line),
+    );
+    for (i, (d, c)) in days.iter().enumerate() {
+        let cx = rect.left() + slot * (i as f32 + 0.5);
+        let col = egui::Rect::from_min_max(
+            pos2(rect.left() + slot * i as f32, rect.top()),
+            pos2(rect.left() + slot * (i as f32 + 1.0), base),
+        );
+        let resp = ui.interact(col, ui.id().with(("stats-day", i)), Sense::hover());
+        let hot = resp.hovered();
+        if *c > 0 {
+            let bh = ((base - rect.top() - 14.0) * (*c as f32 / max)).max(3.0);
+            let r =
+                egui::Rect::from_min_max(pos2(cx - bw / 2.0, base - bh), pos2(cx + bw / 2.0, base));
+            let fill = if hot {
+                p.accent
+            } else {
+                p.accent.linear_multiply(0.8)
+            };
+            ui.painter().rect_filled(
+                r,
+                egui::Rounding {
+                    nw: 4.0,
+                    ne: 4.0,
+                    sw: 0.0,
+                    se: 0.0,
+                },
+                fill,
+            );
+        }
+        if i == 0 || i + 1 == days.len() {
+            ui.painter().text(
+                pos2(cx, base + 10.0),
+                Align2::CENTER_CENTER,
+                if i + 1 == days.len() {
+                    "Today".to_string()
+                } else {
+                    format!("{}", d.day())
+                },
+                FontId::new(11.0, egui::FontFamily::Proportional),
+                p.text_3,
+            );
+        }
+        if hot {
+            ui.painter()
+                .rect_filled(col, 4.0, p.text_3.linear_multiply(0.08));
+            resp.on_hover_text(format!(
+                "{} \u{00B7} {}",
+                crate::stats::short_date(*d),
+                if *c == 1 {
+                    "1 clip".to_string()
+                } else {
+                    format!("{c} clips")
+                }
+            ));
+        }
+    }
+}
+
+fn games_chart(ui: &mut Ui, games: &[(String, usize)]) {
+    let p = pal_ui(ui);
+    let max = games.iter().map(|g| g.1).max().unwrap_or(0).max(1) as f32;
+    let rows = 5.0;
+    let lh = 120.0 / rows;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 120.0), Sense::hover());
+    if games.is_empty() {
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "No clips yet",
+            FontId::new(13.0, egui::FontFamily::Proportional),
+            p.text_3,
+        );
+        return;
+    }
+    let name_w = (rect.width() * 0.34).min(120.0);
+    let count_w = 34.0;
+    let track = rect.width() - name_w - count_w - 8.0;
+    for (i, (g, n)) in games.iter().enumerate() {
+        let y = rect.top() + lh * (i as f32 + 0.5);
+        let name = ui.painter().layout_no_wrap(
+            g.clone(),
+            FontId::new(12.5, egui::FontFamily::Proportional),
+            p.text_2,
+        );
+        let shown = if name.size().x > name_w - 6.0 {
+            let mut s: String = g.chars().take(10).collect();
+            s.push('\u{2026}');
+            s
+        } else {
+            g.clone()
+        };
+        ui.painter().text(
+            pos2(rect.left(), y),
+            Align2::LEFT_CENTER,
+            shown,
+            FontId::new(12.5, egui::FontFamily::Proportional),
+            p.text_2,
+        );
+        let x0 = rect.left() + name_w;
+        let bw = (track * (*n as f32 / max)).max(4.0);
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(pos2(x0, y - 6.0), pos2(x0 + bw, y + 6.0)),
+            egui::Rounding {
+                nw: 0.0,
+                sw: 0.0,
+                ne: 4.0,
+                se: 4.0,
+            },
+            p.accent.linear_multiply(0.8),
+        );
+        ui.painter().text(
+            pos2(x0 + bw + 8.0, y),
+            Align2::LEFT_CENTER,
+            n.to_string(),
+            FontId::new(12.5, theme::semibold()),
+            p.text,
+        );
+    }
 }
 
 fn hero(app: &mut ScApp, ui: &mut Ui, s: &StatusReport, paused: bool) {
@@ -373,4 +711,21 @@ fn hints(app: &ScApp, ui: &mut Ui) {
                 }
             });
         });
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::*;
+
+    #[test]
+    fn stats_peek_above_the_bottom_edge() {
+        let (view, used) = (800.0, 520.0);
+        let top = 20.0 + used + fold_gap(view, used);
+        assert_eq!(view - top, PEEK);
+    }
+
+    #[test]
+    fn short_windows_keep_a_normal_gap() {
+        assert_eq!(fold_gap(470.0, 600.0), 36.0);
+    }
 }

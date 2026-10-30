@@ -7,13 +7,14 @@ pub(crate) struct Harness {
     pub time: f64,
     pub texts: Vec<(String, Rect)>,
     pub right: f32,
+    pub size: egui::Vec2,
 }
 
 fn collect(shape: &Paint, out: &mut Vec<(String, Rect)>) {
     match shape {
         Paint::Text(t) => out.push((
             t.galley.text().to_string(),
-            Rect::from_min_size(t.pos, t.galley.size()),
+            t.galley.rect.translate(t.pos.to_vec2()),
         )),
         Paint::Vec(list) => list.iter().for_each(|s| collect(s, out)),
         _ => {}
@@ -37,9 +38,15 @@ impl Harness {
             time: 0.0,
             texts: Vec::new(),
             right: 0.0,
+            size: vec2(1000.0, 1600.0),
         };
         h.frame(Vec::new(), Modifiers::NONE, &mut |_| {});
         h
+    }
+
+    pub fn sized(mut self, width: f32, height: f32) -> Self {
+        self.size = vec2(width, height);
+        self
     }
 
     pub fn frame(
@@ -50,7 +57,7 @@ impl Harness {
     ) {
         self.time += 0.05;
         let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1600.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
             time: Some(self.time),
             modifiers,
             events,
@@ -66,7 +73,13 @@ impl Harness {
         self.right = right;
         self.texts.clear();
         for clipped in &out.shapes {
-            collect(&clipped.shape, &mut self.texts);
+            let mut found = Vec::new();
+            collect(&clipped.shape, &mut found);
+            self.texts.extend(
+                found
+                    .into_iter()
+                    .filter(|(_, r)| clipped.clip_rect.intersects(*r)),
+            );
         }
     }
 

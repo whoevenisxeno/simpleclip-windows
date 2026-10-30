@@ -29,6 +29,36 @@ pub fn crop_gray(
     Some((w as u32, h as u32, gray))
 }
 
+pub fn crop_tint(
+    bgra: &[u8],
+    stride: usize,
+    width: u32,
+    height: u32,
+    region: [f32; 4],
+) -> Option<(u32, u32, Vec<u8>)> {
+    let [x0, y0, x1, y1] = region.map(|v| v.clamp(0.0, 1.0));
+    let left = (x0 * width as f32).round() as usize;
+    let top = (y0 * height as f32).round() as usize;
+    let right = ((x1 * width as f32).round() as usize).min(width as usize);
+    let bottom = ((y1 * height as f32).round() as usize).min(height as usize);
+    if right <= left || bottom <= top || stride < width as usize * 4 {
+        return None;
+    }
+    if bgra.len() < stride * (bottom - 1) + right * 4 {
+        return None;
+    }
+    let (w, h) = (right - left, bottom - top);
+    let mut tint = Vec::with_capacity(w * h);
+    for row in top..bottom {
+        let line = &bgra[row * stride + left * 4..row * stride + right * 4];
+        for px in line.as_chunks::<4>().0 {
+            let (r, g, b) = (px[2] as i32, px[1] as i32, px[0] as i32);
+            tint.push((128 + g - (r + b) / 2).clamp(0, 255) as u8);
+        }
+    }
+    Some((w as u32, h as u32, tint))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +109,33 @@ mod tests {
         assert!(crop_gray(&data, 400, 100, 50, [0.5, 0.5, 0.5, 0.9]).is_none());
         assert!(crop_gray(&data, 400, 100, 50, [0.8, 0.1, 0.2, 0.9]).is_none());
         assert!(crop_gray(&data[..100], 400, 100, 50, [0.0, 0.0, 1.0, 1.0]).is_none());
+    }
+
+    #[test]
+    fn the_tint_separates_olive_from_purple_and_leaves_grey_alone() {
+        let px = |r: u8, g: u8, b: u8| [b, g, r, 255];
+        let mut data = Vec::new();
+        for p in [px(150, 150, 30), px(110, 40, 150), px(128, 128, 128)] {
+            data.extend_from_slice(&p);
+        }
+        let (w, h, tint) = crop_tint(&data, 12, 3, 1, [0.0, 0.0, 1.0, 1.0]).unwrap();
+        assert_eq!((w, h), (3, 1));
+        assert!(tint[0] > 180, "{tint:?}");
+        assert!(tint[1] < 80, "{tint:?}");
+        assert_eq!(tint[2], 128);
+    }
+
+    #[test]
+    fn the_tint_has_the_same_shape_as_the_gray_crop() {
+        let data = frame(100, 50, 400);
+        let region = [0.5, 0.2, 1.0, 0.6];
+        let gray = crop_gray(&data, 400, 100, 50, region).unwrap();
+        let tint = crop_tint(&data, 400, 100, 50, region).unwrap();
+        assert_eq!(
+            (gray.0, gray.1, gray.2.len()),
+            (tint.0, tint.1, tint.2.len())
+        );
+        assert!(crop_tint(&data, 400, 100, 50, [0.5, 0.5, 0.5, 0.9]).is_none());
     }
 
     #[test]

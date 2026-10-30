@@ -114,6 +114,8 @@ pub enum Response {
         width: u32,
         height: u32,
         gray: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tint: Option<String>,
     },
     Ok,
     Error {
@@ -170,6 +172,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_region_without_a_tint_still_reads() {
+        let text = r#"{"type":"region","width":1,"height":1,"gray":"AA=="}"#;
+        match serde_json::from_str::<Response>(text).unwrap() {
+            Response::Region { tint, .. } => assert!(tint.is_none()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn a_popup_request_round_trips() {
         let req = Request::Popup {
             title: "Game events test".into(),
@@ -204,6 +215,7 @@ mod tests {
             width: 2,
             height: 1,
             gray: crate::b64::encode(&[10, 200]),
+            tint: Some(crate::b64::encode(&[100, 150])),
         };
         let text = serde_json::to_string(&reply).unwrap();
         match serde_json::from_str::<Response>(&text).unwrap() {
@@ -211,9 +223,11 @@ mod tests {
                 width,
                 height,
                 gray,
+                tint,
             } => {
                 assert_eq!((width, height), (2, 1));
                 assert_eq!(crate::b64::decode(&gray).unwrap(), vec![10, 200]);
+                assert_eq!(crate::b64::decode(&tint.unwrap()).unwrap(), vec![100, 150]);
             }
             other => panic!("{other:?}"),
         }

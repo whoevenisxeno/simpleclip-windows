@@ -46,17 +46,36 @@ impl Saver for DaemonSaver {
     }
 }
 
-pub fn grab_region(region: [f32; 4]) -> Result<(u32, u32, Vec<u8>), String> {
+pub struct Grab {
+    pub width: u32,
+    pub height: u32,
+    pub gray: Vec<u8>,
+    pub tint: Option<Vec<u8>>,
+}
+
+pub fn grab_region(region: [f32; 4]) -> Result<Grab, String> {
     let [x0, y0, x1, y1] = region;
     match request(Request::GrabRegion { x0, y0, x1, y1 }) {
         Ok(Response::Region {
             width,
             height,
             gray,
-        }) => sc_core::b64::decode(&gray)
-            .filter(|d| d.len() == (width as usize) * (height as usize))
-            .map(|d| (width, height, d))
-            .ok_or_else(|| "SimpleClip sent a damaged picture".to_string()),
+            tint,
+        }) => {
+            let size = (width as usize) * (height as usize);
+            let gray = sc_core::b64::decode(&gray)
+                .filter(|d| d.len() == size)
+                .ok_or_else(|| "SimpleClip sent a damaged picture".to_string())?;
+            let tint = tint
+                .and_then(|t| sc_core::b64::decode(&t))
+                .filter(|d| d.len() == size);
+            Ok(Grab {
+                width,
+                height,
+                gray,
+                tint,
+            })
+        }
         Ok(Response::Error { message }) => Err(message),
         Ok(_) => Err("unexpected answer from SimpleClip".to_string()),
         Err(e) => Err(format!("{e:#}")),

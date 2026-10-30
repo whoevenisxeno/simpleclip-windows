@@ -163,20 +163,41 @@ impl Section<'_> {
             self.ui.add_space(12.0);
             return;
         }
-        self.ui
-            .allocate_ui_with_layout(vec2(w, h), Layout::left_to_right(Align::Center), |ui| {
-                ui.set_min_height(h);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let text_h = if hint.is_some() { 36.0 } else { 20.0 };
-                    ui.add_space(((h - text_h) / 2.0).max(0.0));
-                    ui.label(RichText::new(label).size(14.0).color(p.text));
-                    if let Some(h) = hint {
-                        ui.label(RichText::new(h).size(12.0).color(p.text_2));
-                    }
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| control(ui));
-            });
+        let (row, _) = self.ui.allocate_exact_size(vec2(w, h), Sense::hover());
+        let width_of = |text: &str, size: f32| {
+            self.ui
+                .painter()
+                .layout_no_wrap(text.to_string(), egui::FontId::proportional(size), p.text)
+                .size()
+                .x
+        };
+        let hint_w = hint.map_or(0.0, |t| width_of(t, 12.0));
+        let keep = width_of(label, 14.0).max(hint_w.min(w * 0.4)).min(w * 0.5) + 16.0;
+        let mut controls = self.ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(
+                    egui::pos2(row.left() + keep, row.top()),
+                    row.max,
+                ))
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        control(&mut controls);
+        let used = controls.min_rect();
+        let text_right = (used.left() - 16.0).max(row.left() + 80.0);
+        let text_rect = egui::Rect::from_min_max(row.min, egui::pos2(text_right, row.max.y));
+        let mut text = self.ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(text_rect)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        text.spacing_mut().item_spacing.y = 2.0;
+        let text_h = if hint.is_some() { 36.0 } else { 20.0 };
+        text.add_space(((h - text_h) / 2.0).max(0.0));
+        text.add(egui::Label::new(RichText::new(label).size(14.0).color(p.text)).truncate());
+        if let Some(hint) = hint {
+            text.add(egui::Label::new(RichText::new(hint).size(12.0).color(p.text_2)).truncate())
+                .on_hover_text(hint);
+        }
     }
 
     pub fn pair(
@@ -1424,5 +1445,123 @@ mod segmented_tests {
             });
         });
         assert_eq!((a, b), (None, false));
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+    use crate::testkit::Harness;
+
+    const LONG: &str = "A very long explanation that goes on and on about what this setting does, much too long to fit beside the controls on the right of the row";
+
+    fn draw(h: &mut Harness, on: &mut bool, width: f32) {
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                ui.set_max_width(width);
+                section(ui, None, |s| {
+                    s.row("Label", Some(LONG), |ui| {
+                        toggle(ui, on);
+                        quiet_button(ui, None, "Remove");
+                    });
+                });
+            });
+        }
+    }
+
+    fn hint_right(h: &Harness) -> f32 {
+        h.texts
+            .iter()
+            .filter(|(t, _)| t.starts_with("A very long"))
+            .map(|(_, r)| r.right())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn a_long_hint_stops_before_the_controls() {
+        let mut h = Harness::new();
+        let mut on = false;
+        for width in [600.0, 700.0, 900.0] {
+            draw(&mut h, &mut on, width);
+            let remove = h.at("Remove", 0).expect("the button is drawn");
+            let hint = hint_right(&h);
+            assert!(hint > 0.0, "the hint is drawn at {width}");
+            assert!(
+                hint <= remove.left(),
+                "hint ends at {hint} but the button starts at {}",
+                remove.left()
+            );
+        }
+    }
+
+    #[test]
+    fn a_short_hint_is_shown_in_full() {
+        let mut h = Harness::new();
+        let mut on = false;
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                section(ui, None, |s| {
+                    s.row("Label", Some("Short hint"), |ui| {
+                        toggle(ui, &mut on);
+                    });
+                });
+            });
+        }
+        assert!(h.has("Label"));
+        assert!(h.has("Short hint"));
+    }
+
+    #[test]
+    fn rows_without_a_hint_keep_their_label_and_controls() {
+        let mut h = Harness::new();
+        let mut on = false;
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                section(ui, None, |s| {
+                    s.row("Only a label", None, |ui| {
+                        quiet_button(ui, None, "Go");
+                    });
+                });
+            });
+        }
+        let label = h.at("Only a label", 0).unwrap();
+        let go = h.at("Go", 0).unwrap();
+        assert!(label.right() < go.left());
+        assert!((label.center().y - go.center().y).abs() < 6.0);
+        let _ = &mut on;
+    }
+
+    #[test]
+    fn a_long_value_in_the_controls_leaves_the_label_and_hint_alone() {
+        let path = "C:\\Users\\someone\\AppData\\Local\\Temp\\a\\very\\long\\folder\\name\\that\\never\\ends\\clips";
+        for width in [640.0, 760.0, 900.0] {
+            let mut h = Harness::new().sized(width, 400.0);
+            for _ in 0..3 {
+                h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                    section(ui, None, |s| {
+                        s.row("Clips folder", Some("Where saved clips go"), |ui| {
+                            quiet_button(ui, None, "Open");
+                            ui.add(egui::Label::new(path).truncate());
+                        });
+                    });
+                });
+            }
+            let label = h.at("Clips folder", 0).expect("the label is drawn");
+            let hint = h
+                .at("Where saved clips go", 0)
+                .expect("the hint is shown in full");
+            let value = h
+                .texts
+                .iter()
+                .find(|(t, _)| t.starts_with("C:\\Users"))
+                .map(|(_, r)| *r)
+                .expect("the value is drawn");
+            assert!(
+                label.right().max(hint.right()) < value.left(),
+                "text ends at {} but the value starts at {} at {width}",
+                label.right().max(hint.right()),
+                value.left()
+            );
+        }
     }
 }

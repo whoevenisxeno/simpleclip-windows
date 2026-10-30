@@ -11,7 +11,7 @@ mod parent;
 mod proc;
 mod r6;
 
-use engine::{describe_kills, Engine, Game};
+use engine::{describe_kills, Engine, Event, Game};
 use sc_core::addon::{self, EventsStatus};
 use sc_core::config::{Config, EventsSettings};
 use std::path::PathBuf;
@@ -107,7 +107,7 @@ fn read_settings(path: &Option<PathBuf>, previous: &EventsSettings) -> EventsSet
         .unwrap_or_else(|| previous.clone())
 }
 
-fn spawn_state_feed(port: u16, tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
+fn spawn_state_feed(port: u16, tx: mpsc::Sender<Event>, shared: Arc<Shared>) {
     std::thread::spawn(move || match cs2::bind(port) {
         Ok(listener) => {
             let mut cs2_tracker = cs2::Tracker::default();
@@ -120,7 +120,7 @@ fn spawn_state_feed(port: u16, tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared
                             .store(addon::now_secs(), Ordering::Relaxed);
                     }
                     if let Some(kills) = cs2_tracker.feed(&p) {
-                        let _ = tx.send((Game::Cs2, kills));
+                        let _ = tx.send(Event::Kill(Game::Cs2, kills));
                     }
                 }
                 if let Ok(p) = serde_json::from_slice::<dota::Payload>(&body) {
@@ -130,7 +130,7 @@ fn spawn_state_feed(port: u16, tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared
                             .store(addon::now_secs(), Ordering::Relaxed);
                     }
                     if let Some(kills) = dota_tracker.feed(&p, Instant::now()) {
-                        let _ = tx.send((Game::Dota2, kills));
+                        let _ = tx.send(Event::Kill(Game::Dota2, kills));
                     }
                 }
             });
@@ -142,7 +142,7 @@ fn spawn_state_feed(port: u16, tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared
     });
 }
 
-fn spawn_league(tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
+fn spawn_league(tx: mpsc::Sender<Event>, shared: Arc<Shared>) {
     std::thread::spawn(move || {
         let mut tracker = league::Tracker::default();
         loop {
@@ -156,7 +156,7 @@ fn spawn_league(tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
                 Some(snapshot) => {
                     shared.league_in_game.store(true, Ordering::Relaxed);
                     if let Some(kills) = tracker.feed(&snapshot.me, &snapshot.events) {
-                        let _ = tx.send((Game::League, kills));
+                        let _ = tx.send(Event::Kill(Game::League, kills));
                     }
                     std::thread::sleep(Duration::from_secs(2));
                 }
@@ -171,13 +171,14 @@ fn spawn_league(tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
 }
 
 #[cfg(windows)]
-fn spawn_r6(tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
+fn spawn_r6(tx: mpsc::Sender<Event>, shared: Arc<Shared>) {
     std::thread::spawn(move || {
         let reader = ocr::Reader::new();
         if reader.is_none() {
             shared.ocr_missing.store(true, Ordering::Relaxed);
         }
         let mut tracker = r6::Tracker::default();
+        let mut team_tracker = r6::Tracker::default();
         let mut checked = Instant::now() - Duration::from_secs(60);
         loop {
             let Some(reader) = reader.as_ref() else {
@@ -202,12 +203,22 @@ fn spawn_r6(tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
                 continue;
             }
             match ipc::grab_region(r6::REGION) {
-                Ok((w, h, gray)) => {
+                Ok(grab) => {
                     shared.r6_reading.store(true, Ordering::Relaxed);
-                    if let Some(lines) = reader.read(&gray, w, h) {
-                        let reading = r6::read_feed(&lines, w as f32);
-                        if let Some(kills) = tracker.feed(reading.kills, Instant::now()) {
-                            let _ = tx.send((Game::R6, kills));
+                    let (w, h) = (grab.width, grab.height);
+                    if let Some(lines) = reader.read(&grab.gray, w, h) {
+                        let planes = grab.tint.as_deref().map(|tint| r6::Planes {
+                            tint,
+                            width: w,
+                            height: h,
+                        });
+                        let reading = r6::read_feed(&lines, w as f32, planes.as_ref());
+                        let now = Instant::now();
+                        if let Some(kills) = tracker.feed(reading.kills, now) {
+                            let _ = tx.send(Event::Kill(Game::R6, kills));
+                        }
+                        if team_tracker.feed(reading.team_kills, now).is_some() {
+                            let _ = tx.send(Event::TeamKill(Game::R6));
                         }
                     }
                     std::thread::sleep(Duration::from_millis(350));
@@ -222,7 +233,7 @@ fn spawn_r6(tx: mpsc::Sender<(Game, u32)>, shared: Arc<Shared>) {
 }
 
 #[cfg(not(windows))]
-fn spawn_r6(_tx: mpsc::Sender<(Game, u32)>, _shared: Arc<Shared>) {}
+fn spawn_r6(_tx: mpsc::Sender<Event>, _shared: Arc<Shared>) {}
 
 fn run(options: Options) {
     let Some(dir) = options.dir.clone().or_else(addon::events_dir) else {
@@ -236,7 +247,7 @@ fn run(options: Options) {
     let port = options.port;
     let mut settings = read_settings(&config_path, &EventsSettings::default());
     let shared = Arc::new(Shared::default());
-    let (tx, rx) = mpsc::channel::<(Game, u32)>();
+    let (tx, rx) = mpsc::channel::<Event>();
 
     spawn_state_feed(port, tx.clone(), shared.clone());
     spawn_league(tx.clone(), shared.clone());
@@ -249,7 +260,17 @@ fn run(options: Options) {
     let (mut last_reload, mut last_cfg, mut last_status) = (long_ago, long_ago, long_ago);
     loop {
         match rx.recv_timeout(Duration::from_millis(250)) {
-            Ok((game, kills)) => engine.kill(game, kills, Instant::now()),
+            Ok(Event::Kill(game, kills)) => engine.kill(game, kills, Instant::now()),
+            Ok(Event::TeamKill(game)) => {
+                if let Some(out) = engine.team_kill(game) {
+                    let what = format!("Team kill in {}", out.game.name());
+                    last_event = Some(match out.result {
+                        Ok(()) => format!("{what}, test notification shown (not counted)"),
+                        Err(e) => format!("{what}, could not show the test notification: {e}"),
+                    });
+                    last_status = long_ago;
+                }
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -536,7 +557,7 @@ mod end_to_end {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let shared = Arc::new(Shared::default());
-        let (tx, rx) = mpsc::channel::<(Game, u32)>();
+        let (tx, rx) = mpsc::channel::<Event>();
         spawn_state_feed(port, tx, shared.clone());
         std::thread::sleep(Duration::from_millis(200));
         for body in [
@@ -556,10 +577,10 @@ mod end_to_end {
         assert_eq!(
             seen,
             vec![
-                (Game::Cs2, 1),
-                (Game::Cs2, 2),
-                (Game::Dota2, 1),
-                (Game::Dota2, 2)
+                Event::Kill(Game::Cs2, 1),
+                Event::Kill(Game::Cs2, 2),
+                Event::Kill(Game::Dota2, 1),
+                Event::Kill(Game::Dota2, 2)
             ]
         );
         assert!(shared.cs2_last_payload.load(Ordering::Relaxed) > 0);
@@ -574,8 +595,10 @@ mod end_to_end {
         };
         let mut engine = Engine::new(settings, Count(saves.clone()));
         let t0 = Instant::now();
-        for (game, kills) in seen {
-            engine.kill(game, kills, t0);
+        for event in seen {
+            if let Event::Kill(game, kills) = event {
+                engine.kill(game, kills, t0);
+            }
         }
         let out = engine.tick(t0 + Duration::from_secs(5)).unwrap();
         assert_eq!(out.kills, 2);

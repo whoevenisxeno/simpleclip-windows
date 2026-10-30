@@ -152,7 +152,7 @@ impl Daemon {
         Err("screenshots aren't supported on this platform yet".into())
     }
 
-    pub fn grab_region(&self, region: [f32; 4]) -> Result<(u32, u32, Vec<u8>), String> {
+    pub fn grab_region(&self, region: [f32; 4]) -> Result<(u32, u32, Vec<u8>, Vec<u8>), String> {
         #[cfg(windows)]
         {
             let guard = self.pipeline.lock().unwrap();

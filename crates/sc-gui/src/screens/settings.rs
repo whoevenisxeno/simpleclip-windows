@@ -121,8 +121,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
     }
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 28.0;
-        ui.allocate_ui_with_layout(vec2(168.0, height), Layout::top_down(Align::Min), |ui| {
-            ui.spacing_mut().item_spacing.y = 3.0;
+        rail(ui, height, |ui| {
             for (tab, label, _) in TABS {
                 let selected = !searching && app.settings.tab == tab;
                 if rail_item(ui, label, selected, tab_icon(tab)).clicked() {
@@ -141,6 +140,19 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
             }
         });
         ui.vertical(|ui| pane_scroll(app, ui, height, searching));
+    });
+}
+
+fn rail(ui: &mut Ui, height: f32, add: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(vec2(168.0, height), Layout::top_down(Align::Min), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("settings-rail")
+            .max_height(height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
+                add(ui);
+            });
     });
 }
 
@@ -917,9 +929,7 @@ fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui
     section(ui, None, |s| {
         s.row(
             "Game events",
-            Some(
-                "Experimental. Saves a clip by itself on a multi-kill in Rainbow Six Siege, CS2, Dota 2 or League of Legends",
-            ),
+            Some("Experimental. Saves a clip on its own after a multi-kill"),
             |ui| match (&busy, installed) {
                 (Some(Busy::Working { label, percent }), _) => {
                     let text = match percent {
@@ -941,62 +951,68 @@ fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui
                 }
             },
         );
-        if installed && busy.is_none() {
-            s.row("Rainbow Six Siege", Some(&r6_line), |ui| {
-                widgets::toggle(ui, &mut events.r6);
-            });
-            s.row("Counter-Strike 2", Some(&cs2_line), |ui| {
-                widgets::toggle(ui, &mut events.cs2);
-            });
-            s.row("Dota 2", Some(&dota_line), |ui| {
-                widgets::toggle(ui, &mut events.dota2);
-            });
-            s.row("League of Legends", Some(&league_line), |ui| {
-                widgets::toggle(ui, &mut events.league);
-            });
-            s.row(
-                "Save a clip at",
-                Some("The smallest streak that counts"),
-                |ui| {
-                    widgets::segmented(
-                        ui,
-                        &mut events.min_kills,
-                        &[
-                            (1, "Any kill"),
-                            (2, "Double"),
-                            (3, "Triple"),
-                            (4, "Quadra"),
-                            (5, "Penta"),
-                        ],
-                    );
-                },
-            );
-            s.row(
-                "Clip length",
-                Some("How much before the moment is saved"),
-                |ui| {
-                    widgets::segmented(
-                        ui,
-                        &mut events.save_secs,
-                        &[
-                            (10, "10 s"),
-                            (15, "15 s"),
-                            (20, "20 s"),
-                            (30, "30 s"),
-                            (60, "1 min"),
-                        ],
-                    );
-                },
-            );
-            s.row(
-                "Test mode",
-                Some("Shows a notification instead of saving a clip, to see what it detects"),
-                |ui| {
-                    widgets::toggle(ui, &mut events.test_mode);
-                },
-            );
-        }
     });
+    if installed && busy.is_none() {
+        ui.add_enabled_ui(events.enabled, |ui| {
+            section(ui, Some("Games"), |s| {
+                s.row("Rainbow Six Siege", Some(&r6_line), |ui| {
+                    widgets::toggle(ui, &mut events.r6);
+                });
+                s.row("Counter-Strike 2", Some(&cs2_line), |ui| {
+                    widgets::toggle(ui, &mut events.cs2);
+                });
+                s.row("Dota 2", Some(&dota_line), |ui| {
+                    widgets::toggle(ui, &mut events.dota2);
+                });
+                s.row("League of Legends", Some(&league_line), |ui| {
+                    widgets::toggle(ui, &mut events.league);
+                });
+            });
+            section(ui, Some("Saving"), |s| {
+                s.row(
+                    "Save a clip at",
+                    Some("The smallest streak that counts"),
+                    |ui| {
+                        widgets::segmented(
+                            ui,
+                            &mut events.min_kills,
+                            &[
+                                (1, "Any kill"),
+                                (2, "Double"),
+                                (3, "Triple"),
+                                (4, "Quadra"),
+                                (5, "Penta"),
+                            ],
+                        );
+                    },
+                );
+                s.row(
+                    "Clip length",
+                    Some("How much before the moment is saved"),
+                    |ui| {
+                        widgets::segmented(
+                            ui,
+                            &mut events.save_secs,
+                            &[
+                                (10, "10 s"),
+                                (15, "15 s"),
+                                (20, "20 s"),
+                                (30, "30 s"),
+                                (60, "1 min"),
+                            ],
+                        );
+                    },
+                );
+                s.row(
+                    "Test mode",
+                    Some("Shows a notification instead of saving a clip"),
+                    |ui| {
+                        widgets::toggle(ui, &mut events.test_mode);
+                    },
+                );
+            });
+        });
+    }
     if ask {
         addon.asking = true;
     }
@@ -1755,96 +1771,107 @@ fn remove_duplicates(app: &mut ScApp) {
 
 fn dupes_dialog(app: &mut ScApp, ctx: &egui::Context) -> Option<bool> {
     let plan = app.settings.dupes.clone()?;
-    let p = crate::theme::pal(ctx);
-    let removing = plan.remove.len();
-    let staying: usize = plan.groups.iter().map(|g| g.keep.len()).sum();
     let mut answer = None;
     let closed = crate::screens::sheet::modal(ctx, "dupes-dialog", 600.0, |ui| {
-        ui.label(
-            RichText::new("Remove duplicate clips?")
-                .font(egui::FontId::new(20.0, theme::semibold()))
-                .color(p.text),
-        );
-        ui.add_space(2.0);
-        widgets::secondary(
-            ui,
-            "These are extra versions of clips you also have. For each clip the best version stays: compressed, then trimmed, then the original.",
-        );
-        ui.add_space(14.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            let w = ((ui.available_width() - 20.0) / 3.0).floor();
-            stat_tile(
-                ui,
-                w,
-                "Will be removed",
-                &format!(
-                    "{removing} {}",
-                    if removing == 1 { "clip" } else { "clips" }
-                ),
-                p.red,
-            );
-            stat_tile(
-                ui,
-                w,
-                "Space freed",
-                &gallery::size_label(plan.bytes()),
-                p.green,
-            );
-            stat_tile(
-                ui,
-                w,
-                "Staying",
-                &format!("{staying} {}", if staying == 1 { "clip" } else { "clips" }),
-                p.text,
-            );
-        });
-        ui.add_space(14.0);
-        egui::ScrollArea::vertical()
-            .id_salt("dupes-list")
-            .max_height(300.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                for group in &plan.groups {
-                    egui::Frame::none()
-                        .fill(p.card_hi)
-                        .rounding(egui::Rounding::same(theme::radius::CONTROL))
-                        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.spacing_mut().item_spacing.y = 8.0;
-                            for item in &group.keep {
-                                dupe_row(ui, app, item, "Keeps", p.green, false);
-                            }
-                            for item in &group.remove {
-                                dupe_row(ui, app, item, "Removes", p.red, true);
-                            }
-                        });
-                }
-            });
-        ui.add_space(12.0);
-        widgets::secondary(
-            ui,
-            "They go to the Recycle Bin, so you can still restore them from there.",
-        );
-        ui.add_space(12.0);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let label = format!(
-                "Move {removing} {} to the Recycle Bin",
-                if removing == 1 { "clip" } else { "clips" }
-            );
-            if widgets::primary_button(ui, None, &label).clicked() {
-                answer = Some(true);
-            }
-            if widgets::quiet_button(ui, None, "Cancel").clicked() {
-                answer = Some(false);
-            }
+        answer = dupes_body(ui, &plan, &mut |ui, item, tag, color, muted| {
+            dupe_row(ui, app, item, tag, color, muted)
         });
     });
     if closed && answer.is_none() {
         answer = Some(false);
     }
+    answer
+}
+
+type DupeRow<'a> = dyn FnMut(&mut Ui, &crate::dupes::Item, &str, egui::Color32, bool) + 'a;
+
+fn dupes_body(ui: &mut Ui, plan: &crate::dupes::Plan, row: &mut DupeRow) -> Option<bool> {
+    let p = pal_ui(ui);
+    let removing = plan.remove.len();
+    let staying: usize = plan.groups.iter().map(|g| g.keep.len()).sum();
+    let list = (ui.ctx().screen_rect().height() - 340.0).clamp(90.0, 300.0);
+    let mut answer = None;
+    ui.label(
+        RichText::new("Remove duplicate clips?")
+            .font(egui::FontId::new(20.0, theme::semibold()))
+            .color(p.text),
+    );
+    ui.add_space(2.0);
+    widgets::secondary(
+        ui,
+        "These are extra versions of clips you also have. For each clip the best version stays: compressed, then trimmed, then the original.",
+    );
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let w = ((ui.available_width() - 20.0) / 3.0).floor();
+        stat_tile(
+            ui,
+            w,
+            "Will be removed",
+            &format!(
+                "{removing} {}",
+                if removing == 1 { "clip" } else { "clips" }
+            ),
+            p.red,
+        );
+        stat_tile(
+            ui,
+            w,
+            "Space freed",
+            &gallery::size_label(plan.bytes()),
+            p.green,
+        );
+        stat_tile(
+            ui,
+            w,
+            "Staying",
+            &format!("{staying} {}", if staying == 1 { "clip" } else { "clips" }),
+            p.text,
+        );
+    });
+    ui.add_space(14.0);
+    egui::ScrollArea::vertical()
+        .id_salt("dupes-list")
+        .max_height(list)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            for group in &plan.groups {
+                egui::Frame::none()
+                    .fill(p.card_hi)
+                    .rounding(egui::Rounding::same(theme::radius::CONTROL))
+                    .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        for item in &group.keep {
+                            row(ui, item, "Keeps", p.green, false);
+                        }
+                        for item in &group.remove {
+                            row(ui, item, "Removes", p.red, true);
+                        }
+                    });
+            }
+        });
+    ui.add_space(12.0);
+    widgets::secondary(
+        ui,
+        "They go to the Recycle Bin, so you can still restore them from there.",
+    );
+    ui.add_space(12.0);
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let label = format!(
+            "Move {removing} {} to the Recycle Bin",
+            if removing == 1 { "clip" } else { "clips" }
+        );
+        if widgets::primary_button(ui, None, &label).clicked() {
+            answer = Some(true);
+        }
+        if widgets::quiet_button(ui, None, "Cancel").clicked() {
+            answer = Some(false);
+        }
+    });
     answer
 }
 
@@ -2193,7 +2220,7 @@ mod addon_card_tests {
         ev.enabled = true;
         addon.pretend(Some("9.9.9"), Some(live("not-found", "waiting")));
         frames(&mut h, &mut ev, &mut addon);
-        assert!(h.has("Counter-Strike 2 was not found in your Steam folders"));
+        assert!(h.has("Not found in your Steam folders"));
         assert!(h.has("Waiting for a match"));
     }
 }
@@ -2288,7 +2315,7 @@ mod addon_test_mode_tests {
         addon.pretend(Some("9.9.9"), None);
         frames(&mut h, &mut ev, &mut addon);
         assert!(h.has("Test mode"));
-        assert!(h.has("Shows a notification instead of saving a clip, to see what it detects"));
+        assert!(h.has("Shows a notification instead of saving a clip"));
         assert!(!ev.test_mode);
     }
 
@@ -2311,5 +2338,87 @@ mod addon_test_mode_tests {
         let toggle_at = egui::pos2(h.right - 40.0, row.center().y);
         h.click(toggle_at, &mut |ui| addons_card(&mut ev, &mut addon, ui));
         assert!(!ev.test_mode);
+    }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+    use crate::testkit::Harness;
+
+    fn plan() -> crate::dupes::Plan {
+        let item = |name: &str, mb: u64| crate::dupes::Item {
+            path: std::path::PathBuf::from(format!("{name}.mp4")),
+            bytes: mb * 1_048_576,
+        };
+        crate::dupes::plan(vec![
+            item("sc-apex-20261026-193000", 52),
+            item("sc-apex-20261026-193000-trim", 14),
+            item("sc-apex-20261026-193000-trim-10mb", 9),
+            item("sc-valorant-20261027-211500", 61),
+            item("sc-valorant-20261027-211500-25mb", 24),
+            item("sc-cs2-20261026-180000", 48),
+            item("sc-cs2-20261026-180000-trim", 12),
+        ])
+    }
+
+    #[test]
+    fn the_duplicates_dialog_keeps_its_title_and_buttons_inside_the_window() {
+        let found = plan();
+        for height in [470.0, 640.0, 820.0] {
+            let mut h = Harness::new().sized(1080.0, height);
+            for _ in 0..4 {
+                h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                    crate::screens::sheet::modal(ui.ctx(), "dupes-dialog", 600.0, |ui| {
+                        dupes_body(ui, &found, &mut |ui, item, _, _, _| {
+                            let w = ui.available_width();
+                            ui.allocate_ui(vec2(w, 36.0), |ui| {
+                                ui.label(item.path.display().to_string());
+                            });
+                        });
+                    });
+                });
+            }
+            let title = h
+                .at("Remove duplicate clips?", 0)
+                .expect("the title is drawn");
+            let cancel = h.at("Cancel", 0).expect("the buttons are drawn");
+            assert!(
+                title.top() >= 0.0,
+                "the title starts at {} at {height}",
+                title.top()
+            );
+            assert!(
+                cancel.bottom() <= height,
+                "the buttons end at {} in a window {height} tall",
+                cancel.bottom()
+            );
+        }
+    }
+
+    #[test]
+    fn a_short_window_keeps_the_settings_rail_inside_its_height() {
+        let mut h = Harness::new().sized(1000.0, 470.0);
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                rail(ui, 300.0, |ui| {
+                    for (tab, label, _) in TABS {
+                        rail_item(ui, label, false, tab_icon(tab));
+                    }
+                    rail_item(ui, "Setup guide", false, Icon::Star);
+                });
+            });
+        }
+        let bottom = h.at("Capture", 0).expect("the first tab is drawn").top() + 300.0;
+        for (_, label, _) in TABS {
+            if let Some(r) = h.at(label, 0) {
+                assert!(
+                    r.top() < bottom,
+                    "{label} starts at {} below {bottom}",
+                    r.top()
+                );
+            }
+        }
+        assert!(!h.has("Setup guide"));
     }
 }

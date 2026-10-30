@@ -10,29 +10,54 @@ pub struct WizardState {
     pub step: usize,
 }
 
-pub fn view(app: &mut ScApp, ui: &mut Ui) {
-    let p = pal_ui(ui);
-    app.devices.ensure(&app.link);
+const FOOTER: f32 = 64.0;
 
+pub fn view(app: &mut ScApp, ui: &mut Ui) {
+    app.devices.ensure(&app.link);
+    let step = app.wizard.step;
+    frame(
+        ui,
+        step,
+        app,
+        |app, ui| match app.wizard.step {
+            0 => welcome(ui),
+            1 => look(app, ui),
+            2 => recording(app, ui),
+            3 => shortcut(app, ui),
+            _ => ready(app, ui),
+        },
+        buttons,
+    );
+}
+
+fn frame<T>(
+    ui: &mut Ui,
+    step: usize,
+    state: &mut T,
+    body: impl FnOnce(&mut T, &mut Ui),
+    footer: impl FnOnce(&mut T, &mut Ui),
+) {
     let avail = ui.available_size();
     let w = 600.0_f32.min(avail.x - 48.0);
     ui.vertical_centered(|ui| {
         ui.add_space(((avail.y - 520.0) / 2.0).clamp(18.0, 80.0));
-        ui.allocate_ui_with_layout(vec2(w, 520.0), Layout::top_down(Align::Min), |ui| {
-            progress(ui, app.wizard.step);
+        let remaining = ui.available_height();
+        ui.allocate_ui_with_layout(vec2(w, remaining), Layout::top_down(Align::Min), |ui| {
+            let room = (remaining - FOOTER - 26.0).max(120.0);
+            egui::ScrollArea::vertical()
+                .id_salt(("wizard-step", step))
+                .max_height(room)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.set_width(w);
+                    progress(ui, step);
+                    ui.add_space(26.0);
+                    body(state, ui);
+                });
             ui.add_space(26.0);
-            match app.wizard.step {
-                0 => welcome(ui),
-                1 => look(app, ui),
-                2 => recording(app, ui),
-                3 => shortcut(app, ui),
-                _ => ready(app, ui),
-            }
-            ui.add_space(26.0);
-            buttons(app, ui);
+            footer(state, ui);
         });
     });
-    let _ = p;
 }
 
 fn progress(ui: &mut Ui, step: usize) {
@@ -40,17 +65,21 @@ fn progress(ui: &mut Ui, step: usize) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         for i in 0..STEPS {
-            let (w, color) = if i == step {
-                (26.0, p.accent)
-            } else if i < step {
-                (8.0, p.accent.linear_multiply(0.5))
-            } else {
-                (8.0, p.card_hi)
-            };
+            let (w, color) = dot(&p, i, step);
             let (rect, _) = ui.allocate_exact_size(vec2(w, 8.0), Sense::hover());
             ui.painter().rect_filled(rect, 4.0, color);
         }
     });
+}
+
+fn dot(p: &theme::Palette, i: usize, step: usize) -> (f32, Color32) {
+    if i == step {
+        (26.0, p.accent)
+    } else if i < step {
+        (8.0, p.accent.linear_multiply(0.5))
+    } else {
+        (8.0, p.line)
+    }
 }
 
 fn heading(ui: &mut Ui, title: &str, sub: &str) {
@@ -266,5 +295,87 @@ fn finish(app: &mut ScApp) {
             app.toast("You’re all set", ToastKind::Ok);
         }
         Err(e) => app.toast(format!("Couldn’t save settings: {e}"), ToastKind::Error),
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use crate::testkit::Harness;
+
+    fn show(h: &mut Harness, lines: usize) {
+        for _ in 0..3 {
+            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+                frame(
+                    ui,
+                    2,
+                    &mut (),
+                    |_, ui| {
+                        for i in 0..lines {
+                            ui.label(format!("Line {i}"));
+                            ui.add_space(14.0);
+                        }
+                    },
+                    |_, ui| {
+                        widgets::primary_button(ui, None, "Continue");
+                    },
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn the_continue_button_stays_inside_the_window_when_the_page_is_tall() {
+        for height in [500.0, 640.0, 820.0] {
+            let mut h = Harness::new().sized(1000.0, height);
+            show(&mut h, 60);
+            let button = h.at("Continue", 0).expect("the button is drawn");
+            assert!(
+                button.bottom() <= height,
+                "the button ends at {} in a window {height} tall",
+                button.bottom()
+            );
+            assert!(button.top() >= 0.0);
+        }
+    }
+
+    #[test]
+    fn a_short_page_keeps_the_button_just_below_it() {
+        let mut h = Harness::new().sized(1000.0, 900.0);
+        show(&mut h, 3);
+        let last = h.at("Line 2", 0).unwrap();
+        let button = h.at("Continue", 0).unwrap();
+        assert!(button.top() > last.bottom());
+        assert!(button.top() - last.bottom() < 120.0);
+        assert!(button.bottom() <= 900.0);
+    }
+
+    #[test]
+    fn a_tall_page_shows_its_start_and_clips_the_rest_behind_a_scroll_area() {
+        let mut h = Harness::new().sized(1000.0, 600.0);
+        show(&mut h, 60);
+        assert!(h.has("Line 0"));
+        assert!(h.has("Line 1"));
+        assert!(!h.has("Line 59"));
+        assert!(h.at("Continue", 0).unwrap().bottom() <= 600.0);
+    }
+
+    #[test]
+    fn the_steps_still_to_come_stand_out_from_the_background() {
+        for p in [theme::LIGHT, theme::DARK] {
+            let (_, color) = dot(&p, 4, 1);
+            let gap = color
+                .to_array()
+                .iter()
+                .zip(p.bg.to_array())
+                .take(3)
+                .map(|(a, b)| a.abs_diff(b))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                gap >= 24,
+                "a later step is only {gap} away from the background"
+            );
+        }
     }
 }

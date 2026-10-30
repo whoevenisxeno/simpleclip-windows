@@ -161,6 +161,13 @@ pub fn recent_clips(app: &mut ScApp, n: usize) -> Vec<Clip> {
         .collect()
 }
 
+pub fn stats(app: &mut ScApp) -> crate::stats::Stats {
+    let dirs = library_dirs(app);
+    app.gallery.refresh(&dirs, &app.library);
+    let off = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+    crate::stats::Stats::compute(&app.gallery.clips, &app.library, SystemTime::now(), off)
+}
+
 fn game_of(path: &Path, _root: &Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     if !(stem == "sc" || stem.starts_with("sc-")) {

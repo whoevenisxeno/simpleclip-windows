@@ -23,6 +23,12 @@ impl Game {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    Kill(Game, u32),
+    TeamKill(Game),
+}
+
 pub trait Saver {
     fn save(&mut self, secs: u32) -> Result<(), String>;
     fn announce(&mut self, title: &str, line: &str) -> Result<(), String>;
@@ -34,6 +40,7 @@ pub struct Outcome {
     pub kills: u32,
     pub result: Result<(), String>,
     pub test: bool,
+    pub team_kill: bool,
 }
 
 struct Pending {
@@ -70,15 +77,37 @@ impl<S: Saver> Engine<S> {
         self.pending.is_some()
     }
 
-    pub fn kill(&mut self, game: Game, kills: u32, now: Instant) {
+    fn wants(&self, game: Game) -> bool {
         let s = &self.settings;
-        let wanted = match game {
-            Game::Cs2 => s.cs2,
-            Game::League => s.league,
-            Game::R6 => s.r6,
-            Game::Dota2 => s.dota2,
-        };
-        if !s.enabled || !wanted || kills < s.min_kills {
+        s.enabled
+            && match game {
+                Game::Cs2 => s.cs2,
+                Game::League => s.league,
+                Game::R6 => s.r6,
+                Game::Dota2 => s.dota2,
+            }
+    }
+
+    pub fn team_kill(&mut self, game: Game) -> Option<Outcome> {
+        if !self.wants(game) || !self.settings.test_mode {
+            return None;
+        }
+        let line = format!(
+            "Team kill in {}. Not counted as a kill, so no clip would be saved.",
+            game.name()
+        );
+        let result = self.saver.announce("Game events test", &line);
+        Some(Outcome {
+            game,
+            kills: 0,
+            result,
+            test: true,
+            team_kill: true,
+        })
+    }
+
+    pub fn kill(&mut self, game: Game, kills: u32, now: Instant) {
+        if !self.wants(game) || kills < self.settings.min_kills {
             return;
         }
         let first = self.pending.as_ref().map_or(now, |p| p.first);
@@ -112,6 +141,7 @@ impl<S: Saver> Engine<S> {
             kills: p.kills,
             result,
             test,
+            team_kill: false,
         })
     }
 }
@@ -348,6 +378,46 @@ mod tests {
         e.kill(Game::Cs2, 2, t0);
         let out = e.tick(t0 + secs(5)).unwrap();
         assert!(out.result.is_err());
+    }
+
+    #[test]
+    fn a_team_kill_is_shown_in_test_mode_but_never_counted_or_saved() {
+        let mut rec = Recorder::default();
+        let t0 = Instant::now();
+        let mut s = on();
+        s.test_mode = true;
+        let mut e = Engine::new(s, &mut rec);
+        let out = e.team_kill(Game::R6).unwrap();
+        assert!(out.team_kill && out.test);
+        assert_eq!((out.game, out.kills, out.result), (Game::R6, 0, Ok(())));
+        assert!(!e.has_pending());
+        e.kill(Game::R6, 2, t0);
+        let counted = e.tick(t0 + secs(5)).unwrap();
+        assert!(!counted.team_kill);
+        assert_eq!(counted.kills, 2);
+        assert!(rec.saves.is_empty());
+        assert_eq!(rec.popups.len(), 2);
+        assert!(rec.popups[0].1.contains("Team kill in Rainbow Six Siege"));
+        assert!(rec.popups[0].1.contains("Not counted"));
+    }
+
+    #[test]
+    fn a_team_kill_does_nothing_outside_test_mode_or_for_a_switched_off_game() {
+        let mut rec = Recorder::default();
+        let mut e = Engine::new(on(), &mut rec);
+        assert!(e.team_kill(Game::R6).is_none());
+        let mut s = on();
+        s.test_mode = true;
+        s.r6 = false;
+        e.set_settings(s);
+        assert!(e.team_kill(Game::R6).is_none());
+        assert!(e.team_kill(Game::Cs2).is_some());
+        e.set_settings(EventsSettings {
+            test_mode: true,
+            ..Default::default()
+        });
+        assert!(e.team_kill(Game::Cs2).is_none());
+        assert!(rec.saves.is_empty());
     }
 
     #[test]

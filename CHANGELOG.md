@@ -2,6 +2,22 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.9.0
+
+### Added
+- Home has a stats section at the bottom: clips saved, screenshots, space used, your day streak and best streak, a chart of the last 14 days, your top games, clips this week, your busiest day, the time of day you usually clip, and how many clips you trimmed or compressed. Its heading peeks in at the bottom of the window, so scroll down to see it. It is all counted from the files in your clips folder.
+
+### Fixed
+- In Settings > Storage a long clips folder path was drawn over the "Clips folder" label. The path now stops before the label.
+- In a short window, the Remove duplicates dialog lost its title and its buttons off the edges, and the Settings tab list cut off System and Setup guide. The dialog's list now shrinks to fit and the tab list scrolls.
+- In the light theme the dots for the setup guide steps still to come were nearly invisible. They now stand out.
+- In the setup guide, the screen picker made the "What should it record?" step taller than the window and pushed Continue off the bottom edge. The step now scrolls and Back and Continue stay at the bottom.
+- On the Add-ons page the Game events description ran underneath the Remove button and the switch. Descriptions in every Settings row now stop before the controls (and show in full when you hover them), so long ones can no longer overlap.
+
+### Changed
+- Game events in Rainbow Six Siege no longer counts team kills as kills. It tells them apart by the colour of the victim's name tag in the kill feed (teammates share your purple, enemies are olive), and when the colour is not clear, for example while a line fades in, it waits instead of guessing. In test mode a team kill shows its own notification, "Team kill in Rainbow Six Siege. Not counted as a kill, so no clip would be saved."
+- The Add-ons page is tidier: the Game events switch is on its own, the games sit under Games, and Save a clip at, Clip length and Test mode sit under Saving. Those two groups grey out while Game events is off. A game that is not installed now reads "Not found in your Steam folders".
+
 ## 6.8.5
 
 ### Added

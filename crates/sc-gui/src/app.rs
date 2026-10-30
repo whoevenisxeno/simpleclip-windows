@@ -151,6 +151,7 @@ impl ScApp {
             cfg.audio.desktop_device.clear();
             cfg.audio.mic_device = None;
             cfg.hotkeys = Default::default();
+            cfg.events.enabled = true;
             cfg.hotkeys.extra = vec![
                 sc_core::config::ExtraHotkey {
                     keys: "CTRL+F1".into(),
@@ -635,6 +636,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("settings-look", true),
     ("settings-system", true),
     ("settings-addon", true),
+    ("settings-addon-on", true),
     ("settings-search", true),
     ("settings-dupes", true),
     ("look-accent", true),
@@ -791,6 +793,11 @@ impl ScApp {
                     "settings-card" => self.settings.tab = Tab::SaveCard,
                     "settings-look" | "look-accent" | "look-sand" => self.settings.tab = Tab::Look,
                     "settings-system" => self.settings.tab = Tab::System,
+                    "settings-addon-on" => {
+                        self.settings.tab = Tab::Addons;
+                        #[cfg(windows)]
+                        self.settings.addon.demo();
+                    }
                     "settings-addon" => {
                         self.settings.tab = Tab::Addons;
                         #[cfg(windows)]

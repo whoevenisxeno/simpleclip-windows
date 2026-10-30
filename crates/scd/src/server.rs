@@ -64,10 +64,11 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             Err(message) => Response::Error { message },
         },
         Request::GrabRegion { x0, y0, x1, y1 } => match daemon.grab_region([x0, y0, x1, y1]) {
-            Ok((width, height, gray)) => Response::Region {
+            Ok((width, height, gray, tint)) => Response::Region {
                 width,
                 height,
                 gray: sc_core::b64::encode(&gray),
+                tint: Some(sc_core::b64::encode(&tint)),
             },
             Err(message) => Response::Error { message },
         },

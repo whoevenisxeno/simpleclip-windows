@@ -67,10 +67,14 @@ pub struct Events {
     installed: Option<String>,
     status: Option<EventsStatus>,
     refreshed: Option<Instant>,
+    frozen: bool,
 }
 
 impl Events {
     pub fn refresh(&mut self) {
+        if self.frozen {
+            return;
+        }
         if self.refreshed.is_some_and(|t| t.elapsed() < REFRESH_EVERY) {
             return;
         }
@@ -86,6 +90,20 @@ impl Events {
         self.installed.as_deref()
     }
 
+    pub fn demo(&mut self) {
+        self.frozen = true;
+        self.installed = Some(env!("CARGO_PKG_VERSION").to_string());
+        self.status = Some(EventsStatus {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            cs2: "not-found".into(),
+            league: "waiting".into(),
+            r6: "waiting".into(),
+            dota2: "not-found".into(),
+            last_event: None,
+            updated: addon::now_secs(),
+        });
+    }
+
     #[cfg(test)]
     pub fn pretend(&mut self, version: Option<&str>, status: Option<EventsStatus>) {
         self.installed = version.map(str::to_string);
@@ -95,7 +113,7 @@ impl Events {
     pub fn status(&self) -> Option<&EventsStatus> {
         self.status
             .as_ref()
-            .filter(|s| addon::status_is_fresh(s, addon::now_secs()))
+            .filter(|s| self.frozen || addon::status_is_fresh(s, addon::now_secs()))
     }
 
     pub fn busy(&self) -> Option<Busy> {
@@ -245,7 +263,7 @@ pub fn cs2_text(status: Option<&EventsStatus>, wanted: bool) -> String {
         Some("waiting") => {
             "Ready. Start the game, or restart it once if it was already open".to_string()
         }
-        Some("not-found") => "Counter-Strike 2 was not found in your Steam folders".to_string(),
+        Some("not-found") => "Not found in your Steam folders".to_string(),
         Some("port-busy") => "Another program is using the port it needs".to_string(),
         Some(_) => "Off".to_string(),
     }
@@ -261,7 +279,7 @@ pub fn dota_text(status: Option<&EventsStatus>, wanted: bool) -> String {
         Some("waiting") => {
             "Ready. Start the game, or restart it once if it was already open".to_string()
         }
-        Some("not-found") => "Dota 2 was not found in your Steam folders".to_string(),
+        Some("not-found") => "Not found in your Steam folders".to_string(),
         Some("port-busy") => "Another program is using the port it needs".to_string(),
         Some(_) => "Off".to_string(),
     }
@@ -415,7 +433,7 @@ mod tests {
         assert_eq!(cs2_text(Some(&s), false), "Off");
         assert_eq!(cs2_text(None, true), "Starting…");
         s.cs2 = "not-found".into();
-        assert!(cs2_text(Some(&s), true).contains("not found"));
+        assert!(cs2_text(Some(&s), true).contains("Not found"));
         s.cs2 = "waiting".into();
         assert!(cs2_text(Some(&s), true).contains("restart it once"));
         s.cs2 = "port-busy".into();
@@ -440,7 +458,7 @@ mod tests {
         s.r6 = "waiting".into();
         assert!(r6_text(Some(&s), true).contains("Waiting for the game"));
         s.dota2 = "not-found".into();
-        assert!(dota_text(Some(&s), true).contains("not found"));
+        assert!(dota_text(Some(&s), true).contains("Not found"));
     }
 
     #[test]

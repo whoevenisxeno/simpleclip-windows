@@ -47,10 +47,14 @@ impl Reader {
         for line in result.Lines().ok()? {
             let mut words = Vec::new();
             for word in line.Words().ok()? {
-                let x = word.BoundingRect().ok()?.X / SCALE as f32;
+                let rect = word.BoundingRect().ok()?;
+                let k = SCALE as f32;
                 words.push(Word {
                     text: word.Text().ok()?.to_string(),
-                    x,
+                    x: rect.X / k,
+                    y: rect.Y / k,
+                    w: rect.Width / k,
+                    h: rect.Height / k,
                 });
             }
             lines.push(Line { words });
@@ -97,7 +101,7 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
-        read_feed(&lines, cw as f32)
+        read_feed(&lines, cw as f32, None)
     }
 
     #[test]
@@ -110,6 +114,7 @@ mod tests {
                 "kill-1",
                 Reading {
                     kills: 1,
+                    team_kills: 0,
                     deaths: 0,
                 },
             ),
@@ -117,6 +122,7 @@ mod tests {
                 "trade",
                 Reading {
                     kills: 1,
+                    team_kills: 0,
                     deaths: 1,
                 },
             ),
@@ -124,6 +130,7 @@ mod tests {
                 "death-1",
                 Reading {
                     kills: 0,
+                    team_kills: 0,
                     deaths: 1,
                 },
             ),
@@ -131,6 +138,7 @@ mod tests {
                 "death-2",
                 Reading {
                     kills: 0,
+                    team_kills: 0,
                     deaths: 1,
                 },
             ),
@@ -138,6 +146,7 @@ mod tests {
                 "menu",
                 Reading {
                     kills: 0,
+                    team_kills: 0,
                     deaths: 0,
                 },
             ),

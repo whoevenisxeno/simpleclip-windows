@@ -33,6 +33,10 @@ job and does not need an account.
   It goes through the Discord app on your PC, not over the network from SimpleClip, and it is on by
   default. Turn it off in Settings > System.
 - **Clip gallery.** Previews, search, and grouping by game, date, folder or bookmark.
+- **Your stats.** Scroll down on Home for clips saved, screenshots, space used, your day streak, a
+  chart of the last 14 days, your top games, your busiest day and the time you usually clip. Its
+  heading peeks in at the bottom of the window. Everything is counted from the files in your clips
+  folder, on your PC.
 - **Rename, folders, bookmarks, notes.** All inside the app. Bookmarks are labels you create and
   colour yourself. Nothing is ever bookmarked automatically.
 - **Edit with a live player and a timeline.** Open a clip and cut it exactly where you want. Split
