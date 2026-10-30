@@ -942,7 +942,7 @@ fn advanced(app: &mut ScApp, ui: &mut Ui) {
         {
             s.row(
                 "Check for updates",
-                Some("Looks on GitHub every 30 minutes for a newer version"),
+                Some("Looks on GitHub every 6 minutes for a newer version"),
                 |ui| {
                     widgets::toggle(ui, &mut app.cfg.general.update_check);
                 },

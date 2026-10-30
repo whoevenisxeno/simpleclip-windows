@@ -49,7 +49,7 @@ job and does not need an account.
   of the normal clip list and the Recent row on Home. You can also send them to a folder of your
   choice.
 - **Share a clip.** "Copy file" puts the clip on the clipboard, so pasting into Discord or a
-  chat attaches it. "Compress for Discord" makes a smaller copy that fits 8, 10, 25, 50, 100 or 500
+  chat attaches it. "Compress for Discord" makes a smaller copy that fits 8, 10, 20, 25, 50, 100 or 500
   MB, or any size from 1 to 500 MB, scaling the picture down only as far as it must. You can also
   cap the resolution (1080p down to 360p), cap the frame rate (60, 30 or 24) and leave the sound out,
   and the dialog says what the result will be before you start. The original stays. Right after you
@@ -66,7 +66,7 @@ job and does not need an account.
 - **Last opened ring.** The clip you opened last gets a soft ring, so you do not lose your place in a long list.
 - **Duplicate cleanup.** One button in Settings > Storage finds the extra versions of a clip (original, trimmed, compressed), shows you exactly what stays and what goes and how much space it frees, and only then moves the rest to the Recycle Bin.
 - **Tray icon, start with Windows, `sc` on your PATH.** All optional at install time.
-- **Update alerts.** Every 30 minutes it checks for a new version and, when there is one, shows a card and plays a chime of its own.
+- **Update alerts.** Every 6 minutes it checks for a new version and, when there is one, shows a card and plays a chime of its own.
 - **Updates from inside the app.** SimpleClip checks GitHub for a newer release. When there is one,
   an "Update available" button appears at the top right, shows the changelog, and updates in place
   when you click Update now: it downloads a small package, checks it, and swaps only the changed

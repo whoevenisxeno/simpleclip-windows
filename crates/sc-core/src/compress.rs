@@ -1,4 +1,4 @@
-pub const SIZES_MB: [u32; 6] = [8, 10, 25, 50, 100, 500];
+pub const SIZES_MB: [u32; 7] = [8, 10, 20, 25, 50, 100, 500];
 pub const HEIGHTS: [u32; 4] = [1080, 720, 480, 360];
 pub const FRAME_RATES: [u32; 3] = [60, 30, 24];
 pub const MIN_MB: u32 = 1;

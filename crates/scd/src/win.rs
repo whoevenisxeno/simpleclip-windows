@@ -344,7 +344,7 @@ pub fn play_update_sound() {
     }
 }
 
-const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 60);
 
 static LAST_ANNOUNCED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 

@@ -2,6 +2,14 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.7.1
+
+### Changed
+- SimpleClip now looks for a new version every 6 minutes while it runs, instead of every 30.
+
+### Added
+- A 20 MB size in Compress for Discord, in the dialog and as Fit 20 MB in the right-click menu.
+
 ## 6.7.0
 
 ### Fixed
