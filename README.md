@@ -20,7 +20,9 @@ job and does not need an account.
 - **Hardware encoding.** It tries NVENC (NVIDIA), AMF (AMD), QuickSync (Intel), then software x264,
   then Media Foundation, and uses the first one that works.
 - **Audio.** Game and app sound, plus an optional microphone. The mic can be mixed into one track
-  or kept on its own track so you can edit your voice separately.
+  or kept on its own track so you can edit your voice separately. Sound and picture are kept on the
+  same clock, and Settings > Sound > Sound timing moves the sound earlier or later if your setup
+  needs it. In the editor, Sound timing fixes a clip that was already saved out of sync.
 - **Save card.** A small card slides in when a clip is saved, with its size, resolution, frame rate
   and encoder, or a minimal one-line version if you prefer. You choose the corner (or the center),
   whether it slides, and the sound (a camera shutter by default, or your own WAV file, or none).
@@ -47,8 +49,11 @@ job and does not need an account.
   of the normal clip list and the Recent row on Home. You can also send them to a folder of your
   choice.
 - **Share a clip.** "Copy file" puts the clip on the clipboard, so pasting into Discord or a
-  chat attaches it. "Compress for Discord" makes a smaller copy that fits 10, 25 or 50 MB, scaling
-  the picture down only as far as it must. The original stays. Right after you save an edit, a
+  chat attaches it. "Compress for Discord" makes a smaller copy that fits 8, 10, 25, 50, 100 or 500
+  MB, or any size from 1 to 500 MB, scaling the picture down only as far as it must. You can also
+  cap the resolution (1080p down to 360p), cap the frame rate (60, 30 or 24) and leave the sound out,
+  and the dialog says what the result will be before you start. The original stays. Right after you
+  save an edit, a
   prompt offers both, and once a clip is compressed it offers to copy that file. Compressed copies
   get their own Compressed section next to Edited, so they never clutter your clips.
 - **Presets.** Three built in (Balanced, Light, Sharp) and your own. A preset holds the frame rate,
@@ -215,7 +220,7 @@ saved ...\sample-4mb.mp4 (15.9s)
 ```
 
 A 15.5 MB clip compressed with `--mb 4` came out at 3.3 MB, scaled from 1080p to 540p, with its
-sound and length unchanged.
+sound and length unchanged. `sc compress` also takes `--height 720`, `--fps 30` and `--mute`.
 
 Other commands: `pause`, `resume`, `quit`, `monitors`, `audio-devices`, `thumbnail`, `test-notification`.
 
@@ -236,6 +241,7 @@ mic-enabled = true
 tracks = "mixed"
 desktop-volume = 100          # percent, 0 to 200
 mic-volume = 100
+sync-offset-ms = 0            # moves the sound later (plus) or earlier (minus), up to 2000
 
 [buffer]
 replay-duration-secs = 30

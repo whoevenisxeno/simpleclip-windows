@@ -4,7 +4,7 @@ use crate::theme::{self, icon, pal_ui};
 use crate::widgets;
 use crossbeam_channel::{Receiver, TryRecvError};
 use egui::{pos2, vec2, Color32, Key, Modifiers, Rect, RichText, Rounding, Sense, Stroke, Ui};
-use sc_core::edit::{Crop, Plan, MIN_CROP};
+use sc_core::edit::{Crop, Plan, AUDIO_SHIFT_MAX, MIN_CROP};
 use sc_ffmpeg::EditProgress;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -143,11 +143,16 @@ impl EditorState {
         self.plan.flip_h = false;
         self.plan.fade_in = 0.0;
         self.plan.fade_out = 0.0;
+        self.plan.audio_shift = 0.0;
         self.tool = Tool::Speed;
         self.save_open = false;
         match name {
             "editor-save" => {
                 self.save_open = true;
+            }
+            "editor-sound" => {
+                self.tool = Tool::Sound;
+                self.plan.audio_shift = 0.12;
             }
             "editor-fades" => {
                 self.tool = Tool::Fades;
@@ -330,6 +335,14 @@ impl EditorState {
                 format!("speed changed on {changed} of {pieces}")
             });
         }
+        if self.has_audio && self.plan.has_audio_shift() {
+            let ms = (self.plan.audio_shift * 1000.0).round() as i32;
+            out.push(format!(
+                "sound {} ms {}",
+                ms.abs(),
+                if ms > 0 { "later" } else { "earlier" }
+            ));
+        }
         if self.has_audio {
             if self.plan.volume < 0.001 {
                 out.push("muted".into());
@@ -510,12 +523,14 @@ pub fn view(app: &mut ScApp, ui: &mut Ui, path: &Path) {
             st.plan.volume * st.fade_now(),
         )
     };
+    let shift = app.editor.plan.audio_shift;
     let view_state = app.editor.view();
     let crop_tool = app.editor.tool == Tool::Crop;
     let mut toggle_play = false;
     if let Some(pl) = app.editor.player.as_mut() {
         pl.set_segments(segs);
         pl.set_gain(gain);
+        pl.set_audio_shift(shift);
     }
     let frame = {
         let st = &mut app.editor;
@@ -1042,7 +1057,7 @@ fn sound_tool(st: &mut EditorState, ui: &mut Ui) {
             Some("100% keeps the sound as recorded. Double click the slider to reset it."),
             |ui| {
                 let mut pct = (st.plan.volume * 100.0).round() as u32;
-                value_label(
+                widgets::value_label(
                     ui,
                     &if pct == 0 {
                         "Muted".to_string()
@@ -1065,6 +1080,37 @@ fn sound_tool(st: &mut EditorState, ui: &mut Ui) {
                 widgets::toggle(ui, &mut muted);
             },
         );
+        s.row(
+            "Sound timing",
+            Some("Slide or nudge the sound until it matches the picture."),
+            |ui| {
+                let ms = (st.plan.audio_shift * 1000.0).round() as i32;
+                widgets::value_label(
+                    ui,
+                    &if ms == 0 {
+                        "In sync".to_string()
+                    } else {
+                        format!("{ms:+} ms")
+                    },
+                );
+                let mut v = (ms / 10 + 300).clamp(0, 600) as u32;
+                if widgets::step_slider(ui, &mut v, 600, 300).changed() {
+                    st.plan.audio_shift = (v as f64 - 300.0) / 100.0;
+                }
+                let nudge = |shift: f64, by: f64| {
+                    ((shift + by) * 100.0)
+                        .round()
+                        .clamp(-AUDIO_SHIFT_MAX * 100.0, AUDIO_SHIFT_MAX * 100.0)
+                        / 100.0
+                };
+                if widgets::quiet_button(ui, None, "Later").clicked() {
+                    st.plan.audio_shift = nudge(st.plan.audio_shift, 0.01);
+                }
+                if widgets::quiet_button(ui, None, "Earlier").clicked() {
+                    st.plan.audio_shift = nudge(st.plan.audio_shift, -0.01);
+                }
+            },
+        );
     });
     if muted != was_muted {
         if muted {
@@ -1078,24 +1124,6 @@ fn sound_tool(st: &mut EditorState, ui: &mut Ui) {
             st.plan.volume = st.saved_volume.max(0.05);
         }
     }
-}
-
-fn value_label(ui: &mut Ui, text: &str) {
-    let p = pal_ui(ui);
-    let galley = ui.painter().layout_no_wrap(
-        text.to_string(),
-        egui::FontId::new(13.0, egui::FontFamily::Proportional),
-        p.text_2,
-    );
-    let (rect, _) = ui.allocate_exact_size(vec2(56.0, 24.0), Sense::hover());
-    ui.painter().galley(
-        pos2(
-            rect.right() - galley.size().x,
-            rect.center().y - galley.size().y / 2.0,
-        ),
-        galley,
-        p.text_2,
-    );
 }
 
 fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
@@ -1112,7 +1140,7 @@ fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
             Some("Starts from black and silence. Double click the slider to turn it off."),
             |ui| {
                 let mut tenths = (st.plan.fade_in * 10.0).round() as u32;
-                value_label(ui, &label(st.plan.fade_in));
+                widgets::value_label(ui, &label(st.plan.fade_in));
                 if widgets::step_slider(ui, &mut tenths, 50, 0).changed() {
                     st.plan.fade_in = tenths as f64 / 10.0;
                 }
@@ -1120,7 +1148,7 @@ fn fade_tool(st: &mut EditorState, ui: &mut Ui) {
         );
         s.row("Fade out", Some("Ends in black and silence."), |ui| {
             let mut tenths = (st.plan.fade_out * 10.0).round() as u32;
-            value_label(ui, &label(st.plan.fade_out));
+            widgets::value_label(ui, &label(st.plan.fade_out));
             if widgets::step_slider(ui, &mut tenths, 50, 0).changed() {
                 st.plan.fade_out = tenths as f64 / 10.0;
             }
@@ -1743,8 +1771,9 @@ fn finish(app: &mut ScApp, original: &Path, done: Done, replace: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::epaint::Shape as Paint;
-    use egui::{Event, PointerButton, Pos2, RawInput};
+
+    use crate::testkit::{ctrl, Harness};
+    use egui::{Event, Pos2};
     use sc_ffmpeg::sample::make_clip;
 
     fn square() -> Crop {
@@ -1948,152 +1977,6 @@ mod tests {
         let replace = output_path(&src, &Some(chosen), true).unwrap();
         assert_eq!(replace, dir.join("sc-apex-1-trim.mp4"));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    struct Harness {
-        ctx: egui::Context,
-        time: f64,
-        texts: Vec<(String, Rect)>,
-        right: f32,
-    }
-
-    fn collect(shape: &Paint, out: &mut Vec<(String, Rect)>) {
-        match shape {
-            Paint::Text(t) => out.push((
-                t.galley.text().to_string(),
-                Rect::from_min_size(t.pos, t.galley.size()),
-            )),
-            Paint::Vec(list) => list.iter().for_each(|s| collect(s, out)),
-            _ => {}
-        }
-    }
-
-    fn ctrl() -> Modifiers {
-        Modifiers {
-            ctrl: true,
-            command: true,
-            ..Default::default()
-        }
-    }
-
-    impl Harness {
-        fn new() -> Self {
-            let ctx = egui::Context::default();
-            theme::apply(&ctx);
-            let mut h = Self {
-                ctx,
-                time: 0.0,
-                texts: Vec::new(),
-                right: 0.0,
-            };
-            h.frame(Vec::new(), Modifiers::NONE, &mut |_| {});
-            h
-        }
-
-        fn frame(
-            &mut self,
-            events: Vec<Event>,
-            modifiers: Modifiers,
-            add: &mut dyn FnMut(&mut Ui),
-        ) {
-            self.time += 0.05;
-            let input = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 1600.0))),
-                time: Some(self.time),
-                modifiers,
-                events,
-                ..Default::default()
-            };
-            let mut right = 0.0;
-            let out = self.ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    right = ui.available_rect_before_wrap().right();
-                    add(ui);
-                });
-            });
-            self.right = right;
-            self.texts.clear();
-            for clipped in &out.shapes {
-                collect(&clipped.shape, &mut self.texts);
-            }
-        }
-
-        fn at(&self, text: &str, nth: usize) -> Option<Rect> {
-            self.texts
-                .iter()
-                .filter(|(t, _)| t.trim() == text)
-                .nth(nth)
-                .map(|(_, r)| *r)
-        }
-
-        fn has(&self, text: &str) -> bool {
-            self.at(text, 0).is_some()
-        }
-
-        fn press(at: Pos2, pressed: bool) -> Event {
-            Event::PointerButton {
-                pos: at,
-                button: PointerButton::Primary,
-                pressed,
-                modifiers: Modifiers::NONE,
-            }
-        }
-
-        fn click(&mut self, at: Pos2, add: &mut dyn FnMut(&mut Ui)) {
-            self.time += 0.6;
-            for events in [
-                vec![Event::PointerMoved(at)],
-                vec![Self::press(at, true)],
-                vec![Self::press(at, false)],
-                Vec::new(),
-                Vec::new(),
-            ] {
-                self.frame(events, Modifiers::NONE, add);
-            }
-        }
-
-        fn click_text(&mut self, text: &str, add: &mut dyn FnMut(&mut Ui)) {
-            let at = self
-                .at(text, 0)
-                .unwrap_or_else(|| panic!("no \"{text}\" on screen"))
-                .center();
-            self.click(at, add);
-        }
-
-        fn drag(&mut self, from: Pos2, to: Pos2, add: &mut dyn FnMut(&mut Ui)) {
-            self.time += 0.6;
-            let mid = from + (to - from) * 0.5;
-            for events in [
-                vec![Event::PointerMoved(from)],
-                vec![Self::press(from, true)],
-                vec![Event::PointerMoved(mid)],
-                vec![Event::PointerMoved(to)],
-                vec![Self::press(to, false)],
-                Vec::new(),
-                Vec::new(),
-            ] {
-                self.frame(events, Modifiers::NONE, add);
-            }
-        }
-
-        fn key(&mut self, key: Key, modifiers: Modifiers, add: &mut dyn FnMut(&mut Ui)) {
-            let down = Event::Key {
-                key,
-                physical_key: Some(key),
-                pressed: true,
-                repeat: false,
-                modifiers,
-            };
-            let up = Event::Key {
-                key,
-                physical_key: Some(key),
-                pressed: false,
-                repeat: false,
-                modifiers,
-            };
-            self.frame(vec![down], modifiers, add);
-            self.frame(vec![up], Modifiers::NONE, add);
-        }
     }
 
     fn loaded(name: &str, secs: u32) -> Option<EditorState> {
@@ -2439,6 +2322,69 @@ mod tests {
         assert!(h.has("Muted"));
         h.click(toggle, &mut |ui| tools(&mut st, ui));
         assert_eq!(st.plan.volume, loud);
+    }
+
+    #[test]
+    fn the_sound_timing_nudges_and_slides() {
+        let mut st = bare(12.0);
+        st.has_audio = true;
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Sound");
+        assert!(h.has("Sound timing") && h.has("In sync"));
+
+        h.click_text("Later", &mut |ui| tools(&mut st, ui));
+        assert!(
+            (st.plan.audio_shift - 0.01).abs() < 1e-9,
+            "{}",
+            st.plan.audio_shift
+        );
+        h.click_text("Later", &mut |ui| tools(&mut st, ui));
+        h.click_text("Later", &mut |ui| tools(&mut st, ui));
+        assert!((st.plan.audio_shift - 0.03).abs() < 1e-9);
+        run_tools(&mut h, &mut st);
+        assert!(h.has("+30 ms"));
+
+        for _ in 0..5 {
+            h.click_text("Earlier", &mut |ui| tools(&mut st, ui));
+        }
+        assert!(
+            (st.plan.audio_shift + 0.02).abs() < 1e-9,
+            "{}",
+            st.plan.audio_shift
+        );
+        run_tools(&mut h, &mut st);
+        assert!(h.has("-20 ms"));
+        assert!(st.summary().iter().any(|n| n == "sound 20 ms earlier"));
+
+        let label = h.at("-20 ms", 0).unwrap();
+        let centre = slider_centre(label);
+        h.drag(
+            centre + vec2(-20.0, 0.0),
+            centre + vec2(150.0, 0.0),
+            &mut |ui| tools(&mut st, ui),
+        );
+        assert_eq!(st.plan.audio_shift, AUDIO_SHIFT_MAX);
+        assert!(st.summary().iter().any(|n| n == "sound 3000 ms later"));
+        let label = h.at("+3000 ms", 0).unwrap();
+        let centre = slider_centre(label);
+        h.drag(
+            centre + vec2(60.0, 0.0),
+            centre + vec2(-150.0, 0.0),
+            &mut |ui| tools(&mut st, ui),
+        );
+        assert_eq!(st.plan.audio_shift, -AUDIO_SHIFT_MAX);
+    }
+
+    #[test]
+    fn the_shift_stops_at_its_limits_and_counts_as_a_change() {
+        let mut st = bare(12.0);
+        st.has_audio = true;
+        st.plan.audio_shift = AUDIO_SHIFT_MAX - 0.004;
+        let mut h = Harness::new();
+        choose_tool(&mut h, &mut st, "Sound");
+        h.click_text("Later", &mut |ui| tools(&mut st, ui));
+        assert_eq!(st.plan.audio_shift, AUDIO_SHIFT_MAX);
+        assert!(!st.plan.is_plain_cut());
     }
 
     #[test]

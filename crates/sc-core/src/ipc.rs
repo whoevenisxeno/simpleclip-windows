@@ -49,6 +49,12 @@ pub enum Request {
     Compress {
         path: PathBuf,
         target_mb: u32,
+        #[serde(default)]
+        max_height: Option<u32>,
+        #[serde(default)]
+        max_fps: Option<u32>,
+        #[serde(default)]
+        mute: bool,
     },
 }
 
@@ -155,6 +161,54 @@ mod tests {
                 last_secs: Some(30)
             }
         );
+    }
+
+    #[test]
+    fn an_old_compress_request_still_reads_and_gets_plain_defaults() {
+        let old = r#"{"version":1,"id":3,"payload":{"cmd":"compress","path":"C:/Clips/a.mp4","target_mb":25}}"#;
+        let mut reader = BufReader::new(old.as_bytes());
+        let got: Envelope<Request> = read_message(&mut reader, IPC_VERSION).unwrap().unwrap();
+        match got.payload {
+            Request::Compress {
+                target_mb,
+                max_height,
+                max_fps,
+                mute,
+                ..
+            } => {
+                assert_eq!(target_mb, 25);
+                assert_eq!((max_height, max_fps, mute), (None, None, false));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_new_compress_request_roundtrips_with_its_options() {
+        let mut buf = Vec::new();
+        let req = Envelope::new(
+            4,
+            Request::Compress {
+                path: "C:/Clips/a.mp4".into(),
+                target_mb: 50,
+                max_height: Some(720),
+                max_fps: Some(30),
+                mute: true,
+            },
+        );
+        write_message(&mut buf, &req).unwrap();
+        let mut reader = BufReader::new(&buf[..]);
+        let got: Envelope<Request> = read_message(&mut reader, IPC_VERSION).unwrap().unwrap();
+        assert!(matches!(
+            got.payload,
+            Request::Compress {
+                target_mb: 50,
+                max_height: Some(720),
+                max_fps: Some(30),
+                mute: true,
+                ..
+            }
+        ));
     }
 
     #[test]

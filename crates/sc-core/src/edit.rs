@@ -4,6 +4,7 @@ pub const SPEED_MIN: f64 = 0.25;
 pub const SPEED_MAX: f64 = 4.0;
 pub const VOLUME_MAX: f32 = 2.0;
 pub const FADE_MAX: f64 = 5.0;
+pub const AUDIO_SHIFT_MAX: f64 = 3.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
@@ -83,6 +84,7 @@ impl Crop {
 pub struct Plan {
     pub segments: Vec<Segment>,
     pub volume: f32,
+    pub audio_shift: f64,
     pub fade_in: f64,
     pub fade_out: f64,
     pub crop: Option<Crop>,
@@ -102,6 +104,7 @@ impl Plan {
         Self {
             segments: vec![Segment::new(0.0, duration.max(MIN_SEGMENT))],
             volume: 1.0,
+            audio_shift: 0.0,
             fade_in: 0.0,
             fade_out: 0.0,
             crop: None,
@@ -135,6 +138,10 @@ impl Plan {
         for i in 0..self.segments.len() {
             self.set_speed(i, speed);
         }
+    }
+
+    pub fn has_audio_shift(&self) -> bool {
+        self.audio_shift.abs() > 1e-6
     }
 
     pub fn has_speed_change(&self) -> bool {
@@ -234,6 +241,7 @@ impl Plan {
         }
         self.segments = merged;
         self.volume = self.volume.clamp(0.0, VOLUME_MAX);
+        self.audio_shift = self.audio_shift.clamp(-AUDIO_SHIFT_MAX, AUDIO_SHIFT_MAX);
         self.fade_in = self.fade_in.clamp(0.0, FADE_MAX);
         self.fade_out = self.fade_out.clamp(0.0, FADE_MAX);
         self.turn %= 360;
@@ -251,6 +259,7 @@ impl Plan {
         self.segments.len() == 1
             && !self.has_speed_change()
             && (self.volume - 1.0).abs() < 1e-6
+            && !self.has_audio_shift()
             && self.fade_in <= 0.0
             && self.fade_out <= 0.0
             && !self.changes_picture()
@@ -415,6 +424,21 @@ mod tests {
         assert_eq!(p.output_time(5.0), Some(6.0));
         assert_eq!(p.output_time(6.0), Some(8.0));
         assert_eq!(p.output_time(9.0), Some(11.0));
+    }
+
+    #[test]
+    fn moving_the_sound_makes_it_a_real_edit_within_limits() {
+        let mut p = plan();
+        assert!(!p.has_audio_shift());
+        p.audio_shift = 0.25;
+        assert!(p.has_audio_shift());
+        assert!(!p.is_plain_cut());
+        p.audio_shift = 9.0;
+        p.clamp_to(10.0);
+        assert_eq!(p.audio_shift, AUDIO_SHIFT_MAX);
+        p.audio_shift = -9.0;
+        p.clamp_to(10.0);
+        assert_eq!(p.audio_shift, -AUDIO_SHIFT_MAX);
     }
 
     #[test]

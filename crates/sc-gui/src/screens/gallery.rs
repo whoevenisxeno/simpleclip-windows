@@ -943,11 +943,19 @@ fn clip_menu(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
     }
     if !clip.is_image {
         ui.menu_button("Compress for Discord", |ui| {
-            for mb in [10u32, 25, 50] {
+            for mb in [8u32, 10, 25, 50, 100] {
                 if item(ui, &format!("Fit {mb} MB")) {
-                    sheet::compress_clip(app, clip, mb);
+                    app.share = Some(super::share::ShareState::compressing(
+                        clip.path.clone(),
+                        sc_core::compress::CompressOptions::with_size(mb),
+                    ));
                     ui.close_menu();
                 }
+            }
+            ui.separator();
+            if item(ui, "More options\u{2026}") {
+                app.share = Some(super::share::ShareState::choosing(clip.path.clone()));
+                ui.close_menu();
             }
         });
     }

@@ -53,6 +53,7 @@ impl Daemon {
         #[cfg(any(target_os = "linux", windows))]
         if let Some(p) = self.pipeline.lock().unwrap().as_ref() {
             p.set_volumes(new.audio.desktop_volume, new.audio.mic_volume);
+            p.set_sync_offset_ms(new.audio.sync_offset_ms);
         }
         self.set_config(new);
         if needs_restart && self.pipeline.lock().unwrap().is_some() {

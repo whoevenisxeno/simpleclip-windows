@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod buffer;
 pub mod capture;
+pub mod compress;
 pub mod config;
 pub mod edit;
 pub mod encode;

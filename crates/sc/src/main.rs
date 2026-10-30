@@ -45,6 +45,12 @@ enum Command {
         path: std::path::PathBuf,
         #[arg(long, default_value_t = 10)]
         mb: u32,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long)]
+        fps: Option<u32>,
+        #[arg(long)]
+        mute: bool,
     },
     Monitors,
     AudioDevices,
@@ -79,10 +85,19 @@ fn main() -> Result<()> {
             },
             false,
         ),
-        Command::Compress { path, mb } => (
+        Command::Compress {
+            path,
+            mb,
+            height,
+            fps,
+            mute,
+        } => (
             Request::Compress {
                 path: std::path::absolute(&path).unwrap_or(path),
                 target_mb: mb,
+                max_height: height,
+                max_fps: fps,
+                mute,
             },
             false,
         ),

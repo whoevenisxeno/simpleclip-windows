@@ -118,7 +118,21 @@ fn dispatch(req: Request, daemon: &Daemon) -> Response {
             },
             Err(message) => Response::Error { message },
         },
-        Request::Compress { path, target_mb } => match compress(&path, target_mb) {
+        Request::Compress {
+            path,
+            target_mb,
+            max_height,
+            max_fps,
+            mute,
+        } => match compress(
+            &path,
+            &sc_core::compress::CompressOptions {
+                target_mb,
+                max_height,
+                max_fps,
+                mute,
+            },
+        ) {
             Ok((path, duration_secs)) => Response::Saved {
                 path,
                 duration_secs,
@@ -237,10 +251,12 @@ fn trim(
 }
 
 #[cfg(any(target_os = "linux", windows))]
-fn compress(path: &std::path::Path, target_mb: u32) -> Result<(std::path::PathBuf, f64), String> {
-    if target_mb == 0 || target_mb > 500 {
-        return Err("choose a size between 1 and 500 MB".into());
-    }
+fn compress(
+    path: &std::path::Path,
+    opts: &sc_core::compress::CompressOptions,
+) -> Result<(std::path::PathBuf, f64), String> {
+    opts.validate()?;
+    let target_mb = opts.target_mb;
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -252,13 +268,15 @@ fn compress(path: &std::path::Path, target_mb: u32) -> Result<(std::path::PathBu
         out = dir.join(format!("{stem}-{target_mb}mb-{n}.mp4"));
         n += 1;
     }
-    let target = target_mb as u64 * 1_000_000;
-    sc_ffmpeg::compress_to_size(path, &out, target).map_err(|e| e.to_string())?;
+    sc_ffmpeg::compress(path, &out, opts).map_err(|e| e.to_string())?;
     let secs = media_duration(&out).unwrap_or(0.0);
     Ok((out, secs))
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn compress(_: &std::path::Path, _: u32) -> Result<(std::path::PathBuf, f64), String> {
+fn compress(
+    _: &std::path::Path,
+    _: &sc_core::compress::CompressOptions,
+) -> Result<(std::path::PathBuf, f64), String> {
     Err("not supported on this platform".into())
 }

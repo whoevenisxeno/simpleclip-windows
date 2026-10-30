@@ -510,6 +510,13 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
                 app.cfg.audio.mic_device = if id.is_empty() { None } else { Some(id) };
             });
         }
+        if app.cfg.audio.desktop_enabled || app.cfg.audio.mic_enabled {
+            s.row(
+                "Sound timing",
+                Some("Shift the sound if new clips sound out of sync"),
+                |ui| sync_control(ui, &mut app.cfg.audio.sync_offset_ms),
+            );
+        }
         if app.cfg.audio.mic_enabled && app.cfg.audio.desktop_enabled {
             s.row(
                 "Tracks",
@@ -535,6 +542,24 @@ fn audio(app: &mut ScApp, ui: &mut Ui) {
                 .color(p.text_2),
         );
         ui.add_space(6.0);
+    }
+}
+
+const SYNC_RANGE_MS: i32 = 1000;
+
+fn sync_control(ui: &mut Ui, ms: &mut i32) {
+    let steps = (SYNC_RANGE_MS / 10) as u32;
+    widgets::value_label(
+        ui,
+        &if *ms == 0 {
+            "In sync".to_string()
+        } else {
+            format!("{:+} ms", *ms)
+        },
+    );
+    let mut v = (*ms / 10 + steps as i32).clamp(0, 2 * steps as i32) as u32;
+    if widgets::step_slider(ui, &mut v, 2 * steps, steps).changed() {
+        *ms = (v as i32 - steps as i32) * 10;
     }
 }
 

@@ -15,6 +15,8 @@ mod screenshot;
 #[cfg(windows)]
 mod sound;
 mod star;
+#[cfg(test)]
+mod testkit;
 mod theme;
 mod themes;
 mod thumbs;

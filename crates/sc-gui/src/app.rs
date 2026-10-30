@@ -591,6 +591,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("editor-crop", true),
     ("editor-rotate", true),
     ("editor-fades", true),
+    ("editor-sound", true),
     ("editor-save", true),
     ("wizard1", true),
     ("wizard2", true),
@@ -786,7 +787,8 @@ impl ScApp {
                 "update-download" | "update-forced" => Screen::Dashboard,
                 "star" => Screen::Dashboard,
                 n if n.starts_with("settings") || n.starts_with("look") => Screen::Settings,
-                "editor" | "editor-crop" | "editor-rotate" | "editor-fades" | "editor-save" => {
+                "editor" | "editor-crop" | "editor-rotate" | "editor-fades" | "editor-sound"
+                | "editor-save" => {
                     let first = self.gallery.first_video();
                     first.map(Screen::Edit).unwrap_or(Screen::Gallery)
                 }

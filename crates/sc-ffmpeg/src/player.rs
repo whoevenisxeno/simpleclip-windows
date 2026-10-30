@@ -307,3 +307,31 @@ fn run_audio(
     }
     Ok(())
 }
+
+pub fn first_pts(path: &Path) -> Result<(Option<f64>, Option<f64>)> {
+    crate::init()?;
+    let mut ictx = ff::format::input(&path).map_err(err)?;
+    let video = ictx
+        .streams()
+        .best(ff::media::Type::Video)
+        .map(|s| s.index());
+    let audio = ictx
+        .streams()
+        .best(ff::media::Type::Audio)
+        .map(|s| s.index());
+    let (mut v, mut a) = (None, None);
+    for (stream, packet) in ictx.packets() {
+        let r = stream.time_base();
+        let tb = r.numerator() as f64 / r.denominator().max(1) as f64;
+        let secs = packet.pts().or(packet.dts()).map(|p| p as f64 * tb);
+        if Some(stream.index()) == video && v.is_none() {
+            v = secs;
+        } else if Some(stream.index()) == audio && a.is_none() {
+            a = secs;
+        }
+        if (video.is_none() || v.is_some()) && (audio.is_none() || a.is_some()) {
+            break;
+        }
+    }
+    Ok((v, a))
+}

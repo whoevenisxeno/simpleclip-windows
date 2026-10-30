@@ -21,6 +21,15 @@ pub struct View {
     pub dim: f32,
 }
 
+fn audio_plan(secs: f64, shift: f64) -> (f64, usize) {
+    let from = secs - shift;
+    if from >= 0.0 {
+        (from, 0)
+    } else {
+        (0.0, (-from * AUDIO_RATE as f64) as usize * 2)
+    }
+}
+
 struct Track {
     rx: Receiver<Vec<f32>>,
     buf: Vec<f32>,
@@ -29,6 +38,7 @@ struct Track {
 }
 
 struct Mix {
+    lead: usize,
     tracks: Vec<Track>,
     played: Arc<AtomicU64>,
     done: Arc<AtomicBool>,
@@ -37,6 +47,11 @@ struct Mix {
 impl Iterator for Mix {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
+        if self.lead > 0 {
+            self.lead -= 1;
+            self.played.fetch_add(1, Ordering::Relaxed);
+            return Some(0.0);
+        }
         let mut sum = 0.0;
         let mut alive = false;
         for t in &mut self.tracks {
@@ -124,6 +139,9 @@ pub struct Player {
     out: Option<(OutputStream, OutputStreamHandle)>,
     segments: Vec<(f64, f64, f64)>,
     rate: f64,
+    audio_shift: f64,
+    want_shift: f64,
+    shift_since: Option<Instant>,
 }
 
 impl Player {
@@ -141,6 +159,29 @@ impl Player {
 
     pub fn rate(&self) -> f64 {
         self.rate
+    }
+
+    pub fn set_audio_shift(&mut self, secs: f64) {
+        if (secs - self.want_shift).abs() > 1e-6 {
+            self.want_shift = secs;
+            self.shift_since = Some(Instant::now());
+        }
+    }
+
+    fn apply_shift(&mut self, ctx: &egui::Context) {
+        let Some(since) = self.shift_since else {
+            return;
+        };
+        if since.elapsed() < Duration::from_millis(140) {
+            ctx.request_repaint_after(Duration::from_millis(40));
+            return;
+        }
+        self.shift_since = None;
+        if (self.want_shift - self.audio_shift).abs() > 1e-6 {
+            self.audio_shift = self.want_shift;
+            let play = self.playing;
+            self.start_at(self.pos, play);
+        }
     }
 
     fn speed_at(&self, t: f64) -> f64 {
@@ -182,6 +223,9 @@ impl Player {
             out: None,
             segments: Vec::new(),
             rate: 1.0,
+            audio_shift: 0.0,
+            want_shift: 0.0,
+            shift_since: None,
         };
         if p.info.is_ok() {
             p.start_at(0.0, true);
@@ -229,6 +273,7 @@ impl Player {
         let played = Arc::new(AtomicU64::new(0));
         let audio_done = Arc::new(AtomicBool::new(false));
         let tracks = self.info.as_ref().map(|i| i.audio_streams).unwrap_or(0);
+        let (audio_from, lead) = audio_plan(secs, self.audio_shift);
         let mut sink = None;
         if tracks > 0 {
             if self.out.is_none() {
@@ -242,9 +287,10 @@ impl Player {
                     s.set_volume(self.gain);
                     s.set_speed(self.rate as f32);
                     s.append(Mix {
+                        lead,
                         tracks: (0..tracks)
                             .map(|n| Track {
-                                rx: sc_ffmpeg::spawn_audio(&self.path, secs, n, stop.clone()),
+                                rx: sc_ffmpeg::spawn_audio(&self.path, audio_from, n, stop.clone()),
                                 buf: Vec::new(),
                                 i: 0,
                                 ended: false,
@@ -306,6 +352,7 @@ impl Player {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
+        self.apply_shift(ctx);
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f64().min(0.25);
         self.last_tick = now;
@@ -498,6 +545,67 @@ mod tests {
         p.set_segments(segments);
         p.toggle();
         p
+    }
+
+    #[test]
+    fn the_sound_starts_earlier_or_later_in_the_file_by_the_shift() {
+        assert_eq!(audio_plan(10.0, 0.0), (10.0, 0));
+        assert_eq!(audio_plan(10.0, 0.5), (9.5, 0));
+        assert_eq!(audio_plan(10.0, -0.5), (10.5, 0));
+    }
+
+    #[test]
+    fn a_later_sound_near_the_start_is_preceded_by_silence() {
+        let (from, lead) = audio_plan(0.2, 0.5);
+        assert_eq!(from, 0.0);
+        assert_eq!(lead, (0.3 * AUDIO_RATE as f64) as usize * 2);
+        assert_eq!(
+            audio_plan(0.0, 0.25).1,
+            (0.25 * AUDIO_RATE as f64) as usize * 2
+        );
+    }
+
+    #[test]
+    fn the_silence_in_front_counts_toward_the_playback_clock() {
+        let (tx, rx) = crossbeam_channel::bounded::<Vec<f32>>(1);
+        drop(tx);
+        let played = Arc::new(AtomicU64::new(0));
+        let done = Arc::new(AtomicBool::new(false));
+        let mix = Mix {
+            lead: 6,
+            tracks: vec![Track {
+                rx,
+                buf: Vec::new(),
+                i: 0,
+                ended: false,
+            }],
+            played: played.clone(),
+            done: done.clone(),
+        };
+        let all: Vec<f32> = mix.collect();
+        assert_eq!(all, vec![0.0; 6]);
+        assert_eq!(played.load(Ordering::Relaxed), 6);
+        assert!(done.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn dragging_the_shift_restarts_the_sound_once_it_settles() {
+        let Some(path) = clip("shift", 6) else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        let mut p = Player::open_paused(&path, 1.0);
+        p.set_segments(vec![(0.0, 6.0, 1.0)]);
+        for ms in [10.0, 20.0, 30.0, 40.0] {
+            p.set_audio_shift(ms / 1000.0);
+            p.tick(&ctx);
+        }
+        assert_eq!(p.audio_shift, 0.0, "still being dragged");
+        std::thread::sleep(Duration::from_millis(200));
+        p.tick(&ctx);
+        assert!((p.audio_shift - 0.04).abs() < 1e-9);
+        assert!(p.shift_since.is_none());
+        assert!((p.position() - 1.0).abs() < 0.05);
     }
 
     #[test]

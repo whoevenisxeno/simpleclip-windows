@@ -239,7 +239,8 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         })
         .collect();
     let total: f32 = widths.iter().sum::<f32>() + 4.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
+    let (rect, outer) = ui.allocate_exact_size(vec2(total, 32.0), Sense::hover());
+    let base = outer.id;
     ui.painter()
         .rect_filled(rect, Rounding::same(theme::radius::CONTROL), p.card_hi);
     let mut starts = Vec::with_capacity(widths.len());
@@ -249,9 +250,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         at += w;
     }
     if let Some(i) = options.iter().position(|(v, _)| *v == *value) {
-        let id = ui
-            .id()
-            .with(("seg-thumb", options.first().map(|o| o.1).unwrap_or("")));
+        let id = base.with("seg-thumb");
         let x = ui.ctx().animate_value_with_time(id, starts[i], 0.18);
         let w = ui
             .ctx()
@@ -273,7 +272,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
     let mut x = rect.left() + 2.0;
     for ((val, label), w) in options.iter().zip(widths) {
         let seg = Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(w, 28.0));
-        let resp = ui.interact(seg, ui.id().with(label), Sense::click());
+        let resp = ui.interact(seg, base.with(label), Sense::click());
         let selected = *val == *value;
         ui.painter().text(
             seg.center(),
@@ -1232,5 +1231,90 @@ mod search_tests {
         assert_eq!(rows_drawn(&ctx), 2);
         reset_rows(&ctx);
         assert_eq!(rows_drawn(&ctx), 0);
+    }
+}
+
+pub fn value_label(ui: &mut Ui, text: &str) {
+    let p = pal_ui(ui);
+    let galley = ui.painter().layout_no_wrap(
+        text.to_string(),
+        egui::FontId::new(13.0, egui::FontFamily::Proportional),
+        p.text_2,
+    );
+    let (rect, _) = ui.allocate_exact_size(vec2(56.0, 24.0), Sense::hover());
+    ui.painter().galley(
+        pos2(
+            rect.right() - galley.size().x,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        p.text_2,
+    );
+}
+
+#[cfg(test)]
+mod segmented_tests {
+    use super::*;
+    use crate::testkit::Harness;
+    use egui::Modifiers;
+
+    #[test]
+    fn two_controls_with_the_same_labels_work_independently() {
+        let mut h = Harness::new();
+        let (mut a, mut b) = (Some(60u32), false);
+        let draw = |h: &mut Harness, a: &mut Option<u32>, b: &mut bool| {
+            h.frame(Vec::new(), Modifiers::NONE, &mut |ui| {
+                ui.horizontal(|ui| {
+                    segmented(ui, a, &[(None, "Keep"), (Some(30), "30"), (Some(60), "60")]);
+                });
+                ui.horizontal(|ui| {
+                    segmented(ui, b, &[(false, "Keep"), (true, "Off")]);
+                });
+            });
+        };
+        draw(&mut h, &mut a, &mut b);
+        draw(&mut h, &mut a, &mut b);
+        let first = h.at("Keep", 0).unwrap().center();
+        h.click(first, &mut |ui| {
+            ui.horizontal(|ui| {
+                segmented(
+                    ui,
+                    &mut a,
+                    &[(None, "Keep"), (Some(30), "30"), (Some(60), "60")],
+                );
+            });
+            ui.horizontal(|ui| {
+                segmented(ui, &mut b, &[(false, "Keep"), (true, "Off")]);
+            });
+        });
+        assert_eq!((a, b), (None, false));
+        let off = h.at("Off", 0).unwrap().center();
+        h.click(off, &mut |ui| {
+            ui.horizontal(|ui| {
+                segmented(
+                    ui,
+                    &mut a,
+                    &[(None, "Keep"), (Some(30), "30"), (Some(60), "60")],
+                );
+            });
+            ui.horizontal(|ui| {
+                segmented(ui, &mut b, &[(false, "Keep"), (true, "Off")]);
+            });
+        });
+        assert_eq!((a, b), (None, true));
+        let second = h.at("Keep", 1).unwrap().center();
+        h.click(second, &mut |ui| {
+            ui.horizontal(|ui| {
+                segmented(
+                    ui,
+                    &mut a,
+                    &[(None, "Keep"), (Some(30), "30"), (Some(60), "60")],
+                );
+            });
+            ui.horizontal(|ui| {
+                segmented(ui, &mut b, &[(false, "Keep"), (true, "Off")]);
+            });
+        });
+        assert_eq!((a, b), (None, false));
     }
 }

@@ -325,9 +325,49 @@ fn capture_audio(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
-            pad_silence(&tx, src.role, epoch, t0, &mut produced_frames, 0);
+            pad_silence(&tx, src.role, epoch, t0, &mut produced_frames);
         }
     }
+}
+
+const BEHIND_LIMIT: u64 = RATE as u64 / 20;
+const AHEAD_LIMIT: u64 = RATE as u64 / 16;
+const AHEAD_KEEP: u64 = RATE as u64 / 100;
+const FADE_FRAMES: usize = 96;
+
+#[derive(Debug, PartialEq)]
+enum Correction {
+    None,
+    Pad(u64),
+    Drop(u64),
+}
+
+fn correction(expected: u64, produced: u64, incoming: u64) -> Correction {
+    let have = produced + incoming;
+    if expected > have + BEHIND_LIMIT {
+        Correction::Pad(expected - have)
+    } else if have > expected + AHEAD_LIMIT {
+        Correction::Drop(((have - expected).saturating_sub(AHEAD_KEEP)).min(incoming))
+    } else {
+        Correction::None
+    }
+}
+
+fn drop_front(samples: &mut Vec<f32>, frames: u64) {
+    let cut = (frames as usize * CHANNELS as usize).min(samples.len());
+    samples.drain(..cut);
+    let ramp = FADE_FRAMES.min(samples.len() / CHANNELS as usize);
+    for f in 0..ramp {
+        let g = f as f32 / ramp as f32;
+        for c in 0..CHANNELS as usize {
+            samples[f * CHANNELS as usize + c] *= g;
+        }
+    }
+}
+
+fn expected_frames(epoch: Instant, t0: Duration) -> u64 {
+    let elapsed = epoch.elapsed().saturating_sub(t0);
+    elapsed.as_nanos() as u64 * RATE as u64 / 1_000_000_000
 }
 
 fn pad_silence(
@@ -336,13 +376,8 @@ fn pad_silence(
     epoch: Instant,
     t0: Duration,
     produced_frames: &mut u64,
-    incoming: u64,
 ) {
-    let elapsed = epoch.elapsed().saturating_sub(t0);
-    let expected = elapsed.as_nanos() as u64 * RATE as u64 / 1_000_000_000;
-    let have = *produced_frames + incoming;
-    if expected > have + (RATE as u64 / 20) {
-        let gap = expected - have;
+    if let Correction::Pad(gap) = correction(expected_frames(epoch, t0), *produced_frames, 0) {
         send(
             tx,
             role,
@@ -350,6 +385,28 @@ fn pad_silence(
             produced_frames,
             vec![0.0; gap as usize * CHANNELS as usize],
         );
+    }
+}
+
+fn settle(
+    tx: &crossbeam_channel::Sender<AudioBuffer>,
+    role: AudioRole,
+    epoch: Instant,
+    t0: Duration,
+    produced_frames: &mut u64,
+    samples: &mut Vec<f32>,
+) {
+    let incoming = (samples.len() / CHANNELS as usize) as u64;
+    match correction(expected_frames(epoch, t0), *produced_frames, incoming) {
+        Correction::Pad(gap) => send(
+            tx,
+            role,
+            t0,
+            produced_frames,
+            vec![0.0; gap as usize * CHANNELS as usize],
+        ),
+        Correction::Drop(frames) => drop_front(samples, frames),
+        Correction::None => {}
     }
 }
 
@@ -433,8 +490,7 @@ fn audio_session(
                     .map(|c| f32::from_le_bytes(*c)),
             );
         }
-        let incoming = (samples.len() / CHANNELS as usize) as u64;
-        pad_silence(tx, src.role, epoch, t0, produced_frames, incoming);
+        settle(tx, src.role, epoch, t0, produced_frames, &mut samples);
         if !samples.is_empty() {
             send(tx, src.role, t0, produced_frames, samples);
         }
@@ -495,5 +551,81 @@ fn monitor_origin(m: &Monitor) -> (i32, i32) {
         (info.rcMonitor.left, info.rcMonitor.top)
     } else {
         (0, 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const R: u64 = RATE as u64;
+
+    #[test]
+    fn a_steady_stream_needs_no_correction() {
+        assert_eq!(correction(R, R - 480, 480), Correction::None);
+        assert_eq!(correction(R, R + 1_000, 0), Correction::None);
+        assert_eq!(correction(R + 2_000, R, 0), Correction::None);
+    }
+
+    #[test]
+    fn a_stream_that_fell_behind_is_padded_with_silence() {
+        assert_eq!(correction(R, R / 2, 480), Correction::Pad(R / 2 - 480));
+        assert_eq!(correction(R / 2, 0, 0), Correction::Pad(R / 2));
+    }
+
+    #[test]
+    fn a_stream_that_ran_ahead_has_the_excess_dropped() {
+        let ahead = R / 8;
+        assert_eq!(
+            correction(R, R + ahead - 10_000, 10_000),
+            Correction::Drop(ahead - R / 100)
+        );
+    }
+
+    #[test]
+    fn dropping_never_takes_more_than_arrived() {
+        assert_eq!(correction(R, R * 2, 480), Correction::Drop(480));
+        assert_eq!(correction(R, R * 2, 0), Correction::Drop(0));
+    }
+
+    #[test]
+    fn dropping_fades_the_rest_back_in_without_a_click() {
+        let mut s = vec![0.5f32; 2 * 1000];
+        drop_front(&mut s, 300);
+        assert_eq!(s.len(), 2 * 700);
+        assert_eq!(s[0], 0.0);
+        assert!(s[2] > 0.0 && s[2] < 0.05);
+        assert!((s[2 * FADE_FRAMES] - 0.5).abs() < 1e-6);
+        assert_eq!(*s.last().unwrap(), 0.5);
+    }
+
+    #[test]
+    fn dropping_more_than_there_is_leaves_nothing() {
+        let mut s = vec![0.5f32; 20];
+        drop_front(&mut s, 500);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn a_slow_drift_is_pulled_back_in_small_steps() {
+        let mut produced: u64 = 0;
+        let mut dropped = 0u64;
+        for tick in 1..=6_000u64 {
+            let expected = tick * 480;
+            let incoming = 481;
+            match correction(expected, produced, incoming) {
+                Correction::Drop(n) => {
+                    dropped += n;
+                    produced += incoming - n;
+                }
+                _ => produced += incoming,
+            }
+        }
+        let expected = 6_000 * 480;
+        assert!(
+            produced.abs_diff(expected) <= AHEAD_LIMIT,
+            "{produced} vs {expected}"
+        );
+        assert!(dropped > 0);
     }
 }

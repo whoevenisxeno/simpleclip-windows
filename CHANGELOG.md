@@ -2,6 +2,23 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 6.7.0
+
+### Fixed
+- Sound could play later than the picture in new clips, by a different amount in each recording session. SimpleClip timed the picture from its first frame and the sound from the moment capture started, so the two clocks disagreed by however long Windows took to deliver that first frame (a fraction of a second, sometimes a few seconds). Both now use the same clock, and a test that rebuilds a clip from a start delay of up to 2.3 seconds measures picture and sound landing within a few hundredths of a second of each other.
+- Over a long session the sound could slowly slip when the sound device's clock ran a little faster than Windows' clock, because nothing pulled it back. The extra is now trimmed off, with a short fade so it does not click, the same way gaps were already filled with silence.
+- Two groups of choices in the same window that shared an option name could steal each other's clicks, so clicking the first one did nothing. Each group now keeps its own.
+- Sound is now placed on the same clock as the picture when you save an edit, instead of up to one frame late.
+
+### Added
+- Settings > Sound > Sound timing moves the sound of new clips earlier or later, up to a second either way, in case your headset, capture card or setup adds a delay of its own.
+- Edit > Sound > Sound timing does the same for a clip you already have, up to three seconds either way, with a live preview and Earlier and Later buttons that move it 10 ms at a time. This is how to repair clips that were saved out of sync.
+- A bigger Compress for Discord dialog, the same one from the clip details, the right-click menu and the prompt after saving. Sizes of 8, 10, 25, 50, 100 and 500 MB, or any size from 1 to 500 MB. You can cap the resolution (1080p, 720p, 480p, 360p), cap the frame rate (60, 30, 24) and leave the sound out, and a line under the choices says what the result will be, such as "Will be saved at 1280 x 720, 30 fps, with sound, up to 10 MB", or that the clip is already small enough. The right-click menu has quick Fit 8, 10, 25, 50 and 100 MB entries and More options.
+- `sc compress` takes `--height`, `--fps` and `--mute` as well as `--mb`.
+
+### Changed
+- Compressing never gives the video more bits than the original had, so a clip that is already small does not grow when you pick a big size with a cap.
+
 ## 6.6.0
 
 ### Changed

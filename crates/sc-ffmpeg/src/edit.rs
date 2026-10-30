@@ -53,7 +53,23 @@ fn err(e: ff::Error) -> Error {
     Error::Ffmpeg(e.to_string())
 }
 
+fn shifted(mix: &[f32], secs: f64) -> std::borrow::Cow<'_, [f32]> {
+    let frames = (secs.abs() * AUDIO_RATE as f64).round() as usize;
+    if frames == 0 {
+        return std::borrow::Cow::Borrowed(mix);
+    }
+    if secs > 0.0 {
+        let mut out = vec![0.0f32; frames * 2];
+        out.extend_from_slice(mix);
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(&mix[(frames * 2).min(mix.len())..])
+    }
+}
+
 fn edit_audio(mix: &[f32], plan: &Plan) -> Vec<f32> {
+    let mix = shifted(mix, plan.audio_shift);
+    let mix = &mix[..];
     let mut out: Vec<f32> = Vec::new();
     let last = plan.segments.len().saturating_sub(1);
     for (i, seg) in plan.segments.iter().enumerate() {
@@ -653,6 +669,76 @@ mod tests {
         let mid = brightness(&slow, 2.0);
         assert!((mid - grey(luma_at(1.0, 6.0))).abs() < 8.0, "{mid}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn sound_of(path: &Path) -> (f64, f64) {
+        let (_, start) = crate::first_pts(path).unwrap();
+        let lead = start.unwrap_or(0.0);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let rx = crate::spawn_audio(path, 0.0, 0, stop);
+        let (mut total, mut onset) = (0usize, None);
+        for chunk in rx.iter() {
+            if onset.is_none() {
+                onset = chunk.iter().position(|v| v.abs() > 0.1).map(|i| total + i);
+            }
+            total += chunk.len();
+        }
+        let rate = AUDIO_RATE as f64 * 2.0;
+        (
+            lead + onset.map(|i| i as f64 / rate).unwrap_or(f64::NAN),
+            lead + total as f64 / rate,
+        )
+    }
+
+    #[test]
+    fn moving_the_sound_later_delays_where_it_starts() {
+        let dir = workdir("shift-later");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 4, 320, 180, true) {
+            return;
+        }
+        let (onset, _) = sound_of(&src);
+        assert!(onset < 0.05, "{onset}");
+        let mut plan = Plan::whole(4.0);
+        plan.audio_shift = 0.5;
+        let dst = dir.join("later.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let (onset, end) = sound_of(&dst);
+        assert!((onset - 0.5).abs() < 0.06, "{onset}");
+        assert!((end - 4.0).abs() < 0.15, "{end}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moving_the_sound_earlier_cuts_off_its_beginning() {
+        let dir = workdir("shift-earlier");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 4, 320, 180, true) {
+            return;
+        }
+        let mut plan = Plan::whole(4.0);
+        plan.audio_shift = -0.5;
+        let dst = dir.join("earlier.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let (onset, end) = sound_of(&dst);
+        assert!(onset < 0.06, "{onset}");
+        assert!((end - 3.5).abs() < 0.15, "{end}");
+        let info = crate::media_info(&dst).unwrap();
+        assert!((info.duration - 4.0).abs() < 0.25, "{}", info.duration);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_shift_larger_than_the_clip_leaves_silence_instead_of_failing() {
+        let mix = tone(2.0);
+        let mut plan = Plan::whole(2.0);
+        plan.audio_shift = -3.0;
+        let out = edit_audio(&mix, &plan);
+        assert!(out.iter().all(|v| *v == 0.0));
+        plan.audio_shift = 3.0;
+        let out = edit_audio(&mix, &plan);
+        assert_eq!(out.len(), 2 * 48_000 * 2);
+        assert!(out.iter().all(|v| *v == 0.0));
     }
 
     #[test]

@@ -360,6 +360,7 @@ const AVERROR_EAGAIN: i32 = -11;
 impl Encoder {
     unsafe fn drain(&mut self) -> Result<Vec<EncodedPacket>> {
         let mut out = Vec::new();
+        let base = self.base_ns.unwrap_or(0);
         let mut pkt = ffi::av_packet_alloc();
         loop {
             let rc = ffi::avcodec_receive_packet(self.ctx, pkt);
@@ -377,7 +378,7 @@ impl Encoder {
             let size = p.size as usize;
             let data = std::slice::from_raw_parts(p.data, size).to_vec();
             out.push(EncodedPacket {
-                timestamp: Timestamp::from_nanos(p.pts * 1000),
+                timestamp: Timestamp::from_nanos(base + p.pts * 1000),
                 duration: p.duration * 1000,
                 keyframe: p.flags & ffi::AV_PKT_FLAG_KEY != 0,
                 data,

@@ -62,15 +62,18 @@ pub struct AudioSettings {
     pub tracks: AudioTracks,
     pub desktop_volume: u32,
     pub mic_volume: u32,
+    pub sync_offset_ms: i32,
 }
 
 pub const MAX_VOLUME_PERCENT: u32 = 200;
+pub const MAX_SYNC_OFFSET_MS: i32 = 2000;
 
 impl AudioSettings {
     pub fn same_capture_as(&self, other: &Self) -> bool {
         let mut a = self.clone();
         a.desktop_volume = other.desktop_volume;
         a.mic_volume = other.mic_volume;
+        a.sync_offset_ms = other.sync_offset_ms;
         a == *other
     }
 }
@@ -167,6 +170,7 @@ impl Default for AudioSettings {
             tracks: AudioTracks::Mixed,
             desktop_volume: 100,
             mic_volume: 100,
+            sync_offset_ms: 0,
         }
     }
 }
@@ -347,6 +351,11 @@ impl Config {
         {
             return Err(Error::Config(format!(
                 "audio volumes must be 0..={MAX_VOLUME_PERCENT}"
+            )));
+        }
+        if self.audio.sync_offset_ms.abs() > MAX_SYNC_OFFSET_MS {
+            return Err(Error::Config(format!(
+                "audio.sync-offset-ms must be within {MAX_SYNC_OFFSET_MS}"
             )));
         }
         let est = self.estimated_buffer_mb();
