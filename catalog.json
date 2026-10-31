@@ -1,0 +1,34 @@
+{
+    "addons":  [
+                   {
+                       "id":  "events",
+                       "title":  "Game events",
+                       "about":  "Saves a clip by itself on a multi-kill in Rainbow Six Siege, Counter-Strike 2, Dota 2 or League of Legends.",
+                       "version":  "1.0.0",
+                       "min_app":  "7.0.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/events-1.0.0.zip",
+                       "size":  700293,
+                       "sha256":  "441ad900cb4acd44ebea89cbab00b1ea469be0eed6c404d509e5ec2357845f90"
+                   },
+                   {
+                       "id":  "roulette",
+                       "title":  "Clip roulette",
+                       "about":  "A button on Home that plays a random old clip. Nostalgia or trauma.",
+                       "version":  "1.0.0",
+                       "min_app":  "7.0.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/roulette-1.0.0.zip",
+                       "size":  184524,
+                       "sha256":  "fa9bdc793a31007d4b09048555ee34bef4dedee1923b94909d98e33552e05770"
+                   },
+                   {
+                       "id":  "voice",
+                       "title":  "Clip that",
+                       "about":  "Say \"simple clip that\" and it saves a clip. Works offline with Windows speech recognition.",
+                       "version":  "1.0.0",
+                       "min_app":  "7.0.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.0.0.zip",
+                       "size":  427861,
+                       "sha256":  "7e292207ac7b865aa5b496569e66f08937d749a25bbe36aac5a38e953344f59e"
+                   }
+               ]
+}
