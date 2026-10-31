@@ -242,7 +242,7 @@ fn run(dir: &Path, options: &Options) {
             Ok(Note::Heard(h)) => {
                 let now = Instant::now();
                 let ok = settings.enabled && hear::accepts(&h, settings.strictness);
-                tracing::info!(text = %h.text, confidence = h.confidence, command = h.command, ok, "heard");
+                tracing::info!(text = %h.text, confidence = h.confidence, words = ?h.words, command = h.command, ok, "heard");
                 if ok && cooldown.take(now) {
                     let result = ipc::save(settings.secs);
                     match &result {

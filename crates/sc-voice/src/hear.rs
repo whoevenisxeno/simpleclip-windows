@@ -31,10 +31,18 @@ impl Strictness {
 
     pub fn floor(self) -> (f32, f32) {
         match self {
-            Self::Normal => (0.6, 0.2),
-            Self::Strict => (0.75, 0.4),
+            Self::Normal => (0.15, 0.01),
+            Self::Strict => (0.5, 0.2),
         }
     }
+}
+
+fn clip_word(h: &Heard) -> Option<f32> {
+    h.text
+        .split_whitespace()
+        .zip(&h.words)
+        .find(|(w, _)| w.to_lowercase().contains("clip"))
+        .map(|(_, c)| *c)
 }
 
 pub fn normalize(text: &str) -> String {
@@ -55,7 +63,11 @@ pub fn is_phrase(text: &str) -> bool {
 
 pub fn accepts(h: &Heard, s: Strictness) -> bool {
     let (whole, word) = s.floor();
-    h.command && is_phrase(&h.text) && h.confidence >= whole && h.words.iter().all(|&w| w >= word)
+    let words = match s {
+        Strictness::Normal => clip_word(h).is_some_and(|c| c >= word),
+        Strictness::Strict => h.words.iter().all(|&w| w >= word),
+    };
+    h.command && is_phrase(&h.text) && h.confidence >= whole && words
 }
 
 pub struct Cooldown {
@@ -199,14 +211,17 @@ mod tests {
 
     #[test]
     fn confidence_must_reach_the_chosen_level() {
-        assert!(accepts(&heard("simple clip that", 0.7), Strictness::Normal));
-        assert!(!accepts(
-            &heard("simple clip that", 0.7),
-            Strictness::Strict
+        assert!(accepts(
+            &heard("simple clip that", 0.22),
+            Strictness::Normal
         ));
-        assert!(accepts(&heard("simple clip that", 0.9), Strictness::Strict));
         assert!(!accepts(
             &heard("simple clip that", 0.4),
+            Strictness::Strict
+        ));
+        assert!(accepts(&heard("simple clip that", 0.6), Strictness::Strict));
+        assert!(!accepts(
+            &heard("simple clip that", 0.1),
             Strictness::Normal
         ));
         assert!(!accepts(
@@ -218,11 +233,20 @@ mod tests {
     #[test]
     fn one_badly_heard_word_is_enough_to_refuse() {
         let mut h = heard("simple clip that", 0.8);
-        h.words = vec![0.9, 0.05, 0.9];
+        h.words = vec![0.9, 0.0, 0.9];
         assert!(!accepts(&h, Strictness::Normal));
-        h.words = vec![0.9, 0.3, 0.9];
+        h.words = vec![0.0, 0.02, 0.61];
+        h.confidence = 0.21;
         assert!(accepts(&h, Strictness::Normal));
         assert!(!accepts(&h, Strictness::Strict));
+        h.words = vec![0.9, 0.3, 0.9];
+        h.confidence = 0.8;
+        assert!(accepts(&h, Strictness::Strict));
+        let mut joined = heard("simpleclip that", 0.4);
+        joined.words = vec![0.27, 0.62];
+        assert!(accepts(&joined, Strictness::Normal));
+        joined.words = vec![0.0, 0.62];
+        assert!(!accepts(&joined, Strictness::Normal));
     }
 
     #[test]

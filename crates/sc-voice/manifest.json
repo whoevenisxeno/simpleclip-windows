@@ -1,6 +1,6 @@
 {
   "name": "voice",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "title": "Clip that",
   "about": "Say \"simple clip that\" and it saves a clip. Works offline with Windows speech recognition.",
   "exe": "sc-voice.exe",
