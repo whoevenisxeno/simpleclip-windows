@@ -13,22 +13,22 @@
                    {
                        "id":  "roulette",
                        "title":  "Clip roulette",
-                       "about":  "A button on Home that plays a random old clip. Nostalgia or trauma.",
-                       "version":  "1.0.0",
-                       "min_app":  "7.0.0",
-                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/roulette-1.0.0.zip",
-                       "size":  184524,
-                       "sha256":  "fa9bdc793a31007d4b09048555ee34bef4dedee1923b94909d98e33552e05770"
+                       "about":  "A big button in Clips that plays a random old clip. Nostalgia or trauma.",
+                       "version":  "1.1.0",
+                       "min_app":  "7.1.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/roulette-1.1.0.zip",
+                       "size":  184512,
+                       "sha256":  "00344206026b3339e2dd5b0e4f73c4a745ccd666d5163e46114bca5e40c1dff7"
                    },
                    {
                        "id":  "voice",
                        "title":  "Clip that",
-                       "about":  "Say \"simple clip that\" and it saves a clip. Works offline with Windows speech recognition.",
-                       "version":  "1.0.1",
+                       "about":  "Say \"simple clip that\" (or \"hey simple clip that\") and it saves a clip. Works offline with Windows speech recognition.",
+                       "version":  "1.1.0",
                        "min_app":  "7.0.0",
-                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.0.1.zip",
-                       "size":  430185,
-                       "sha256":  "21faa11bcdfe7401019d85531559ca41ae89485597c8d27970e603305c9d89bc"
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.1.0.zip",
+                       "size":  431356,
+                       "sha256":  "00a86d7529dd1dc1adb8cd989ad927a481433cf583441ac02d7269007a9a83f8"
                    }
                ]
 }
