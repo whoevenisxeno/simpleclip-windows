@@ -24,11 +24,11 @@
                        "id":  "voice",
                        "title":  "Clip that",
                        "about":  "Say \"simple clip that\" and it saves a clip. Works offline with Windows speech recognition.",
-                       "version":  "1.0.0",
+                       "version":  "1.0.1",
                        "min_app":  "7.0.0",
-                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.0.0.zip",
-                       "size":  427861,
-                       "sha256":  "7e292207ac7b865aa5b496569e66f08937d749a25bbe36aac5a38e953344f59e"
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.0.1.zip",
+                       "size":  430185,
+                       "sha256":  "21faa11bcdfe7401019d85531559ca41ae89485597c8d27970e603305c9d89bc"
                    }
                ]
 }
