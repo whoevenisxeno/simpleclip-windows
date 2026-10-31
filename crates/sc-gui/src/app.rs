@@ -231,6 +231,10 @@ impl ScApp {
             updater: Default::default(),
             shot,
         };
+        #[cfg(windows)]
+        if app.shot.is_some() {
+            app.settings.addon.demo(true);
+        }
         if updated_from.is_some() {
             app.toast(
                 format!("SimpleClip updated to {}", env!("CARGO_PKG_VERSION")),
@@ -767,6 +771,8 @@ impl ScApp {
             self.cfg.general.accent = shot_accent;
             self.saved_cfg = self.cfg.clone();
             self.settings = Default::default();
+            #[cfg(windows)]
+            self.settings.addon.demo(name != "settings-addon");
             {
                 use screens::settings::Tab;
                 match name {
@@ -793,11 +799,7 @@ impl ScApp {
                     "settings-card" => self.settings.tab = Tab::SaveCard,
                     "settings-look" | "look-accent" | "look-sand" => self.settings.tab = Tab::Look,
                     "settings-system" => self.settings.tab = Tab::System,
-                    "settings-addon-on" => {
-                        self.settings.tab = Tab::Addons;
-                        #[cfg(windows)]
-                        self.settings.addon.demo();
-                    }
+                    "settings-addon-on" => self.settings.tab = Tab::Addons,
                     "settings-addon" => {
                         self.settings.tab = Tab::Addons;
                         #[cfg(windows)]

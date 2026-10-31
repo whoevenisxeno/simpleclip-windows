@@ -1,0 +1,16 @@
+[package]
+name = "sc-roulette"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sc-roulette"
+path = "src/main.rs"
+
+[dependencies]
+sc-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true

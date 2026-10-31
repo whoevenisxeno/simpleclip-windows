@@ -114,7 +114,9 @@ $eventsStage = Join-Path $root "dist\events"
 Remove-Item $eventsStage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $eventsStage | Out-Null
 Copy-Item "$root\target\release\sc-events.exe" $eventsStage
-Set-Content (Join-Path $eventsStage 'manifest.json') "{`"name`":`"events`",`"version`":`"$version`"}" -Encoding ascii
+$eventsVersion = (Select-String -Path "$root\crates\sc-events\Cargo.toml" -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+$eventsManifest = ([regex]'"version"\s*:\s*"[^"]*"').Replace([IO.File]::ReadAllText("$root\crates\sc-events\manifest.json"), "`"version`": `"$eventsVersion`"", 1)
+[IO.File]::WriteAllText((Join-Path $eventsStage 'manifest.json'), $eventsManifest, (New-Object Text.UTF8Encoding($false)))
 $eventsZip = Join-Path $root "dist\SimpleClip-$version-events.zip"
 Remove-Item $eventsZip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$eventsStage\*" -DestinationPath $eventsZip

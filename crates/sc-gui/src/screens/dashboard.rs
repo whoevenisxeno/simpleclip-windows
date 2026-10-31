@@ -80,6 +80,8 @@ fn online(app: &mut ScApp, ui: &mut Ui, s: &StatusReport) {
     ui.add_space(18.0);
     recent(app, ui);
     hints(app, ui);
+    #[cfg(windows)]
+    addon_buttons(app, ui);
     let used = ui.cursor().top() - top;
     ui.add_space(fold_gap(ui.clip_rect().height(), used));
     insights(app, ui);
@@ -681,6 +683,45 @@ fn send(app: &mut ScApp, req: Request) {
         Ok(Response::Error { message }) => app.toast(message, ToastKind::Warn),
         Ok(_) => {}
         Err(e) => app.toast(e.to_string(), ToastKind::Error),
+    }
+}
+
+#[cfg(windows)]
+fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
+    use crate::addon::Reply;
+    app.settings.addon.refresh();
+    match app.settings.addon.answer() {
+        Some(Reply::Open(path)) if path.is_file() => crate::screens::gallery::play(app, &path),
+        Some(Reply::Open(_)) => app.toast("That clip is no longer there", ToastKind::Warn),
+        Some(Reply::Toast(t)) => app.toast(t, ToastKind::Ok),
+        Some(Reply::Error(e)) => app.toast(e, ToastKind::Warn),
+        Some(Reply::Quiet) | None => {}
+    }
+    let list = app.settings.addon.home_buttons();
+    if list.is_empty() {
+        return;
+    }
+    let busy = app.settings.addon.pressing();
+    let mut hit = None;
+    ui.add_space(14.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+        ui.add_enabled_ui(!busy, |ui| {
+            for (i, h) in list.iter().enumerate() {
+                let glyph = crate::addon::glyph(&h.button.icon);
+                let mut r = widgets::quiet_button(ui, Some(glyph), &h.button.label);
+                if !h.button.hint.is_empty() {
+                    r = r.on_hover_text(&h.button.hint);
+                }
+                if r.clicked() {
+                    hit = Some(i);
+                }
+            }
+        });
+    });
+    if let Some(h) = hit.and_then(|i| list.get(i)) {
+        let clips = app.cfg.save.resolve_dir();
+        app.settings.addon.press(h, clips, ui.ctx());
     }
 }
 

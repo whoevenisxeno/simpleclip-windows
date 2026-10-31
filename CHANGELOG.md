@@ -2,6 +2,17 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.0.0
+
+### Added
+- Settings > Add-ons is now a small shop. It lists every add-on with its version, and you install, update or remove each one on its own. Add-ons no longer ship with SimpleClip releases: they have their own versions and update by themselves in the background, so a new or fixed add-on does not need a SimpleClip update. Turn off "Update add-ons automatically" to update by hand. Every download is checked against its checksum before it is installed.
+- Add-ons can bring their own settings, shown in their card, and their own buttons on Home.
+- New add-on, Clip that: say "simple clip that" and it saves a clip. Offline, using Windows speech recognition. Only the exact phrase counts, and saves are at least 5 seconds apart. You can set the clip length, turn the beep off, or make it listen more strictly.
+- New add-on, Clip roulette: a button on Home that plays a random clip, with clips older than a week coming up three times as often.
+
+### Changed
+- Game events is now an add-on in the shop with its own version (1.0.0). If you already have it, it shows an update the first time.
+
 ## 6.9.0
 
 ### Added

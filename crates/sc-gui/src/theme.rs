@@ -103,6 +103,7 @@ pub mod icon {
     pub const MORE: &str = "\u{E712}";
     pub const COPY: &str = "\u{E8C8}";
     pub const SHARE: &str = "\u{E72D}";
+    pub const SHUFFLE: &str = "\u{E8B1}";
 }
 
 pub fn install_fonts(ctx: &egui::Context) {

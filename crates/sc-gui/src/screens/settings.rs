@@ -59,7 +59,7 @@ const TABS: [(Tab, &str, &str); 9] = [
     (
         Tab::Addons,
         "Add-ons",
-        "Optional extras. Nothing here is installed until you turn it on.",
+        "Optional extras that update on their own. Nothing is installed until you choose it.",
     ),
     (
         Tab::System,
@@ -74,7 +74,7 @@ pub struct SettingsState {
     pub query: String,
     pub dupes: Option<crate::dupes::Plan>,
     #[cfg(windows)]
-    pub addon: crate::addon::Events,
+    pub addon: crate::addon::Shop,
 }
 
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
@@ -896,186 +896,454 @@ fn extra_shortcuts(h: &mut HotkeySettings, buffer_secs: u32, ui: &mut Ui) {
 
 #[cfg(windows)]
 fn addons_section(app: &mut ScApp, ui: &mut Ui) {
-    use crate::addon::Finished;
+    use crate::addon::{Finished, EVENTS};
+    let running = matches!(app.link, crate::daemon::Link::Connected(_));
+    if widgets::search_query(ui.ctx()).is_empty() {
+        app.settings.addon.open(ui.ctx());
+    }
     app.settings.addon.refresh();
+    app.settings.addon.sync_events(app.cfg.events.enabled);
+    if let Some(e) = app.settings.addon.flush() {
+        app.toast(e, ToastKind::Warn);
+    }
     if let Some(done) = app.settings.addon.poll() {
         match done {
-            Finished::Installed(_) => {
+            Finished::Installed {
+                id, update: false, ..
+            } if id == EVENTS => {
                 app.cfg.events.enabled = true;
                 app.toast("Game events are on", ToastKind::Ok);
             }
-            Finished::Removed => {
+            Finished::Installed {
+                title,
+                version,
+                update: true,
+                ..
+            } => app.toast(format!("{title} was updated to {version}"), ToastKind::Ok),
+            Finished::Installed { title, .. } => {
+                app.toast(format!("{title} is installed"), ToastKind::Ok)
+            }
+            Finished::Removed { id, .. } if id == EVENTS => {
                 app.cfg.events.enabled = false;
                 app.toast("The game events add-on was removed", ToastKind::Ok);
+            }
+            Finished::Removed { title, .. } => {
+                app.toast(format!("{title} was removed"), ToastKind::Ok)
             }
             Finished::Failed(e) => app.toast(e, ToastKind::Warn),
         }
     }
-    addons_card(&mut app.cfg.events, &mut app.settings.addon, ui);
+    if let Some(e) = shop_view(&mut app.cfg, &mut app.settings.addon, running, ui) {
+        app.toast(e, ToastKind::Warn);
+    }
 }
 
 #[cfg(windows)]
-fn addons_card(events: &mut EventsSettings, addon: &mut crate::addon::Events, ui: &mut Ui) {
-    use crate::addon::{cs2_text, dota_text, league_text, r6_text, Busy};
+fn list_line(shop: &crate::addon::Shop) -> String {
+    match (shop.fetching(), shop.list()) {
+        (true, _) => "Checking for add-ons\u{2026}".to_string(),
+        (false, Some(Err(e))) => format!("Couldn’t load the list: {e}"),
+        (false, Some(Ok(l))) if l.len() == 1 => "1 add-on to choose from".to_string(),
+        (false, Some(Ok(l))) => format!("{} add-ons to choose from", l.len()),
+        (false, None) => "Not loaded yet".to_string(),
+    }
+}
+
+#[cfg(windows)]
+fn shop_view(
+    cfg: &mut sc_core::config::Config,
+    shop: &mut crate::addon::Shop,
+    running: bool,
+    ui: &mut Ui,
+) -> Option<String> {
+    use crate::addon::{Busy, State, EVENTS};
     let p = pal_ui(ui);
-    let busy = addon.busy();
-    let installed = addon.installed().is_some();
-    let status = addon.status().cloned();
-    let (mut ask, mut remove) = (false, false);
-    let cs2_line = cs2_text(status.as_ref(), events.enabled && events.cs2);
-    let league_line = league_text(status.as_ref(), events.enabled && events.league);
-    let r6_line = r6_text(status.as_ref(), events.enabled && events.r6);
-    let dota_line = dota_text(status.as_ref(), events.enabled && events.dota2);
+    let line = list_line(shop);
+    let fetching = shop.fetching();
+    let mut reload = false;
     section(ui, None, |s| {
         s.row(
-            "Game events",
-            Some("Experimental. Saves a clip on its own after a multi-kill"),
-            |ui| match (&busy, installed) {
-                (Some(Busy::Working { label, percent }), _) => {
-                    let text = match percent {
-                        Some(n) => format!("{label}\u{2026} {n}%"),
-                        None => format!("{label}\u{2026}"),
-                    };
-                    ui.label(RichText::new(text).size(13.0).color(p.text_2));
-                }
-                (None, false) => {
-                    if widgets::quiet_button(ui, None, "Turn on\u{2026}").clicked() {
-                        ask = true;
-                    }
-                }
-                (None, true) => {
-                    widgets::toggle(ui, &mut events.enabled);
-                    if widgets::quiet_button(ui, None, "Remove").clicked() {
-                        remove = true;
-                    }
-                }
+            "Update add-ons automatically",
+            Some("New versions install in the background, no SimpleClip update needed"),
+            |ui| {
+                widgets::toggle(ui, &mut cfg.addons.auto_update);
             },
         );
-    });
-    if installed && busy.is_none() {
-        ui.add_enabled_ui(events.enabled, |ui| {
-            section(ui, Some("Games"), |s| {
-                s.row("Rainbow Six Siege", Some(&r6_line), |ui| {
-                    widgets::toggle(ui, &mut events.r6);
-                });
-                s.row("Counter-Strike 2", Some(&cs2_line), |ui| {
-                    widgets::toggle(ui, &mut events.cs2);
-                });
-                s.row("Dota 2", Some(&dota_line), |ui| {
-                    widgets::toggle(ui, &mut events.dota2);
-                });
-                s.row("League of Legends", Some(&league_line), |ui| {
-                    widgets::toggle(ui, &mut events.league);
-                });
-            });
-            section(ui, Some("Saving"), |s| {
-                s.row(
-                    "Save a clip at",
-                    Some("The smallest streak that counts"),
-                    |ui| {
-                        widgets::segmented(
-                            ui,
-                            &mut events.min_kills,
-                            &[
-                                (1, "Any kill"),
-                                (2, "Double"),
-                                (3, "Triple"),
-                                (4, "Quadra"),
-                                (5, "Penta"),
-                            ],
-                        );
-                    },
-                );
-                s.row(
-                    "Clip length",
-                    Some("How much before the moment is saved"),
-                    |ui| {
-                        widgets::segmented(
-                            ui,
-                            &mut events.save_secs,
-                            &[
-                                (10, "10 s"),
-                                (15, "15 s"),
-                                (20, "20 s"),
-                                (30, "30 s"),
-                                (60, "1 min"),
-                            ],
-                        );
-                    },
-                );
-                s.row(
-                    "Test mode",
-                    Some("Shows a notification instead of saving a clip"),
-                    |ui| {
-                        widgets::toggle(ui, &mut events.test_mode);
-                    },
-                );
+        s.row("Add-on list", Some(&line), |ui| {
+            ui.add_enabled_ui(!fetching, |ui| {
+                if widgets::quiet_button(ui, Some(theme::icon::REFRESH), "Refresh").clicked() {
+                    reload = true;
+                }
             });
         });
+    });
+    if reload {
+        shop.reload(ui.ctx());
     }
-    if ask {
-        addon.asking = true;
-    }
-    if remove {
-        events.enabled = false;
-        addon.start_remove(ui.ctx());
-    }
-    if addon.asking {
-        let (mut go, mut cancel) = (false, false);
-        egui::Window::new("addon-window")
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .auto_sized()
-            .frame(
-                egui::Frame::none()
-                    .fill(p.card)
-                    .rounding(egui::Rounding::same(theme::radius::SHEET))
-                    .stroke(egui::Stroke::new(1.0_f32, p.line))
-                    .inner_margin(egui::Margin::same(20.0))
-                    .shadow(theme::float_shadow(&p)),
-            )
-            .show(ui.ctx(), |ui| {
-                ui.set_width(460.0);
-                ui.label(
-                    RichText::new("Turn on game events?")
-                        .font(egui::FontId::new(18.0, theme::semibold()))
-                        .color(p.text),
-                );
-                ui.add_space(6.0);
-                widgets::secondary(
-                    ui,
-                    "This is an optional add-on, so it is not part of SimpleClip until you choose it. SimpleClip will download it from the SimpleClip releases on GitHub, check its checksum, and install it in your SimpleClip data folder.",
-                );
-                ui.add_space(8.0);
-                widgets::secondary(
-                    ui,
-                    "It saves a clip by itself when you get a multi-kill in Rainbow Six Siege, Counter-Strike 2, Dota 2 or League of Legends. For CS2 and Dota 2 it adds one small file to the game's cfg folder. For Rainbow Six Siege it reads the kill feed on your screen, and only looks for your own kills. It only talks to your own computer. You can turn it off or remove it here at any time.",
-                );
-                ui.add_space(8.0);
-                widgets::secondary(
-                    ui,
-                    "It is experimental, so it may miss a kill or save one you did not expect.",
-                );
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    if widgets::primary_button(ui, None, "Download and turn on").clicked() {
-                        go = true;
+    let (mut get, mut gone) = (None, None);
+    let mut cards = shop.cards(env!("CARGO_PKG_VERSION"));
+    cards.sort_by_key(|c| c.id == EVENTS && c.installed());
+    for card in cards {
+        let events = card.id == EVENTS;
+        let busy = shop.busy_for(&card.id);
+        let idle = !shop.busy();
+        let staged = shop.staged(&card.id);
+        let status = shop.status_line(&card.id).map(str::to_string);
+        section(ui, None, |s| {
+            s.full(&format!("{} {}", card.title, card.about), |ui| {
+                card_head(ui, &card, status.as_deref(), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if let Some(Busy::Working { label, percent }) = &busy {
+                        let text = match percent {
+                            Some(n) => format!("{label}\u{2026} {n}%"),
+                            None => format!("{label}\u{2026}"),
+                        };
+                        ui.label(RichText::new(text).size(13.0).color(p.text_2));
+                        ui.ctx().request_repaint_after(Duration::from_millis(250));
+                        return;
                     }
-                    if widgets::quiet_button(ui, None, "Not now").clicked() {
-                        cancel = true;
+                    if staged {
+                        ui.label(
+                            RichText::new("Finishing the update\u{2026}")
+                                .size(13.0)
+                                .color(p.text_2),
+                        );
+                        return;
                     }
+                    ui.add_enabled_ui(idle, |ui| {
+                        let mut remove = |ui: &mut Ui| {
+                            if widgets::quiet_button(ui, None, "Remove").clicked() {
+                                gone = Some(card.id.clone());
+                            }
+                        };
+                        match &card.state {
+                            State::Get => {
+                                let label = if events { "Install\u{2026}" } else { "Install" };
+                                if widgets::primary_button(ui, None, label).clicked() {
+                                    get = Some(card.id.clone());
+                                }
+                            }
+                            State::Update => {
+                                remove(ui);
+                                if widgets::primary_button(ui, None, "Update").clicked() {
+                                    get = Some(card.id.clone());
+                                }
+                            }
+                            State::Current | State::Local => remove(ui),
+                            State::Needs(v) => {
+                                if card.installed() {
+                                    remove(ui);
+                                }
+                                ui.label(
+                                    RichText::new(format!("Needs SimpleClip {v}"))
+                                        .size(13.0)
+                                        .color(p.text_2),
+                                );
+                            }
+                        }
+                        if events && card.installed() {
+                            widgets::toggle(ui, &mut cfg.events.enabled);
+                        }
+                    });
                 });
             });
-        if go {
-            addon.start_install(ui.ctx());
-        }
-        if cancel {
-            addon.asking = false;
+            if let (Some(m), true) = (
+                &card.manifest,
+                card.installed() && !events && busy.is_none(),
+            ) {
+                if addon_rows(s, m, shop.values_mut(&card.id)) {
+                    shop.touch(&card.id);
+                }
+            }
+        });
+        if events && card.installed() && busy.is_none() {
+            let status = shop.events_status().cloned();
+            events_options(&mut cfg.events, status.as_ref(), ui);
         }
     }
+    let mut err = None;
+    if let Some(id) = get {
+        if id == EVENTS && !shop.events_installed() {
+            shop.asking = true;
+        } else if let Err(e) = shop.install(&id, running, ui.ctx()) {
+            err = Some(e);
+        }
+    }
+    if let Some(id) = gone {
+        if id == EVENTS {
+            cfg.events.enabled = false;
+        }
+        shop.remove(&id, ui.ctx());
+    }
+    if shop.asking {
+        match events_dialog(ui) {
+            Some(true) => {
+                shop.asking = false;
+                if let Err(e) = shop.install(EVENTS, running, ui.ctx()) {
+                    err = Some(e);
+                }
+            }
+            Some(false) => shop.asking = false,
+            None => {}
+        }
+    }
+    err
+}
+
+#[cfg(windows)]
+fn card_head(
+    ui: &mut Ui,
+    card: &crate::addon::Card,
+    status: Option<&str>,
+    buttons: impl FnOnce(&mut Ui),
+) {
+    let p = pal_ui(ui);
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(
+                RichText::new(&card.title)
+                    .font(egui::FontId::new(15.5, theme::semibold()))
+                    .color(p.text),
+            );
+            let v = card.version_line();
+            if !v.is_empty() {
+                ui.label(RichText::new(v).size(12.0).color(p.text_3));
+            }
+        });
+        ui.with_layout(Layout::right_to_left(Align::Center), buttons);
+    });
+    if !card.about.is_empty() {
+        ui.add_space(6.0);
+        ui.label(RichText::new(&card.about).size(13.0).color(p.text_2));
+    }
+    if let Some(line) = status {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 7.0;
+            widgets::dot(ui, p.green);
+            ui.label(RichText::new(line).size(12.5).color(p.text_2));
+        });
+    }
+}
+
+#[cfg(windows)]
+fn addon_rows(
+    s: &mut widgets::Section,
+    m: &sc_core::store::Manifest,
+    values: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    use sc_core::store::{self, Kind};
+    use serde_json::Value;
+    let mut changed = false;
+    if m.background {
+        let mut on = store::is_enabled(values);
+        let mut flip = false;
+        s.row(
+            "On",
+            Some("Runs in the background while SimpleClip is running"),
+            |ui| {
+                flip = widgets::toggle(ui, &mut on).changed();
+            },
+        );
+        if flip {
+            values.insert(store::ENABLED.into(), Value::Bool(on));
+            changed = true;
+        }
+    }
+    let live = !m.background || store::is_enabled(values);
+    for set in m.settings.iter().filter(|x| x.key != store::ENABLED) {
+        let Some(now) = store::value(m, values, &set.key) else {
+            continue;
+        };
+        let hint = (!set.hint.is_empty()).then_some(set.hint.as_str());
+        let mut next = None;
+        s.row(&set.label, hint, |ui| {
+            ui.add_enabled_ui(live, |ui| match &set.kind {
+                Kind::Toggle { .. } => {
+                    let mut b = now.as_bool().unwrap_or(false);
+                    if widgets::toggle(ui, &mut b).changed() {
+                        next = Some(Value::Bool(b));
+                    }
+                }
+                Kind::Choice { options, .. } => {
+                    let mut i = options
+                        .iter()
+                        .position(|o| Some(o.as_str()) == now.as_str())
+                        .unwrap_or(0);
+                    if options.len() <= 4 {
+                        let opts: Vec<(usize, &str)> =
+                            options.iter().map(String::as_str).enumerate().collect();
+                        if widgets::segmented(ui, &mut i, &opts) {
+                            next = options.get(i).map(|o| Value::from(o.as_str()));
+                        }
+                    } else {
+                        egui::ComboBox::from_id_salt(("addon-choice", &m.name, &set.key))
+                            .selected_text(options.get(i).map(String::as_str).unwrap_or(""))
+                            .width(200.0)
+                            .show_ui(ui, |ui| {
+                                for (j, o) in options.iter().enumerate() {
+                                    if ui.selectable_label(i == j, o).clicked() {
+                                        next = Some(Value::from(o.as_str()));
+                                    }
+                                }
+                            });
+                    }
+                }
+                Kind::Number {
+                    min,
+                    max,
+                    default,
+                    unit,
+                } => {
+                    let v = now.as_i64().unwrap_or(*default);
+                    let shown = if unit.is_empty() {
+                        v.to_string()
+                    } else {
+                        format!("{v} {unit}")
+                    };
+                    widgets::value_label(ui, &shown);
+                    let span = (max - min).clamp(0, u32::MAX as i64) as u32;
+                    let mut x = (v - min).clamp(0, span as i64) as u32;
+                    let home = (default - min).clamp(0, span as i64) as u32;
+                    if widgets::step_slider(ui, &mut x, span, home).changed() {
+                        next = Some(Value::from(min + x as i64));
+                    }
+                }
+            });
+        });
+        if let Some(v) = next {
+            values.insert(set.key.clone(), v);
+            changed = true;
+        }
+    }
+    changed
+}
+
+#[cfg(windows)]
+fn events_options(
+    events: &mut EventsSettings,
+    status: Option<&sc_core::addon::EventsStatus>,
+    ui: &mut Ui,
+) {
+    use crate::addon::{cs2_text, dota_text, league_text, r6_text};
+    let cs2_line = cs2_text(status, events.enabled && events.cs2);
+    let league_line = league_text(status, events.enabled && events.league);
+    let r6_line = r6_text(status, events.enabled && events.r6);
+    let dota_line = dota_text(status, events.enabled && events.dota2);
+    ui.add_enabled_ui(events.enabled, |ui| {
+        section(ui, Some("Games"), |s| {
+            s.row("Rainbow Six Siege", Some(&r6_line), |ui| {
+                widgets::toggle(ui, &mut events.r6);
+            });
+            s.row("Counter-Strike 2", Some(&cs2_line), |ui| {
+                widgets::toggle(ui, &mut events.cs2);
+            });
+            s.row("Dota 2", Some(&dota_line), |ui| {
+                widgets::toggle(ui, &mut events.dota2);
+            });
+            s.row("League of Legends", Some(&league_line), |ui| {
+                widgets::toggle(ui, &mut events.league);
+            });
+        });
+        section(ui, Some("Saving"), |s| {
+            s.row(
+                "Save a clip at",
+                Some("The smallest streak that counts"),
+                |ui| {
+                    widgets::segmented(
+                        ui,
+                        &mut events.min_kills,
+                        &[
+                            (1, "Any kill"),
+                            (2, "Double"),
+                            (3, "Triple"),
+                            (4, "Quadra"),
+                            (5, "Penta"),
+                        ],
+                    );
+                },
+            );
+            s.row(
+                "Clip length",
+                Some("How much before the moment is saved"),
+                |ui| {
+                    widgets::segmented(
+                        ui,
+                        &mut events.save_secs,
+                        &[
+                            (10, "10 s"),
+                            (15, "15 s"),
+                            (20, "20 s"),
+                            (30, "30 s"),
+                            (60, "1 min"),
+                        ],
+                    );
+                },
+            );
+            s.row(
+                "Test mode",
+                Some("Shows a notification instead of saving a clip"),
+                |ui| {
+                    widgets::toggle(ui, &mut events.test_mode);
+                },
+            );
+        });
+    });
+}
+
+#[cfg(windows)]
+fn events_dialog(ui: &mut Ui) -> Option<bool> {
+    let p = pal_ui(ui);
+    let mut answer = None;
+    egui::Window::new("addon-window")
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .auto_sized()
+        .frame(
+            egui::Frame::none()
+                .fill(p.card)
+                .rounding(egui::Rounding::same(theme::radius::SHEET))
+                .stroke(egui::Stroke::new(1.0_f32, p.line))
+                .inner_margin(egui::Margin::same(20.0))
+                .shadow(theme::float_shadow(&p)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_width(460.0);
+            ui.label(
+                RichText::new("Turn on game events?")
+                    .font(egui::FontId::new(18.0, theme::semibold()))
+                    .color(p.text),
+            );
+            ui.add_space(6.0);
+            widgets::secondary(
+                ui,
+                "This is an optional add-on, so it is not part of SimpleClip until you choose it. SimpleClip will download it from the SimpleClip add-on list on GitHub, check its checksum, and install it in your SimpleClip data folder.",
+            );
+            ui.add_space(8.0);
+            widgets::secondary(
+                ui,
+                "It saves a clip by itself when you get a multi-kill in Rainbow Six Siege, Counter-Strike 2, Dota 2 or League of Legends. For CS2 and Dota 2 it adds one small file to the game's cfg folder. For Rainbow Six Siege it reads the kill feed on your screen, and only looks for your own kills. It only talks to your own computer. You can turn it off or remove it here at any time.",
+            );
+            ui.add_space(8.0);
+            widgets::secondary(
+                ui,
+                "It is experimental, so it may miss a kill or save one you did not expect.",
+            );
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                if widgets::primary_button(ui, None, "Download and turn on").clicked() {
+                    answer = Some(true);
+                }
+                if widgets::quiet_button(ui, None, "Not now").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+    answer
 }
 
 fn general(app: &mut ScApp, ui: &mut Ui) {
@@ -2108,23 +2376,75 @@ mod shortcut_tests {
 }
 
 #[cfg(all(test, windows))]
-mod addon_card_tests {
+mod addon_shop_tests {
     use super::*;
-    use crate::addon::Events;
+    use crate::addon::Shop;
     use crate::testkit::Harness;
     use sc_core::addon::{now_secs, EventsStatus};
+    use sc_core::config::Config;
+    use sc_core::store::{Entry, Kind, Manifest, Setting};
+    use serde_json::Value;
+    use std::path::PathBuf;
 
-    fn frames(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events) {
+    fn entry(id: &str, title: &str, version: &str, min_app: &str) -> Entry {
+        Entry {
+            id: id.into(),
+            title: title.into(),
+            about: format!("About {title}"),
+            version: version.into(),
+            min_app: min_app.into(),
+            ..Default::default()
+        }
+    }
+
+    fn manifest(id: &str, version: &str) -> Manifest {
+        Manifest {
+            name: id.into(),
+            version: version.into(),
+            exe: format!("sc-{id}.exe"),
+            ..Default::default()
+        }
+    }
+
+    fn events_shop(installed: bool, status: Option<EventsStatus>) -> Shop {
+        let mut shop = Shop::default();
+        let mut m = manifest("events", "9.9.9");
+        m.background = true;
+        let have = if installed {
+            vec![(PathBuf::from("events"), m)]
+        } else {
+            Vec::new()
+        };
+        shop.pretend(
+            vec![entry("events", "Game events", "9.9.9", "")],
+            have,
+            status,
+        );
+        shop
+    }
+
+    fn frames(h: &mut Harness, cfg: &mut Config, shop: &mut Shop) {
         for _ in 0..3 {
             h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
-                addons_card(ev, addon, ui)
+                shop_view(cfg, shop, false, ui);
             });
         }
     }
 
-    fn click(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events, text: &str) {
-        h.click_text(text, &mut |ui| addons_card(ev, addon, ui));
-        frames(h, ev, addon);
+    fn click(h: &mut Harness, cfg: &mut Config, shop: &mut Shop, text: &str) {
+        h.click_text(text, &mut |ui| {
+            shop_view(cfg, shop, false, ui);
+        });
+        frames(h, cfg, shop);
+    }
+
+    fn switch(h: &mut Harness, cfg: &mut Config, shop: &mut Shop, row: &str) {
+        let r = h.at(row, 0).unwrap_or_else(|| panic!("no {row}"));
+        let at = egui::pos2(h.right - 40.0, r.center().y);
+        h.click(at, &mut |ui| {
+            shop_view(cfg, shop, false, ui);
+        });
+        frames(h, cfg, shop);
     }
 
     fn live(cs2: &str, league: &str) -> EventsStatus {
@@ -2139,41 +2459,41 @@ mod addon_card_tests {
     }
 
     #[test]
-    fn before_it_is_installed_there_is_only_a_turn_on_button() {
+    fn before_it_is_installed_there_is_only_an_install_button() {
         let mut h = Harness::new();
-        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
-        frames(&mut h, &mut ev, &mut addon);
+        let (mut cfg, mut shop) = (Config::default(), events_shop(false, None));
+        frames(&mut h, &mut cfg, &mut shop);
         assert!(h.has("Game events"));
-        assert!(h.has("Turn on…"));
+        assert!(h.has("Install…"));
+        assert!(h.has("Version 9.9.9"));
         assert!(!h.has("Counter-Strike 2"));
         assert!(!h.has("Remove"));
         assert!(!h.has("Turn on game events?"));
     }
 
     #[test]
-    fn turning_on_asks_first_and_not_now_changes_nothing() {
+    fn installing_asks_first_and_not_now_changes_nothing() {
         let mut h = Harness::new();
-        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
-        frames(&mut h, &mut ev, &mut addon);
-        click(&mut h, &mut ev, &mut addon, "Turn on…");
-        assert!(addon.asking);
+        let (mut cfg, mut shop) = (Config::default(), events_shop(false, None));
+        frames(&mut h, &mut cfg, &mut shop);
+        click(&mut h, &mut cfg, &mut shop, "Install…");
+        assert!(shop.asking);
         assert!(h.has("Turn on game events?"));
         assert!(h.has("Download and turn on"));
-        assert!(h.has("Not now"));
-        click(&mut h, &mut ev, &mut addon, "Not now");
-        assert!(!addon.asking);
+        click(&mut h, &mut cfg, &mut shop, "Not now");
+        assert!(!shop.asking);
         assert!(!h.has("Turn on game events?"));
-        assert!(!ev.enabled);
-        assert!(addon.busy().is_none());
+        assert!(!cfg.events.enabled);
+        assert!(!shop.busy());
     }
 
     #[test]
     fn once_installed_the_options_appear() {
         let mut h = Harness::new();
-        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
-        addon.pretend(Some("9.9.9"), Some(live("connected", "in-game")));
-        ev.enabled = true;
-        frames(&mut h, &mut ev, &mut addon);
+        let mut cfg = Config::default();
+        let mut shop = events_shop(true, Some(live("connected", "in-game")));
+        cfg.events.enabled = true;
+        frames(&mut h, &mut cfg, &mut shop);
         assert!(h.has("Remove"));
         assert!(h.has("Counter-Strike 2"));
         assert!(h.has("Connected to the game"));
@@ -2181,15 +2501,15 @@ mod addon_card_tests {
         assert!(h.has("In a match"));
         assert!(h.has("Save a clip at"));
         assert!(h.has("Clip length"));
-        assert!(!h.has("Turn on…"));
+        assert!(!h.has("Install…"));
     }
 
     #[test]
     fn the_status_lines_are_off_while_the_add_on_is_off() {
         let mut h = Harness::new();
-        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
-        addon.pretend(Some("9.9.9"), Some(live("connected", "in-game")));
-        frames(&mut h, &mut ev, &mut addon);
+        let mut cfg = Config::default();
+        let mut shop = events_shop(true, Some(live("connected", "in-game")));
+        frames(&mut h, &mut cfg, &mut shop);
         assert!(!h.has("Connected to the game"));
         assert!(h.has("Off"));
     }
@@ -2197,69 +2517,39 @@ mod addon_card_tests {
     #[test]
     fn the_streak_and_the_clip_length_can_be_chosen() {
         let mut h = Harness::new();
-        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
-        addon.pretend(Some("9.9.9"), None);
-        ev.enabled = true;
-        frames(&mut h, &mut ev, &mut addon);
-        assert_eq!(ev.min_kills, 2);
-        click(&mut h, &mut ev, &mut addon, "Triple");
-        assert_eq!(ev.min_kills, 3);
-        click(&mut h, &mut ev, &mut addon, "Any kill");
-        assert_eq!(ev.min_kills, 1);
-        click(&mut h, &mut ev, &mut addon, "30 s");
-        assert_eq!(ev.save_secs, 30);
-        click(&mut h, &mut ev, &mut addon, "1 min");
-        assert_eq!(ev.save_secs, 60);
-        assert!(ev.validate().is_ok());
-    }
-
-    #[test]
-    fn a_game_with_a_setup_problem_says_so() {
-        let mut h = Harness::new();
-        let (mut ev, mut addon) = (EventsSettings::default(), Events::default());
-        ev.enabled = true;
-        addon.pretend(Some("9.9.9"), Some(live("not-found", "waiting")));
-        frames(&mut h, &mut ev, &mut addon);
-        assert!(h.has("Not found in your Steam folders"));
-        assert!(h.has("Waiting for a match"));
-    }
-}
-
-#[cfg(all(test, windows))]
-mod addon_games_tests {
-    use super::*;
-    use crate::addon::Events;
-    use crate::testkit::Harness;
-    use sc_core::addon::{now_secs, EventsStatus};
-
-    fn frames(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events) {
-        for _ in 0..3 {
-            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
-                addons_card(ev, addon, ui)
-            });
-        }
+        let mut cfg = Config::default();
+        let mut shop = events_shop(true, None);
+        cfg.events.enabled = true;
+        frames(&mut h, &mut cfg, &mut shop);
+        assert_eq!(cfg.events.min_kills, 2);
+        click(&mut h, &mut cfg, &mut shop, "Triple");
+        assert_eq!(cfg.events.min_kills, 3);
+        click(&mut h, &mut cfg, &mut shop, "Any kill");
+        assert_eq!(cfg.events.min_kills, 1);
+        click(&mut h, &mut cfg, &mut shop, "30 s");
+        assert_eq!(cfg.events.save_secs, 30);
+        click(&mut h, &mut cfg, &mut shop, "1 min");
+        assert_eq!(cfg.events.save_secs, 60);
+        assert!(cfg.events.validate().is_ok());
     }
 
     #[test]
     fn every_game_has_a_row_with_its_own_status() {
         let mut h = Harness::new();
-        let mut ev = EventsSettings {
-            enabled: true,
-            ..Default::default()
-        };
-        let mut addon = Events::default();
-        addon.pretend(
-            Some("9.9.9"),
+        let mut cfg = Config::default();
+        cfg.events.enabled = true;
+        let mut shop = events_shop(
+            true,
             Some(EventsStatus {
                 r6: "watching".into(),
-                dota2: "waiting".into(),
+                dota2: "not-found".into(),
                 cs2: "connected".into(),
-                league: "in-game".into(),
+                league: "waiting".into(),
                 updated: now_secs(),
                 ..Default::default()
             }),
         );
-        frames(&mut h, &mut ev, &mut addon);
+        frames(&mut h, &mut cfg, &mut shop);
         for name in [
             "Rainbow Six Siege",
             "Counter-Strike 2",
@@ -2270,74 +2560,170 @@ mod addon_games_tests {
         }
         assert!(h.has("Watching the kill feed"));
         assert!(h.has("Connected to the game"));
-        assert!(h.has("In a match"));
+        assert!(h.has("Not found in your Steam folders"));
+        assert!(h.has("Waiting for a match"));
     }
 
     #[test]
-    fn each_game_can_be_switched_off_on_its_own() {
+    fn each_game_and_test_mode_switch_on_their_own() {
         let mut h = Harness::new();
-        let mut ev = EventsSettings {
-            enabled: true,
-            r6: false,
-            dota2: false,
-            ..Default::default()
-        };
-        let mut addon = Events::default();
-        addon.pretend(Some("9.9.9"), None);
-        frames(&mut h, &mut ev, &mut addon);
-        assert!(h.has("Rainbow Six Siege"));
+        let mut cfg = Config::default();
+        cfg.events.enabled = true;
+        cfg.events.r6 = false;
+        let mut shop = events_shop(true, None);
+        frames(&mut h, &mut cfg, &mut shop);
         assert!(h.has("Off"));
+        assert!(!cfg.events.test_mode);
+        switch(&mut h, &mut cfg, &mut shop, "Test mode");
+        assert!(cfg.events.test_mode);
+        switch(&mut h, &mut cfg, &mut shop, "Test mode");
+        assert!(!cfg.events.test_mode);
+        switch(&mut h, &mut cfg, &mut shop, "Rainbow Six Siege");
+        assert!(cfg.events.r6);
     }
-}
 
-#[cfg(all(test, windows))]
-mod addon_test_mode_tests {
-    use super::*;
-    use crate::addon::Events;
-    use crate::testkit::Harness;
+    #[test]
+    fn automatic_updates_have_a_switch() {
+        let mut h = Harness::new();
+        let (mut cfg, mut shop) = (Config::default(), events_shop(false, None));
+        frames(&mut h, &mut cfg, &mut shop);
+        assert!(cfg.addons.auto_update);
+        assert!(h.has("1 add-on to choose from"));
+        switch(&mut h, &mut cfg, &mut shop, "Update add-ons automatically");
+        assert!(!cfg.addons.auto_update);
+    }
 
-    fn frames(h: &mut Harness, ev: &mut EventsSettings, addon: &mut Events) {
-        for _ in 0..3 {
-            h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
-                addons_card(ev, addon, ui)
-            });
+    #[test]
+    fn each_card_shows_what_can_be_done() {
+        let mut h = Harness::new();
+        let mut cfg = Config::default();
+        let mut shop = Shop::default();
+        shop.pretend(
+            vec![
+                entry("voice", "Clip that", "1.0.0", ""),
+                entry("roulette", "Clip roulette", "1.2.0", ""),
+                entry("future", "Far future", "1.0.0", "99.0.0"),
+            ],
+            vec![
+                (PathBuf::from("roulette"), manifest("roulette", "1.0.0")),
+                (PathBuf::from("handmade"), manifest("handmade", "0.1.0")),
+            ],
+            None,
+        );
+        frames(&mut h, &mut cfg, &mut shop);
+        assert!(h.has("Clip that"));
+        assert!(h.has("Install"));
+        assert!(h.has("About Clip that"));
+        assert!(h.has("Update"));
+        assert!(h.has("Version 1.0.0 installed. 1.2.0 is available"));
+        assert!(h.has("Needs SimpleClip 99.0.0"));
+        assert!(h.has("handmade"));
+        assert!(h.has("Version 0.1.0"));
+        assert!(h.at("Remove", 1).is_some());
+        assert!(h.at("Remove", 2).is_none());
+        assert!(h.has("3 add-ons to choose from"));
+    }
+
+    #[test]
+    fn an_add_on_s_own_settings_are_drawn_and_saved_as_values() {
+        let mut h = Harness::new();
+        let mut cfg = Config::default();
+        let mut shop = Shop::default();
+        let mut m = manifest("voice", "1.0.0");
+        m.background = true;
+        m.settings = vec![
+            Setting {
+                key: "phrase".into(),
+                label: "Phrase".into(),
+                hint: "What to say".into(),
+                kind: Kind::Choice {
+                    options: vec!["clip that".into(), "save that".into()],
+                    default: "clip that".into(),
+                },
+            },
+            Setting {
+                key: "beep".into(),
+                label: "Beep".into(),
+                hint: String::new(),
+                kind: Kind::Toggle { default: true },
+            },
+            Setting {
+                key: "secs".into(),
+                label: "Length".into(),
+                hint: String::new(),
+                kind: Kind::Number {
+                    min: 5,
+                    max: 120,
+                    default: 30,
+                    unit: "s".into(),
+                },
+            },
+        ];
+        shop.pretend(
+            vec![entry("voice", "Clip that", "1.0.0", "")],
+            vec![(PathBuf::from("voice"), m)],
+            None,
+        );
+        frames(&mut h, &mut cfg, &mut shop);
+        for text in [
+            "On",
+            "Phrase",
+            "What to say",
+            "clip that",
+            "Beep",
+            "Length",
+            "30 s",
+        ] {
+            assert!(h.has(text), "{text}");
         }
+        click(&mut h, &mut cfg, &mut shop, "save that");
+        assert_eq!(
+            shop.values("voice").unwrap().get("phrase"),
+            Some(&Value::from("save that"))
+        );
+        switch(&mut h, &mut cfg, &mut shop, "Beep");
+        assert_eq!(
+            shop.values("voice").unwrap().get("beep"),
+            Some(&Value::Bool(false))
+        );
+        switch(&mut h, &mut cfg, &mut shop, "On");
+        assert_eq!(
+            shop.values("voice").unwrap().get("enabled"),
+            Some(&Value::Bool(false))
+        );
+        let row = h.at("Length", 0).unwrap();
+        let inside = egui::pos2(h.right - 100.0, row.center().y);
+        h.click(inside, &mut |ui| {
+            shop_view(&mut cfg, &mut shop, false, ui);
+        });
+        assert_eq!(shop.values("voice").unwrap().get("secs"), None);
+        switch(&mut h, &mut cfg, &mut shop, "On");
+        let far = egui::pos2(h.right, row.center().y);
+        h.drag(inside, far, &mut |ui| {
+            shop_view(&mut cfg, &mut shop, false, ui);
+        });
+        assert_eq!(
+            shop.values("voice").unwrap().get("secs"),
+            Some(&Value::from(120))
+        );
     }
 
     #[test]
-    fn test_mode_has_a_switch_that_starts_off() {
+    fn a_fresh_status_line_shows_under_the_title() {
         let mut h = Harness::new();
-        let mut ev = EventsSettings {
-            enabled: true,
-            ..Default::default()
-        };
-        let mut addon = Events::default();
-        addon.pretend(Some("9.9.9"), None);
-        frames(&mut h, &mut ev, &mut addon);
-        assert!(h.has("Test mode"));
-        assert!(h.has("Shows a notification instead of saving a clip"));
-        assert!(!ev.test_mode);
-    }
-
-    #[test]
-    fn clicking_the_switch_turns_test_mode_on_and_off() {
-        let mut h = Harness::new();
-        let mut ev = EventsSettings {
-            enabled: true,
-            ..Default::default()
-        };
-        let mut addon = Events::default();
-        addon.pretend(Some("9.9.9"), None);
-        frames(&mut h, &mut ev, &mut addon);
-        let row = h.at("Test mode", 0).unwrap();
-        let toggle_at = egui::pos2(h.right - 40.0, row.center().y);
-        h.click(toggle_at, &mut |ui| addons_card(&mut ev, &mut addon, ui));
-        assert!(ev.test_mode);
-        frames(&mut h, &mut ev, &mut addon);
-        let row = h.at("Test mode", 0).unwrap();
-        let toggle_at = egui::pos2(h.right - 40.0, row.center().y);
-        h.click(toggle_at, &mut |ui| addons_card(&mut ev, &mut addon, ui));
-        assert!(!ev.test_mode);
+        let mut cfg = Config::default();
+        let mut shop = Shop::default();
+        shop.pretend(
+            Vec::new(),
+            vec![(PathBuf::from("voice"), manifest("voice", "1.0.0"))],
+            None,
+        );
+        shop.pretend_status("voice", "Listening", now_secs());
+        frames(&mut h, &mut cfg, &mut shop);
+        assert!(h.has("Listening"));
+        shop.pretend_status("voice", "Listening", now_secs() - 30);
+        frames(&mut h, &mut cfg, &mut shop);
+        assert!(!h.has("Listening"));
     }
 }
 

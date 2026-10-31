@@ -1,0 +1,35 @@
+{
+  "name": "voice",
+  "version": "1.0.0",
+  "title": "Clip that",
+  "about": "Say \"simple clip that\" and it saves a clip. Works offline with Windows speech recognition.",
+  "exe": "sc-voice.exe",
+  "min_app": "7.0.0",
+  "background": true,
+  "settings": [
+    {
+      "key": "secs",
+      "label": "Clip length",
+      "hint": "0 uses your normal clip length",
+      "kind": "number",
+      "min": 0,
+      "max": 300,
+      "default": 0,
+      "unit": "s"
+    },
+    {
+      "key": "beep",
+      "label": "Beep when a clip is saved",
+      "kind": "toggle",
+      "default": true
+    },
+    {
+      "key": "sensitivity",
+      "label": "Sensitivity",
+      "hint": "Strict needs a clearer \"simple clip that\" and triggers by mistake less often",
+      "kind": "choice",
+      "options": ["Normal", "Strict"],
+      "default": "Normal"
+    }
+  ]
+}

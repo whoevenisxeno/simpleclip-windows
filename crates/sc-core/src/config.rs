@@ -243,6 +243,19 @@ pub struct Config {
     pub hotkeys: HotkeySettings,
     pub general: GeneralSettings,
     pub events: EventsSettings,
+    pub addons: AddonSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct AddonSettings {
+    pub auto_update: bool,
+}
+
+impl Default for AddonSettings {
+    fn default() -> Self {
+        Self { auto_update: true }
+    }
 }
 
 pub const EVENT_SAVE_CHOICES: [u32; 5] = [10, 15, 20, 30, 60];

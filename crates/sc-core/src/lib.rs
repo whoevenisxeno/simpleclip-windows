@@ -12,6 +12,7 @@ pub mod ipc;
 pub mod keys;
 pub mod look;
 pub mod region;
+pub mod store;
 pub mod time;
 pub mod update;
 

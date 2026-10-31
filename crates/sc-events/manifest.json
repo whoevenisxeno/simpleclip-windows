@@ -1,0 +1,9 @@
+{
+  "name": "events",
+  "version": "1.0.0",
+  "title": "Game events",
+  "about": "Saves a clip by itself on a multi-kill in Rainbow Six Siege, Counter-Strike 2, Dota 2 or League of Legends.",
+  "exe": "sc-events.exe",
+  "min_app": "7.0.0",
+  "background": true
+}

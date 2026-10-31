@@ -3600,7 +3600,7 @@ dependencies = [
 
 [[package]]
 name = "sc"
-version = "6.9.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3612,7 +3612,7 @@ dependencies = [
 
 [[package]]
 name = "sc-capture"
-version = "6.9.0"
+version = "7.0.0"
 dependencies = [
  "ashpd",
  "crossbeam-channel",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "sc-core"
-version = "6.9.0"
+version = "7.0.0"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -3644,7 +3644,7 @@ dependencies = [
 
 [[package]]
 name = "sc-events"
-version = "6.9.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "interprocess",
@@ -3661,7 +3661,7 @@ dependencies = [
 
 [[package]]
 name = "sc-ffmpeg"
-version = "6.9.0"
+version = "7.0.0"
 dependencies = [
  "crossbeam-channel",
  "ffmpeg-next",
@@ -3672,7 +3672,7 @@ dependencies = [
 
 [[package]]
 name = "sc-gui"
-version = "6.9.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "clipboard-win",
@@ -3695,8 +3695,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-roulette"
+version = "1.0.0"
+dependencies = [
+ "sc-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "sc-voice"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "interprocess",
+ "sc-core",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "scd"
-version = "6.9.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "clap",

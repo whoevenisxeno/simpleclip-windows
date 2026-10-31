@@ -1,0 +1,27 @@
+{
+  "name": "roulette",
+  "version": "1.0.0",
+  "title": "Clip roulette",
+  "about": "A button on Home that plays a random old clip. Nostalgia or trauma.",
+  "exe": "sc-roulette.exe",
+  "min_app": "7.0.0",
+  "background": false,
+  "buttons": [
+    {
+      "id": "spin",
+      "label": "Clip roulette",
+      "place": "home",
+      "icon": "dice",
+      "hint": "Play a random old clip"
+    }
+  ],
+  "settings": [
+    {
+      "key": "old-first",
+      "label": "Favour old clips",
+      "hint": "Clips older than a week come up three times as often",
+      "kind": "toggle",
+      "default": true
+    }
+  ]
+}
