@@ -2,6 +2,13 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.1.0
+
+### Added
+- Add-ons can now put buttons in Clips, not only on Home. These get a big, colourful animated button that sits next to Clips, Edited and Compressed.
+- Clip roulette 1.1.0 (add-on) moves its button to Clips: a glowing, shifting pill whose dice wobbles when you hover it and spins while it picks a clip. It needs SimpleClip 7.1.0; on older versions the Home button keeps working.
+- Clip that 1.1.0 (add-on) also listens for "hey simple clip that", "okay simple clip that" and "yo simple clip that". When it hears you it beeps and shows a "Saving clip" card first, then saves 2 seconds later, so the clip ends with you saying it, the beep and the card. Both can be turned off in its settings.
+
 ## 7.0.1
 
 ### Fixed

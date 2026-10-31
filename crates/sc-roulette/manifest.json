@@ -1,16 +1,16 @@
 {
   "name": "roulette",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "title": "Clip roulette",
-  "about": "A button on Home that plays a random old clip. Nostalgia or trauma.",
+  "about": "A big button in Clips that plays a random old clip. Nostalgia or trauma.",
   "exe": "sc-roulette.exe",
-  "min_app": "7.0.0",
+  "min_app": "7.1.0",
   "background": false,
   "buttons": [
     {
       "id": "spin",
       "label": "Clip roulette",
-      "place": "home",
+      "place": "clips",
       "icon": "dice",
       "hint": "Play a random old clip"
     }

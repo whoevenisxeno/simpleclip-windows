@@ -18,6 +18,18 @@ fn request(req: Request) -> Result<Response> {
     Ok(env.payload)
 }
 
+pub fn popup(title: &str, line: &str) -> Result<(), String> {
+    match request(Request::Popup {
+        title: title.into(),
+        line: line.into(),
+    }) {
+        Ok(Response::Ok) => Ok(()),
+        Ok(Response::Error { message }) => Err(message),
+        Ok(_) => Err("unexpected answer from SimpleClip".to_string()),
+        Err(e) => Err(format!("{e:#}")),
+    }
+}
+
 pub fn save(last_secs: Option<u32>) -> Result<(), String> {
     match request(Request::Save { last_secs }) {
         Ok(Response::Saved { .. } | Response::Ok) => Ok(()),

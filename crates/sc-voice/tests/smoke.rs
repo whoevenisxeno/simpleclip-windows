@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-fn mock_daemon(name: &str) -> (String, Receiver<Option<u32>>) {
+fn mock_daemon(name: &str) -> (String, Receiver<Call>) {
     let socket = format!("sc-voice-smoke-{name}-{}.sock", std::process::id());
     let listener = ListenerOptions::new()
         .name(socket.clone().to_ns_name::<GenericNamespaced>().unwrap())
@@ -25,11 +25,15 @@ fn mock_daemon(name: &str) -> (String, Receiver<Option<u32>>) {
             };
             let reply = match env.payload {
                 Request::Save { last_secs } => {
-                    let _ = tx.send(last_secs);
+                    let _ = tx.send(Call::Save(last_secs, Instant::now()));
                     Response::Saved {
                         path: "clip.mp4".into(),
                         duration_secs: 1.0,
                     }
+                }
+                Request::Popup { title, .. } => {
+                    let _ = tx.send(Call::Popup(title, Instant::now()));
+                    Response::Ok
                 }
                 _ => Response::Ok,
             };
@@ -40,7 +44,13 @@ fn mock_daemon(name: &str) -> (String, Receiver<Option<u32>>) {
     (socket, saves)
 }
 
+enum Call {
+    Popup(String, Instant),
+    Save(Option<u32>, Instant),
+}
+
 struct Fed {
+    calls: Vec<Call>,
     saves: Vec<Option<u32>>,
     status: String,
 }
@@ -69,8 +79,17 @@ fn feed(root: &Path, name: &str, wav: &Path, settings: &str) -> Fed {
         std::thread::sleep(Duration::from_millis(100));
     }
     std::thread::sleep(Duration::from_millis(200));
+    let calls: Vec<Call> = rx.try_iter().collect();
+    let saves = calls
+        .iter()
+        .filter_map(|c| match c {
+            Call::Save(s, _) => Some(*s),
+            Call::Popup(..) => None,
+        })
+        .collect();
     Fed {
-        saves: rx.try_iter().collect(),
+        calls,
+        saves,
         status: store::read_status(&dir).map(|s| s.line).unwrap_or_default(),
     }
 }
@@ -81,6 +100,7 @@ fn wavs(root: &Path) -> Option<Vec<PathBuf>> {
         &[
             ("twice", &["simple clip that", "simple clip that"]),
             ("once", &["simpleclip that"]),
+            ("hey", &["hey simple clip that"]),
             (
                 "other",
                 &["simple clip is great", "the weather is nice today"],
@@ -106,7 +126,12 @@ fn hearing_the_phrase_asks_simpleclip_for_one_clip() {
         2,
         "{heard}"
     );
-    let fed = feed(&root, "twice", &w[0], r#"{"secs":12,"beep":false}"#);
+    let fed = feed(
+        &root,
+        "twice",
+        &w[0],
+        r#"{"secs":12,"beep":false,"card":false}"#,
+    );
     assert_eq!(
         fed.saves,
         vec![Some(12)],
@@ -114,11 +139,25 @@ fn hearing_the_phrase_asks_simpleclip_for_one_clip() {
     );
     assert!(fed.status.starts_with("Saved a clip"), "{}", fed.status);
 
-    let fed = feed(&root, "once", &w[1], r#"{"beep":false}"#);
+    let fed = feed(&root, "once", &w[1], r#"{"beep":false,"card":false}"#);
     assert_eq!(fed.saves, vec![None]);
+    assert_eq!(fed.calls.len(), 1, "no card when it is turned off");
 
-    let fed = feed(&root, "other", &w[2], r#"{"beep":false}"#);
-    assert!(fed.saves.is_empty(), "{:?}", fed.saves);
+    let fed = feed(&root, "hey", &w[2], r#"{"beep":false}"#);
+    match fed.calls.as_slice() {
+        [Call::Popup(title, shown), Call::Save(None, saved)] => {
+            assert_eq!(title, "Saving clip");
+            let gap = saved.duration_since(*shown);
+            assert!(
+                gap >= Duration::from_millis(1800) && gap < Duration::from_secs(4),
+                "saved {gap:?} after the card"
+            );
+        }
+        _ => panic!("expected the card, then one save"),
+    }
+
+    let fed = feed(&root, "other", &w[3], r#"{"beep":false}"#);
+    assert!(fed.calls.is_empty(), "{:?}", fed.saves);
     assert_eq!(fed.status, "Listening for \"simple clip that\"");
 
     let fed = feed(&root, "off", &w[1], r#"{"enabled":false,"beep":false}"#);

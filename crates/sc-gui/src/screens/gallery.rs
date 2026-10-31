@@ -490,7 +490,34 @@ fn build_groups(
     groups
 }
 
+fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
+    let list = app.settings.addon.buttons_at("clips");
+    if list.is_empty() {
+        return;
+    }
+    let busy = app.settings.addon.pressing();
+    let mut hit = None;
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        for (i, h) in list.iter().enumerate().rev() {
+            let glyph = crate::addon::glyph(&h.button.icon);
+            let mut r = widgets::funky_button(ui, glyph, &h.button.label, busy);
+            if !h.button.hint.is_empty() {
+                r = r.on_hover_text(&h.button.hint);
+            }
+            if r.clicked() && !busy {
+                hit = Some(i);
+            }
+        }
+    });
+    if let Some(h) = hit.and_then(|i| list.get(i)) {
+        let clips = app.cfg.save.resolve_dir();
+        app.settings.addon.press(h, clips, ui.ctx());
+    }
+}
+
 pub fn view(app: &mut ScApp, ui: &mut Ui) {
+    crate::screens::dashboard::addon_replies(app);
     let p = pal_ui(ui);
     let dir = app.cfg.save.resolve_dir();
     let dirs = library_dirs(app);
@@ -557,6 +584,7 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
                 (ViewKind::All, "All"),
             ],
         );
+        addon_buttons(app, ui);
     });
     ui.add_space(10.0);
 

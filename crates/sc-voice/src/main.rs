@@ -223,6 +223,7 @@ fn run(dir: &Path, options: &Options) {
     let mut mic = Ear::Starting;
     let mut last: Option<Last> = None;
     let mut cooldown = Cooldown::new(COOLDOWN);
+    let mut pending: Option<(Instant, Option<u32>)> = None;
     let long_ago = Instant::now() - Duration::from_secs(3600);
     let (mut last_reload, mut last_status) = (Instant::now(), long_ago);
     loop {
@@ -244,22 +245,33 @@ fn run(dir: &Path, options: &Options) {
                 let ok = settings.enabled && hear::accepts(&h, settings.strictness);
                 tracing::info!(text = %h.text, confidence = h.confidence, words = ?h.words, command = h.command, ok, "heard");
                 if ok && cooldown.take(now) {
-                    let result = ipc::save(settings.secs);
-                    match &result {
-                        Ok(()) => tracing::info!(secs = ?settings.secs, "clip saved"),
-                        Err(e) => tracing::warn!(error = %e, "could not save"),
-                    }
-                    if result.is_ok() && settings.beep {
+                    if settings.beep {
                         beep();
                     }
-                    last = Some(Last { at: now, result });
-                    last_status = long_ago;
+                    if settings.card {
+                        if let Err(e) =
+                            ipc::popup("Saving clip", "Heard \u{201C}simple clip that\u{201D}")
+                        {
+                            tracing::warn!(error = %e, "could not show the card");
+                        }
+                    }
+                    pending = Some((now + hear::save_delay(&settings), settings.secs));
                 }
             }
             Ok(Note::Done) | Err(mpsc::RecvTimeoutError::Disconnected) => done = true,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
         let now = Instant::now();
+        if let Some((at, secs)) = pending.filter(|(at, _)| now >= *at) {
+            pending = None;
+            let result = ipc::save(secs);
+            match &result {
+                Ok(()) => tracing::info!(secs = ?secs, "clip saved"),
+                Err(e) => tracing::warn!(error = %e, "could not save"),
+            }
+            last = Some(Last { at, result });
+            last_status = long_ago;
+        }
         if now.duration_since(last_reload) > Duration::from_secs(3) {
             last_reload = now;
             settings = Settings::read(&manifest, &store::read_settings(dir));
@@ -276,7 +288,10 @@ fn run(dir: &Path, options: &Options) {
             let _ = store::write_status(dir, &line);
         }
         if done {
-            break;
+            if pending.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 }

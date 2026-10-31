@@ -437,6 +437,126 @@ pub fn quiet_button(ui: &mut Ui, glyph: Option<&str>, label: &str) -> Response {
     button(ui, Tone::Quiet, glyph, label)
 }
 
+fn funky_hue(u: f32) -> Color32 {
+    let h = (0.78 + 0.32 * (0.5 + 0.5 * (u * std::f32::consts::TAU).sin())).fract();
+    egui::ecolor::Hsva::new(h, 0.86, 0.84, 1.0).into()
+}
+
+pub fn funky_button(ui: &mut Ui, glyph: &str, label: &str, busy: bool) -> Response {
+    let text = if busy { "Spinning\u{2026}" } else { label };
+    let font = FontId::new(15.0, theme::semibold());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_string(), font, Color32::WHITE);
+    let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 76.0, 42.0), Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let t = ui.input(|i| i.time) as f32;
+    let hot = resp.hovered() || busy;
+    let lift = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("funky-lift"), hot, 0.15);
+    let press = if resp.is_pointer_button_down_on() {
+        0.97
+    } else {
+        1.0
+    };
+    let r = Rect::from_center_size(rect.center(), rect.size() * (1.0 + 0.04 * lift) * press);
+    let speed = if busy {
+        1.6
+    } else if hot {
+        0.6
+    } else {
+        0.08
+    };
+    let shift = t * speed;
+    let painter = ui.painter();
+    for k in 1..=5 {
+        let g = r.expand(k as f32 * 2.2);
+        painter.rect_filled(
+            g,
+            g.height() / 2.0,
+            funky_hue(shift).gamma_multiply(0.05 * (0.4 + lift)),
+        );
+    }
+    let rad = r.height() / 2.0;
+    let half_at = |x: f32| {
+        let d = (x - r.left()).min(r.right() - x).clamp(0.0, rad);
+        (rad * rad - (rad - d) * (rad - d)).max(0.0).sqrt()
+    };
+    let cols = 64;
+    let sweep = (t * 0.3).fract();
+    let sx = r.left() - 30.0 + sweep * (r.width() + 60.0);
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=cols {
+        let f = i as f32 / cols as f32;
+        let x = r.left() + f * r.width();
+        let half = half_at(x);
+        let c = funky_hue(f * 0.6 + shift);
+        let sheen = (1.0 - ((x - sx).abs() / 26.0)).max(0.0) * (0.22 + 0.18 * lift);
+        let c = mix(c, Color32::WHITE, sheen);
+        let top = mix(c, Color32::WHITE, 0.12);
+        mesh.colored_vertex(pos2(x, r.center().y - half), top);
+        mesh.colored_vertex(pos2(x, r.center().y + half), c);
+        if i > 0 {
+            let b = (i * 2) as u32;
+            mesh.add_triangle(b - 2, b - 1, b);
+            mesh.add_triangle(b - 1, b, b + 1);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    let gc = pos2(r.left() + 26.0, r.center().y);
+    let angle = if busy {
+        t * 9.0
+    } else {
+        (t * 7.0).sin() * 0.3 * lift
+    };
+    if theme::has_icons(ui.ctx()) {
+        let dice = painter.layout_no_wrap(
+            glyph.to_string(),
+            FontId::new(19.0, theme::icons()),
+            Color32::WHITE,
+        );
+        let half = dice.size() / 2.0;
+        let rot = egui::emath::Rot2::from_angle(angle);
+        let at = gc - rot * half;
+        painter.add(egui::epaint::TextShape::new(at, dice, Color32::WHITE).with_angle(angle));
+    }
+    let at = pos2(r.left() + 46.0, r.center().y - galley.size().y / 2.0);
+    painter.galley_with_override_text_color(
+        at + vec2(0.0, 1.0),
+        galley.clone(),
+        Color32::from_black_alpha(70),
+    );
+    painter.galley(at, galley, Color32::WHITE);
+    for (i, (dx, dy)) in [(0.86, 0.22), (0.95, 0.7), (0.72, 0.85)].iter().enumerate() {
+        let glow = (t * 3.0 + i as f32 * 2.1).sin().max(0.0) * (0.35 + 0.65 * lift);
+        if glow < 0.05 {
+            continue;
+        }
+        let c = pos2(r.left() + dx * r.width(), r.top() + dy * r.height());
+        let s = 2.0 + 3.0 * glow;
+        let col = Color32::from_white_alpha((230.0 * glow) as u8);
+        painter.line_segment(
+            [c - vec2(s, 0.0), c + vec2(s, 0.0)],
+            Stroke::new(1.4_f32, col),
+        );
+        painter.line_segment(
+            [c - vec2(0.0, s), c + vec2(0.0, s)],
+            Stroke::new(1.4_f32, col),
+        );
+    }
+    if hot {
+        ui.ctx().request_repaint();
+    } else {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(90));
+    }
+    resp
+}
+
 pub fn icon_button(ui: &mut Ui, glyph: &str, fallback: &str, tip: &str, danger: bool) -> Response {
     let p = pal_ui(ui);
     let has = theme::has_icons(ui.ctx());
@@ -1563,5 +1683,32 @@ mod row_tests {
                 value.left()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod funky_tests {
+    use super::*;
+    use crate::testkit::Harness;
+
+    #[test]
+    fn the_funky_button_shows_its_label_clicks_and_spins() {
+        let mut h = Harness::new();
+        let mut clicked = 0;
+        let mut draw = |ui: &mut Ui| {
+            if funky_button(ui, "x", "Clip roulette", false).clicked() {
+                clicked += 1;
+            }
+        };
+        h.frame(Vec::new(), egui::Modifiers::NONE, &mut draw);
+        assert!(h.has("Clip roulette"));
+        h.click_text("Clip roulette", &mut draw);
+        assert_eq!(clicked, 1);
+        let mut h = Harness::new();
+        h.frame(Vec::new(), egui::Modifiers::NONE, &mut |ui| {
+            funky_button(ui, "x", "Clip roulette", true);
+        });
+        assert!(h.has("Spinning\u{2026}"));
+        assert!(!h.has("Clip roulette"));
     }
 }

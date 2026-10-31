@@ -57,8 +57,15 @@ pub fn normalize(text: &str) -> String {
         .join(" ")
 }
 
+pub const OPENERS: [&str; 4] = ["hey", "okay", "ok", "yo"];
+
 pub fn is_phrase(text: &str) -> bool {
-    normalize(text) == PHRASE
+    let n = normalize(text);
+    let rest = OPENERS
+        .iter()
+        .find_map(|o| n.strip_prefix(&format!("{o} ")))
+        .unwrap_or(&n);
+    rest == PHRASE
 }
 
 pub fn accepts(h: &Heard, s: Strictness) -> bool {
@@ -97,6 +104,7 @@ pub struct Settings {
     pub enabled: bool,
     pub secs: Option<u32>,
     pub beep: bool,
+    pub card: bool,
     pub strictness: Strictness,
 }
 
@@ -113,6 +121,9 @@ impl Settings {
         let beep = store::value(m, values, "beep")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+        let card = store::value(m, values, "card")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let strictness = store::value(m, values, "sensitivity")
             .and_then(|v| v.as_str().map(Strictness::from_name))
             .unwrap_or(Strictness::Normal);
@@ -120,8 +131,19 @@ impl Settings {
             enabled: store::is_enabled(values),
             secs,
             beep,
+            card,
             strictness,
         }
+    }
+}
+
+pub const SHOW_FOR: Duration = Duration::from_secs(2);
+
+pub fn save_delay(s: &Settings) -> Duration {
+    if s.card || s.beep {
+        SHOW_FOR
+    } else {
+        Duration::ZERO
     }
 }
 
@@ -189,6 +211,11 @@ mod tests {
             "Simple Clip that.",
             "simpleclip that",
             "  SimpleClip,  that! ",
+            "hey simple clip that",
+            "Hey, SimpleClip that",
+            "okay simple clip that",
+            "ok simpleclip that",
+            "yo simple clip that",
         ] {
             assert!(is_phrase(t), "{t}");
         }
@@ -204,6 +231,9 @@ mod tests {
             "simple clip that was fun",
             "simple clips that",
             "i said simple clip that",
+            "hey hey simple clip that",
+            "hey simple clip",
+            "hey that",
         ] {
             assert!(!is_phrase(t), "{t}");
         }
@@ -273,7 +303,7 @@ mod tests {
         let m = manifest();
         assert_eq!(m.name, "voice");
         assert_eq!(m.exe_name(), "sc-voice.exe");
-        assert_eq!(m.settings.len(), 3);
+        assert_eq!(m.settings.len(), 4);
         let s = Settings::read(&m, &Map::new());
         assert_eq!(
             s,
@@ -281,6 +311,7 @@ mod tests {
                 enabled: true,
                 secs: None,
                 beep: true,
+                card: true,
                 strictness: Strictness::Normal
             }
         );
@@ -290,7 +321,7 @@ mod tests {
     fn settings_follow_the_file_and_stay_in_range() {
         let m = manifest();
         let v: Map<String, Value> = serde_json::from_str(
-            r#"{"enabled":false,"secs":900,"beep":false,"sensitivity":"Strict"}"#,
+            r#"{"enabled":false,"secs":900,"beep":false,"card":false,"sensitivity":"Strict"}"#,
         )
         .unwrap();
         let s = Settings::read(&m, &v);
@@ -300,6 +331,7 @@ mod tests {
                 enabled: false,
                 secs: Some(300),
                 beep: false,
+                card: false,
                 strictness: Strictness::Strict
             }
         );

@@ -20,9 +20,11 @@ fn triggers(wav: &std::path::Path) -> (bool, String) {
 #[test]
 fn the_phrase_is_heard_and_other_sentences_are_not() {
     let dir = common::temp("listen");
-    let items: [(&str, &[&str]); 7] = [
+    let items: [(&str, &[&str]); 9] = [
         ("spaced", &["simple clip that"]),
         ("joined", &["simpleclip that"]),
+        ("hey", &["hey simple clip that"]),
+        ("okay", &["okay simple clip that"]),
         ("great", &["simple clip is great"]),
         ("this", &["simple clip this"]),
         ("lot", &["I like simple clip a lot"]),
@@ -34,7 +36,7 @@ fn the_phrase_is_heard_and_other_sentences_are_not() {
     };
     for ((name, _), wav) in items.iter().zip(&wavs) {
         let (yes, text) = triggers(wav);
-        let want = matches!(*name, "spaced" | "joined");
+        let want = matches!(*name, "spaced" | "joined" | "hey" | "okay");
         assert_eq!(yes, want, "{name}: {text}");
     }
     let _ = std::fs::remove_dir_all(&dir);

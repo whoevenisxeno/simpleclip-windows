@@ -687,7 +687,7 @@ fn send(app: &mut ScApp, req: Request) {
 }
 
 #[cfg(windows)]
-fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
+pub fn addon_replies(app: &mut ScApp) {
     use crate::addon::Reply;
     app.settings.addon.refresh();
     match app.settings.addon.answer() {
@@ -697,6 +697,10 @@ fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
         Some(Reply::Error(e)) => app.toast(e, ToastKind::Warn),
         Some(Reply::Quiet) | None => {}
     }
+}
+
+fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
+    addon_replies(app);
     let list = app.settings.addon.home_buttons();
     if list.is_empty() {
         return;

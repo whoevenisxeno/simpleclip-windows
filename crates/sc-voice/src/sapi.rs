@@ -1,4 +1,4 @@
-use crate::hear::Heard;
+use crate::hear::{Heard, OPENERS};
 use std::path::Path;
 use windows::core::{IUnknown, Interface, PCWSTR, PWSTR};
 use windows::Win32::Media::Audio::waveInGetNumDevs;
@@ -84,6 +84,8 @@ unsafe fn command_grammar(
     let mut top = SPSTATEHANDLE::default();
     let flags = (SPRAF_TopLevel.0 | SPRAF_Active.0) as u32;
     g.GetRule(windows::core::w!("clip"), 1, flags, true, &mut top)?;
+    let mut head = SPSTATEHANDLE::default();
+    g.CreateNewState(top, &mut head)?;
     let mut mid = SPSTATEHANDLE::default();
     g.CreateNewState(top, &mut mid)?;
     let end = SPSTATEHANDLE::default();
@@ -100,8 +102,12 @@ unsafe fn command_grammar(
             std::ptr::null(),
         )
     };
+    for o in OPENERS {
+        word(top, head, Some(o), 1.0)?;
+    }
+    word(top, head, None, 1.0)?;
     for h in HEADS {
-        word(top, mid, Some(h), 1.0)?;
+        word(head, mid, Some(h), 1.0)?;
     }
     word(mid, end, Some(TAIL), 1.0)?;
     word(mid, end, None, WEAK)?;

@@ -195,13 +195,21 @@ pub fn home_buttons(
     have: &[(PathBuf, Manifest)],
     values: &HashMap<String, Map<String, Value>>,
 ) -> Vec<Home> {
+    buttons_at(have, values, "home")
+}
+
+pub fn buttons_at(
+    have: &[(PathBuf, Manifest)],
+    values: &HashMap<String, Map<String, Value>>,
+    place: &str,
+) -> Vec<Home> {
     have.iter()
         .filter(|(_, m)| values.get(&m.name).is_none_or(store::is_enabled))
         .filter(|(_, m)| plain_exe(&m.exe_name()))
         .flat_map(|(dir, m)| {
             m.buttons
                 .iter()
-                .filter(|b| b.place == "home" && !b.id.is_empty() && !b.label.is_empty())
+                .filter(|b| b.place == place && !b.id.is_empty() && !b.label.is_empty())
                 .map(|b| Home {
                     addon: m.name.clone(),
                     exe: dir.join(m.exe_name()),
@@ -553,6 +561,10 @@ impl Shop {
         home_buttons(&self.have, &self.values)
     }
 
+    pub fn buttons_at(&self, place: &str) -> Vec<Home> {
+        buttons_at(&self.have, &self.values, place)
+    }
+
     pub fn pressing(&self) -> bool {
         self.press.is_some()
     }
@@ -632,7 +644,7 @@ impl Shop {
                 buttons: vec![Button {
                     id: "spin".into(),
                     label: "Clip roulette".into(),
-                    place: "home".into(),
+                    place: "clips".into(),
                     icon: "dice".into(),
                     hint: "Play a random old clip".into(),
                 }],
@@ -975,13 +987,17 @@ mod tests {
         let mut off = Map::new();
         off.insert(store::ENABLED.into(), Value::Bool(false));
         values.insert("voice".to_string(), off);
-        let got = home_buttons(&[a, b, c], &values);
+        let all = [a, b, c];
+        let got = home_buttons(&all, &values);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].button.id, "spin");
         assert_eq!(
             got[0].exe,
             PathBuf::from("roulette").join("sc-roulette.exe")
         );
+        let clips = buttons_at(&all, &values, "clips");
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].button.id, "x");
     }
 
     #[test]
@@ -1062,7 +1078,8 @@ mod tests {
         let mut shop = Shop::default();
         shop.demo(true);
         assert!(shop.events_installed());
-        assert_eq!(shop.home_buttons().len(), 1);
+        assert!(shop.home_buttons().is_empty());
+        assert_eq!(shop.buttons_at("clips").len(), 1);
         shop.touch("roulette");
         assert_eq!(shop.save_due(Duration::ZERO), None);
         shop.install("voice", false, &ctx).unwrap();

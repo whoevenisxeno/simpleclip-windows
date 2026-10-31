@@ -1,8 +1,8 @@
 {
   "name": "voice",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "title": "Clip that",
-  "about": "Say \"simple clip that\" and it saves a clip. Works offline with Windows speech recognition.",
+  "about": "Say \"simple clip that\" (or \"hey simple clip that\") and it saves a clip. Works offline with Windows speech recognition.",
   "exe": "sc-voice.exe",
   "min_app": "7.0.0",
   "background": true,
@@ -18,8 +18,16 @@
       "unit": "s"
     },
     {
+      "key": "card",
+      "label": "Show \"Saving clip\" first",
+      "hint": "The card shows up in the clip, then it saves 2 seconds later",
+      "kind": "toggle",
+      "default": true
+    },
+    {
       "key": "beep",
-      "label": "Beep when a clip is saved",
+      "label": "Beep when it hears you",
+      "hint": "The beep is in the clip too",
       "kind": "toggle",
       "default": true
     },
