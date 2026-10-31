@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.0.1
+
+### Fixed
+- A new add-on version could take several minutes to show up in Settings > Add-ons, and installing during that time could fail with "couldn't reach GitHub (404)". The add-on list is now read straight from GitHub, so new versions show up as soon as they are published.
+
 ## 7.0.0
 
 ### Added

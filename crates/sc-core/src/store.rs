@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 pub const CATALOG_URL: &str =
     "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/catalog.json";
+pub const CATALOG_API: &str =
+    "https://api.github.com/repos/whoevenisxeno/simpleclip-windows/contents/catalog.json?ref=addons";
 pub const PACKAGE_PREFIX: &str =
     "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/";
 pub const MANIFEST: &str = "manifest.json";
@@ -274,7 +276,9 @@ pub fn fetch_catalog() -> Result<Catalog, String> {
         let bytes = std::fs::read(&local).map_err(|e| format!("couldn't read {local}: {e}"))?;
         return parse_catalog(&bytes);
     }
-    curl(&[CATALOG_URL]).and_then(|b| parse_catalog(&b))
+    curl(&["-H", "Accept: application/vnd.github.raw", CATALOG_API])
+        .and_then(|b| parse_catalog(&b))
+        .or_else(|_| curl(&[CATALOG_URL]).and_then(|b| parse_catalog(&b)))
 }
 
 pub fn needs_update(have: &Manifest, entry: &Entry) -> bool {
@@ -636,5 +640,15 @@ mod tests {
         assert_eq!(apply(&dir, "voice"), Ok(false));
         assert!(!staged_of(&dir, "voice").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "reaches GitHub"]
+    fn the_published_catalog_reads_from_the_api_and_the_mirror() {
+        let api = curl(&["-H", "Accept: application/vnd.github.raw", CATALOG_API]).unwrap();
+        let raw = curl(&[CATALOG_URL]).unwrap();
+        assert!(!parse_catalog(&api).unwrap().addons.is_empty());
+        assert!(!parse_catalog(&raw).unwrap().addons.is_empty());
+        assert!(!fetch_catalog().unwrap().addons.is_empty());
     }
 }

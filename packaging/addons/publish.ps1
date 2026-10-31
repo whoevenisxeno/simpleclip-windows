@@ -70,7 +70,7 @@ foreach ($e in $fresh) {
 }
 
 $keep = @{}
-foreach ($e in $merged.Values) { $keep[$e.url.Substring($e.url.LastIndexOf('/') + 1)] = $true }
+foreach ($e in @($merged.Values) + @($old)) { if ($e.url) { $keep[$e.url.Substring($e.url.LastIndexOf('/') + 1)] = $true } }
 Get-ChildItem $packages -File | Where-Object { -not $keep[$_.Name] } | ForEach-Object {
     Step "Removing old package $($_.Name)"
     Remove-Item $_.FullName -Force
