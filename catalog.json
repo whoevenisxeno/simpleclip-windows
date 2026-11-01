@@ -11,6 +11,26 @@
                        "sha256":  "441ad900cb4acd44ebea89cbab00b1ea469be0eed6c404d509e5ec2357845f90"
                    },
                    {
+                       "id":  "keys",
+                       "title":  "Key overlay",
+                       "about":  "Shows the keys and mouse buttons you press, live on screen, so they show up in your clips.",
+                       "version":  "1.0.0",
+                       "min_app":  "7.2.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/keys-1.0.0.zip",
+                       "size":  491251,
+                       "sha256":  "1813b7e5b280f8c1e347dbfeeadcf676118da044584b19eadc52ae8455fbd3ef"
+                   },
+                   {
+                       "id":  "meme",
+                       "title":  "Meme captions",
+                       "about":  "Adds big top and bottom text to a copy of a clip, like a classic meme.",
+                       "version":  "1.0.0",
+                       "min_app":  "7.2.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/meme-1.0.0.zip",
+                       "size":  294054,
+                       "sha256":  "9ef0509b5d43137fb7a2790cd4c7658b6a32b6efc13190572a9b65c8ff6ddacf"
+                   },
+                   {
                        "id":  "roulette",
                        "title":  "Clip roulette",
                        "about":  "A big button in Clips that plays a random old clip. Nostalgia or trauma.",
@@ -24,11 +44,11 @@
                        "id":  "voice",
                        "title":  "Clip that",
                        "about":  "Say \"simple clip that\" (or \"hey simple clip that\") and it saves a clip. Works offline with Windows speech recognition.",
-                       "version":  "1.1.0",
+                       "version":  "1.1.1",
                        "min_app":  "7.0.0",
-                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.1.0.zip",
-                       "size":  431356,
-                       "sha256":  "00a86d7529dd1dc1adb8cd989ad927a481433cf583441ac02d7269007a9a83f8"
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/voice-1.1.1.zip",
+                       "size":  440235,
+                       "sha256":  "f915f8bb83da4e9260b8645ab22f87519655af3d9d745bcf53a2e3208f0da5f0"
                    }
                ]
 }
