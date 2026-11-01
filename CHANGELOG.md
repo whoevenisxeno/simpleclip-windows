@@ -2,6 +2,17 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.2.0
+
+### Added
+- Add-ons can now put buttons on a clip (in its details, next to Compress for Discord), ask you for a bit of text first, and run longer jobs with a "working" state on the button. When they finish, the new clip plays.
+- New add-on, Meme captions: open a clip, press Meme captions, type the top and bottom text, and it makes a copy with big white Impact text and a black outline, like a classic meme. The copy is saved next to the clip as `<name>-meme.mp4`. It needs SimpleClip 7.2.0. The copy has one sound track, with your mic mixed in if it was on its own track.
+- Add-on settings can include a position on screen, shown as a mini screen with a live preview of the add-on that you drag into place, with buttons for each corner.
+- New add-on, Key overlay: shows the keys and mouse buttons you press, live on screen, so they show up in your clips. Pick WASD, arrows or a full keyboard, a dark, light or neon look, size and opacity, and drag it where you want it. By default it only shows while a game is open. It only knows which keys are held right now: nothing you type is saved, logged or sent anywhere. It needs SimpleClip 7.2.0.
+
+### Fixed
+- Clip that 1.1.1 (add-on): reading speech from a file no longer changes your Windows speech profile. This only affected testing, not normal listening.
+
 ## 7.1.0
 
 ### Added

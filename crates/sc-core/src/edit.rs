@@ -81,6 +81,13 @@ impl Crop {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Overlay {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     pub segments: Vec<Segment>,
     pub volume: f32,
@@ -91,6 +98,7 @@ pub struct Plan {
     pub turn: u16,
     pub flip_h: bool,
     pub flip_v: bool,
+    pub overlay: Option<std::sync::Arc<Overlay>>,
 }
 
 impl Default for Plan {
@@ -111,6 +119,7 @@ impl Plan {
             turn: 0,
             flip_h: false,
             flip_v: false,
+            overlay: None,
         }
     }
 
@@ -270,7 +279,10 @@ impl Plan {
     }
 
     pub fn needs_pixels(&self) -> bool {
-        self.changes_picture() || self.fade_in > 0.0 || self.fade_out > 0.0
+        self.changes_picture()
+            || self.fade_in > 0.0
+            || self.fade_out > 0.0
+            || self.overlay.is_some()
     }
 
     pub fn oriented(&self, w: u32, h: u32) -> (u32, u32) {

@@ -989,6 +989,11 @@ fn shop_view(
         let idle = !shop.busy();
         let staged = shop.staged(&card.id);
         let status = shop.status_line(&card.id).map(str::to_string);
+        let pics = card
+            .manifest
+            .as_ref()
+            .map(|m| shop.pictures(m))
+            .unwrap_or_default();
         section(ui, None, |s| {
             s.full(&format!("{} {}", card.title, card.about), |ui| {
                 card_head(ui, &card, status.as_deref(), |ui| {
@@ -1051,7 +1056,7 @@ fn shop_view(
                 &card.manifest,
                 card.installed() && !events && busy.is_none(),
             ) {
-                if addon_rows(s, m, shop.values_mut(&card.id)) {
+                if addon_rows(s, m, shop.values_mut(&card.id), &pics) {
                     shop.touch(&card.id);
                 }
             }
@@ -1132,6 +1137,7 @@ fn addon_rows(
     s: &mut widgets::Section,
     m: &sc_core::store::Manifest,
     values: &mut serde_json::Map<String, serde_json::Value>,
+    pics: &std::collections::HashMap<String, crate::place::Picture>,
 ) -> bool {
     use sc_core::store::{self, Kind};
     use serde_json::Value;
@@ -1157,6 +1163,32 @@ fn addon_rows(
             continue;
         };
         let hint = (!set.hint.is_empty()).then_some(set.hint.as_str());
+        if let Kind::Place { default, .. } = &set.kind {
+            let mut at = store::place_of(&now).unwrap_or(*default);
+            let mut moved = false;
+            s.full(&format!("{} {}", set.label, set.hint), |ui| {
+                let p = pal_ui(ui);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.label(RichText::new(&set.label).size(14.0).color(p.text));
+                    if let Some(h) = hint {
+                        ui.label(RichText::new(h).size(12.0).color(p.text_2));
+                    }
+                    ui.add_space(12.0);
+                    ui.add_enabled_ui(live, |ui| {
+                        let id = egui::Id::new(("addon-place", &m.name, &set.key));
+                        let pic = pics.get(&set.key);
+                        moved = crate::place::view(ui, id, &m.title(), pic, &mut at, *default);
+                    });
+                    ui.add_space(4.0);
+                });
+            });
+            if moved {
+                values.insert(set.key.clone(), store::place_value(at));
+                changed = true;
+            }
+            continue;
+        }
         let mut next = None;
         s.row(&set.label, hint, |ui| {
             ui.add_enabled_ui(live, |ui| match &set.kind {
@@ -1190,6 +1222,7 @@ fn addon_rows(
                             });
                     }
                 }
+                Kind::Place { .. } => {}
                 Kind::Number {
                     min,
                     max,
@@ -2706,6 +2739,72 @@ mod addon_shop_tests {
             shop.values("voice").unwrap().get("secs"),
             Some(&Value::from(120))
         );
+    }
+
+    fn keys_shop(on: bool) -> Shop {
+        let mut shop = Shop::default();
+        let mut m = manifest("keys", "1.0.0");
+        m.title = "Key overlay".into();
+        m.background = true;
+        m.settings = vec![Setting {
+            key: "where".into(),
+            label: "Position".into(),
+            hint: "Where it sits".into(),
+            kind: Kind::Place {
+                default: [0.3, 0.3],
+                preview: "preview.png".into(),
+            },
+        }];
+        shop.pretend(
+            vec![entry("keys", "Key overlay", "1.0.0", "")],
+            vec![(PathBuf::from("no-such-keys-folder"), m)],
+            None,
+        );
+        shop.values_mut("keys")
+            .insert("enabled".into(), Value::Bool(on));
+        shop
+    }
+
+    fn place(shop: &Shop) -> Option<[f32; 2]> {
+        shop.values("keys")?
+            .get("where")
+            .and_then(sc_core::store::place_of)
+    }
+
+    #[test]
+    fn a_place_setting_shows_a_mini_screen_that_can_be_dragged() {
+        let mut h = Harness::new();
+        let mut cfg = Config::default();
+        let mut shop = keys_shop(true);
+        frames(&mut h, &mut cfg, &mut shop);
+        for text in ["Position", "Where it sits", "Key overlay", "x 30%, y 30%"] {
+            assert!(h.has(text), "{text}");
+        }
+        let at = h.at("Key overlay", 1).unwrap().center();
+        h.drag(at, at + egui::vec2(-600.0, -600.0), &mut |ui| {
+            shop_view(&mut cfg, &mut shop, false, ui);
+        });
+        frames(&mut h, &mut cfg, &mut shop);
+        assert_eq!(place(&shop), Some([0.0, 0.0]));
+        assert!(h.at("Top left", 1).is_some());
+        click(&mut h, &mut cfg, &mut shop, "Bottom right");
+        let s = crate::place::share(crate::place::BOX);
+        let p = place(&shop).unwrap();
+        assert!((p[0] - (1.0 - s[0])).abs() < 0.001 && (p[1] - (1.0 - s[1])).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_place_setting_does_nothing_while_the_add_on_is_off() {
+        let mut h = Harness::new();
+        let mut cfg = Config::default();
+        let mut shop = keys_shop(false);
+        frames(&mut h, &mut cfg, &mut shop);
+        let at = h.at("Key overlay", 1).unwrap().center();
+        h.drag(at, at + egui::vec2(-600.0, -600.0), &mut |ui| {
+            shop_view(&mut cfg, &mut shop, false, ui);
+        });
+        click(&mut h, &mut cfg, &mut shop, "Top right");
+        assert_eq!(place(&shop), None);
     }
 
     #[test]

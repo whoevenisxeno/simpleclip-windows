@@ -41,6 +41,38 @@ pub struct Button {
     pub place: String,
     pub icon: String,
     pub hint: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ask: Vec<Ask>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wait: u32,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub busy: String,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Ask {
+    pub key: String,
+    pub label: String,
+    pub hint: String,
+    pub max: u32,
+}
+
+pub const BUTTON_WAIT: u32 = 15;
+pub const BUTTON_WAIT_MAX: u32 = 900;
+
+impl Button {
+    pub fn wait_secs(&self) -> u32 {
+        if self.wait == 0 {
+            BUTTON_WAIT
+        } else {
+            self.wait.clamp(1, BUTTON_WAIT_MAX)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,6 +102,23 @@ pub enum Kind {
         #[serde(default)]
         unit: String,
     },
+    Place {
+        default: [f32; 2],
+        #[serde(default)]
+        preview: String,
+    },
+}
+
+pub fn place_of(v: &Value) -> Option<[f32; 2]> {
+    let a = v.as_array()?;
+    let x = a.first()?.as_f64()? as f32;
+    let y = a.get(1)?.as_f64()? as f32;
+    (x.is_finite() && y.is_finite()).then(|| [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+}
+
+pub fn place_value(p: [f32; 2]) -> Value {
+    let r = |f: f32| (f.clamp(0.0, 1.0) as f64 * 1000.0).round() / 1000.0;
+    Value::from(vec![r(p[0]), r(p[1])])
 }
 
 impl Manifest {
@@ -200,6 +249,7 @@ pub fn value(m: &Manifest, values: &Map<String, Value>, key: &str) -> Option<Val
                 .unwrap_or(*default)
                 .clamp(*min, *max),
         ),
+        Kind::Place { default, .. } => place_value(got.and_then(place_of).unwrap_or(*default)),
     })
 }
 
@@ -650,5 +700,31 @@ mod tests {
         assert!(!parse_catalog(&api).unwrap().addons.is_empty());
         assert!(!parse_catalog(&raw).unwrap().addons.is_empty());
         assert!(!fetch_catalog().unwrap().addons.is_empty());
+    }
+
+    #[test]
+    fn a_place_setting_reads_clamps_and_falls_back() {
+        let m: Manifest = serde_json::from_str(
+            r#"{"name":"keys","version":"1.0.0","settings":[
+                {"key":"where","label":"Position","kind":"place","default":[0.03,0.75],"preview":"preview.png"}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            &m.settings[0].kind,
+            Kind::Place { preview, .. } if preview == "preview.png"
+        ));
+        let mut v = Map::new();
+        assert_eq!(
+            value(&m, &v, "where"),
+            Some(serde_json::json!([0.03, 0.75]))
+        );
+        v.insert("where".into(), serde_json::json!([1.7, -0.2]));
+        assert_eq!(value(&m, &v, "where"), Some(serde_json::json!([1.0, 0.0])));
+        v.insert("where".into(), serde_json::json!("left"));
+        assert_eq!(
+            value(&m, &v, "where"),
+            Some(serde_json::json!([0.03, 0.75]))
+        );
+        assert_eq!(place_of(&place_value([0.12345, 0.5])), Some([0.123, 0.5]));
     }
 }

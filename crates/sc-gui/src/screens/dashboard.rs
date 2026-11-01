@@ -690,12 +690,25 @@ fn send(app: &mut ScApp, req: Request) {
 pub fn addon_replies(app: &mut ScApp) {
     use crate::addon::Reply;
     app.settings.addon.refresh();
-    match app.settings.addon.answer() {
-        Some(Reply::Open(path)) if path.is_file() => crate::screens::gallery::play(app, &path),
-        Some(Reply::Open(_)) => app.toast("That clip is no longer there", ToastKind::Warn),
-        Some(Reply::Toast(t)) => app.toast(t, ToastKind::Ok),
-        Some(Reply::Error(e)) => app.toast(e, ToastKind::Warn),
-        Some(Reply::Quiet) | None => {}
+    let Some((reply, job)) = app.settings.addon.answer() else {
+        return;
+    };
+    match reply {
+        Reply::Open(path) if path.is_file() => {
+            if job.clip.is_some() {
+                app.gallery.rescan();
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                app.toast(format!("Saved {name}"), ToastKind::Ok);
+            }
+            crate::screens::gallery::play(app, &path);
+        }
+        Reply::Open(_) => app.toast("That clip is no longer there", ToastKind::Warn),
+        Reply::Toast(t) => app.toast(t, ToastKind::Ok),
+        Reply::Error(e) => app.toast(e, ToastKind::Warn),
+        Reply::Quiet => {}
     }
 }
 
@@ -724,8 +737,7 @@ fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
         });
     });
     if let Some(h) = hit.and_then(|i| list.get(i)) {
-        let clips = app.cfg.save.resolve_dir();
-        app.settings.addon.press(h, clips, ui.ctx());
+        crate::screens::sheet::start_addon(app, h, None, ui.ctx());
     }
 }
 

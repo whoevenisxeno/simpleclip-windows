@@ -619,6 +619,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("clips-trimmed", true),
     ("clips-compressed", true),
     ("details", true),
+    ("details-ask", true),
     ("bookmarks", true),
     ("newfolder", true),
     ("editor", true),
@@ -646,6 +647,7 @@ const SHOT_PLAN: &[(&str, bool)] = &[
     ("look-accent", true),
     ("look-sand", true),
     ("settings-light", false),
+    ("settings-addon-on", false),
     ("home", false),
     ("clips", false),
     ("details", false),
@@ -825,9 +827,8 @@ impl ScApp {
             self.screen = match name {
                 "home" => Screen::Dashboard,
                 "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed"
-                | "clips-compressed" | "share" | "details" | "bookmarks" | "newfolder" => {
-                    Screen::Gallery
-                }
+                | "clips-compressed" | "share" | "details" | "details-ask" | "bookmarks"
+                | "newfolder" => Screen::Gallery,
                 "update" => Screen::Dashboard,
                 "uninstall" => Screen::Settings,
                 "update-download" | "update-forced" => Screen::Dashboard,
@@ -850,12 +851,22 @@ impl ScApp {
                     }
                 }
                 "clips-folders" => self.gallery.show_by(true),
-                "details" => {
+                "details" | "details-ask" => {
                     let first = self
                         .gallery
                         .all_paths()
                         .into_iter()
                         .find(|p| !self.library.is_trimmed(p));
+                    #[cfg(windows)]
+                    if let (Some(p), "details-ask") = (&first, name) {
+                        if let Some(h) = self.settings.addon.buttons_at("clip").into_iter().next() {
+                            self.sheet.ask = Some(screens::sheet::AskDialog::new(
+                                h,
+                                Some(p.clone()),
+                                vec!["When the clip".into(), "actually hits".into()],
+                            ));
+                        }
+                    }
                     if let Some(p) = first {
                         self.sheet.open_clip(p);
                     }

@@ -1,9 +1,13 @@
+use crate::addon::{self, Home};
 use crate::app::{ScApp, Screen, ToastKind};
 use crate::library::{self, COLORS};
 use crate::screens::gallery::{self, Clip};
 use crate::theme::{self, icon, pal};
 use crate::widgets;
-use egui::{vec2, Align, Align2, Color32, FontId, Layout, Order, RichText, Rounding, Sense, Ui};
+use egui::{
+    pos2, vec2, Align, Align2, Color32, FontId, Layout, Order, Rect, RichText, Rounding, Sense, Ui,
+};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -17,11 +21,50 @@ pub struct SheetState {
     new_color: usize,
     pub folder_dialog: Option<FolderDialog>,
     error: Option<String>,
+    pub ask: Option<AskDialog>,
+    answers: HashMap<(String, String), Vec<String>>,
 }
 
 pub struct FolderDialog {
     pub name: String,
     pub move_clip: Option<PathBuf>,
+}
+
+pub struct AskDialog {
+    pub home: Home,
+    pub clip: Option<PathBuf>,
+    pub values: Vec<String>,
+    focused: bool,
+}
+
+impl AskDialog {
+    pub fn new(home: Home, clip: Option<PathBuf>, mut values: Vec<String>) -> Self {
+        values.resize(home.button.ask.len(), String::new());
+        Self {
+            home,
+            clip,
+            values,
+            focused: false,
+        }
+    }
+
+    pub fn ready(&self) -> bool {
+        self.values.iter().any(|v| !v.trim().is_empty())
+    }
+
+    pub fn answers(&self) -> Vec<(String, String)> {
+        self.home
+            .button
+            .ask
+            .iter()
+            .zip(&self.values)
+            .map(|(a, v)| (a.key.clone(), v.trim().to_string()))
+            .collect()
+    }
+
+    fn key(&self) -> (String, String) {
+        (self.home.addon.clone(), self.home.button.id.clone())
+    }
 }
 
 impl SheetState {
@@ -30,10 +73,148 @@ impl SheetState {
         self.loaded_for = None;
         self.error = None;
     }
+
+    pub fn ask_for(&mut self, home: Home, clip: Option<PathBuf>) {
+        let key = (home.addon.clone(), home.button.id.clone());
+        let last = self.answers.get(&key).cloned().unwrap_or_default();
+        self.ask = Some(AskDialog::new(home, clip, last));
+    }
+
+    fn remember(&mut self, d: &AskDialog) {
+        self.answers.insert(d.key(), d.values.clone());
+    }
+}
+
+pub(crate) fn start_addon(app: &mut ScApp, h: &Home, clip: Option<PathBuf>, ctx: &egui::Context) {
+    if h.button.ask.is_empty() {
+        let clips = app.cfg.save.resolve_dir();
+        app.settings.addon.press(h, clip, &[], clips, ctx);
+    } else {
+        app.sheet.ask_for(h.clone(), clip);
+    }
+}
+
+pub(crate) fn busy_text(h: &Home) -> String {
+    let b = h.button.busy.trim().trim_end_matches(['.', '\u{2026}']);
+    if b.is_empty() {
+        "Working\u{2026}".into()
+    } else {
+        format!("{b}\u{2026}")
+    }
+}
+
+pub(crate) fn addon_row(
+    ui: &mut Ui,
+    list: &[Home],
+    busy: bool,
+    at: Option<usize>,
+) -> Option<usize> {
+    let mut hit = None;
+    for (i, h) in list.iter().enumerate() {
+        if at == Some(i) {
+            let r = ui
+                .add_enabled_ui(false, |ui| {
+                    widgets::quiet_button(ui, Some(""), &busy_text(h))
+                })
+                .inner;
+            let spot = Rect::from_center_size(
+                pos2(r.rect.left() + 22.0, r.rect.center().y),
+                vec2(14.0, 14.0),
+            );
+            egui::Spinner::new()
+                .color(theme::pal_ui(ui).accent)
+                .paint_at(ui, spot);
+            continue;
+        }
+        let glyph = addon::glyph(&h.button.icon);
+        let mut r = ui
+            .add_enabled_ui(!busy, |ui| {
+                widgets::quiet_button(ui, Some(glyph), &h.button.label)
+            })
+            .inner;
+        if !h.button.hint.is_empty() {
+            r = r.on_hover_text(&h.button.hint);
+        }
+        if r.clicked() {
+            hit = Some(i);
+        }
+    }
+    hit
+}
+
+pub(crate) fn ask_form(ui: &mut Ui, d: &mut AskDialog) -> Option<bool> {
+    let mut out = None;
+    let mut enter = false;
+    ui.spacing_mut().item_spacing.y = 10.0;
+    title(ui, &d.home.button.label);
+    if !d.home.button.hint.is_empty() {
+        widgets::secondary(ui, &d.home.button.hint);
+    }
+    let w = ui.available_width();
+    for (i, a) in d.home.button.ask.iter().enumerate() {
+        field_label(ui, if a.label.is_empty() { &a.key } else { &a.label });
+        let max = if a.max == 0 {
+            usize::MAX
+        } else {
+            a.max as usize
+        };
+        let r = limited_box(ui, &mut d.values[i], &a.hint, w, max);
+        if i == 0 && !d.focused {
+            r.request_focus();
+            d.focused = true;
+        }
+        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            enter = true;
+        }
+    }
+    let ready = d.ready();
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if widgets::quiet_button(ui, None, "Cancel").clicked() {
+            out = Some(false);
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let glyph = addon::glyph(&d.home.button.icon);
+            let r = ui
+                .add_enabled_ui(ready, |ui| {
+                    widgets::primary_button(ui, Some(glyph), &d.home.button.label)
+                })
+                .inner;
+            if r.clicked() {
+                out = Some(true);
+            }
+        });
+    });
+    if enter && ready {
+        out = Some(true);
+    }
+    out
+}
+
+fn ask_dialog(app: &mut ScApp, ctx: &egui::Context) {
+    let Some(mut d) = app.sheet.ask.take() else {
+        return;
+    };
+    let mut got = None;
+    let close = modal(ctx, "addon-ask", 420.0, |ui| got = ask_form(ui, &mut d));
+    app.sheet.remember(&d);
+    match got {
+        Some(true) => {
+            let clips = app.cfg.save.resolve_dir();
+            app.settings
+                .addon
+                .press(&d.home, d.clip.clone(), &d.answers(), clips, ctx);
+        }
+        Some(false) => {}
+        None if close => {}
+        None => app.sheet.ask = Some(d),
+    }
 }
 
 pub fn show(app: &mut ScApp, ctx: &egui::Context) {
-    if app.sheet.folder_dialog.is_some() {
+    if app.sheet.ask.is_some() {
+        ask_dialog(app, ctx);
+    } else if app.sheet.folder_dialog.is_some() {
         folder_dialog(app, ctx);
     } else if app.sheet.manage {
         manager(app, ctx);
@@ -100,6 +281,16 @@ fn field_label(ui: &mut Ui, text: &str) {
 }
 
 fn text_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    limited_box(ui, text, hint, width, usize::MAX)
+}
+
+fn limited_box(
+    ui: &mut Ui,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    max: usize,
+) -> egui::Response {
     let p = theme::pal_ui(ui);
     egui::Frame::none()
         .fill(p.card_hi)
@@ -109,6 +300,7 @@ fn text_box(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> egui::Res
             ui.add(
                 egui::TextEdit::singleline(text)
                     .hint_text(hint)
+                    .char_limit(max)
                     .frame(false)
                     .desired_width(width - 20.0),
             )
@@ -185,6 +377,9 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
                 {
                     app.share = Some(super::share::ShareState::choosing(clip.path.clone()));
                     done = true;
+                }
+                if !clip.is_image {
+                    clip_addons(app, ui, &clip);
                 }
                 if widgets::quiet_button(ui, Some(icon::FOLDER), "Show in folder").clicked() {
                     gallery::reveal(&clip.path);
@@ -286,6 +481,21 @@ fn details(app: &mut ScApp, ctx: &egui::Context) {
         }
         let _ = app.library.save();
         app.sheet.open = None;
+    }
+}
+
+fn clip_addons(app: &mut ScApp, ui: &mut Ui, clip: &Clip) {
+    let list = app.settings.addon.buttons_at("clip");
+    if list.is_empty() {
+        return;
+    }
+    let job = app.settings.addon.running().cloned();
+    let at = job.as_ref().and_then(|j| {
+        list.iter()
+            .position(|h| j.is(h) && j.clip.as_deref() == Some(clip.path.as_path()))
+    });
+    if let Some(h) = addon_row(ui, &list, job.is_some(), at).and_then(|i| list.get(i)) {
+        start_addon(app, h, Some(clip.path.clone()), ui.ctx());
     }
 }
 
@@ -600,5 +810,144 @@ fn make_folder(app: &mut ScApp) {
             app.sheet.error = Some(e);
             app.sheet.folder_dialog = Some(d);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::Harness;
+    use egui::{Event, Key, Modifiers};
+
+    fn meme() -> Home {
+        let mut button = addon::meme_button();
+        button.ask[0].hint = "Top line".into();
+        button.ask[1].hint = "Bottom line".into();
+        Home {
+            addon: "meme".into(),
+            exe: PathBuf::from("sc-meme.exe"),
+            button,
+        }
+    }
+
+    fn typed(text: &str) -> Vec<Event> {
+        vec![Event::Text(text.into())]
+    }
+
+    #[test]
+    fn typed_answers_go_out_with_the_primary_button() {
+        let mut d = AskDialog::new(meme(), Some(PathBuf::from("a.mp4")), Vec::new());
+        let mut out = None;
+        let mut h = Harness::new();
+        {
+            let mut f = |ui: &mut Ui| {
+                if let Some(r) = ask_form(ui, &mut d) {
+                    out = Some(r);
+                }
+            };
+            h.frame(Vec::new(), Modifiers::NONE, &mut f);
+            h.frame(typed(&"x".repeat(100)), Modifiers::NONE, &mut f);
+            h.click_text("Bottom line", &mut f);
+            h.frame(typed("actually hits"), Modifiers::NONE, &mut f);
+            h.click_nth("Meme captions", 1, &mut f);
+        }
+        assert_eq!(out, Some(true));
+        assert_eq!(
+            d.answers(),
+            vec![
+                ("top".to_string(), "x".repeat(80)),
+                ("bottom".to_string(), "actually hits".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn enter_sends_the_answers() {
+        let mut d = AskDialog::new(meme(), None, Vec::new());
+        let mut out = None;
+        let mut h = Harness::new();
+        {
+            let mut f = |ui: &mut Ui| {
+                if let Some(r) = ask_form(ui, &mut d) {
+                    out = Some(r);
+                }
+            };
+            h.frame(Vec::new(), Modifiers::NONE, &mut f);
+            h.frame(typed("When the clip"), Modifiers::NONE, &mut f);
+            h.key(Key::Enter, Modifiers::NONE, &mut f);
+        }
+        assert_eq!(out, Some(true));
+        assert_eq!(d.answers()[0].1, "When the clip");
+        assert_eq!(d.answers()[1].1, "");
+    }
+
+    #[test]
+    fn nothing_typed_means_nothing_to_send() {
+        let mut d = AskDialog::new(meme(), None, vec!["  ".into()]);
+        let out = std::cell::Cell::new(None);
+        let mut h = Harness::new();
+        {
+            let mut f = |ui: &mut Ui| {
+                if let Some(r) = ask_form(ui, &mut d) {
+                    out.set(Some(r));
+                }
+            };
+            h.frame(Vec::new(), Modifiers::NONE, &mut f);
+            h.click_nth("Meme captions", 1, &mut f);
+            assert_eq!(out.get(), None);
+            h.key(Key::Enter, Modifiers::NONE, &mut f);
+            assert_eq!(out.get(), None);
+            h.click_text("Cancel", &mut f);
+        }
+        assert_eq!(out.get(), Some(false));
+        assert!(!d.ready());
+    }
+
+    #[test]
+    fn answers_are_remembered_per_button() {
+        let mut s = SheetState::default();
+        s.ask_for(meme(), None);
+        let mut d = s.ask.take().unwrap();
+        assert_eq!(d.values, vec![String::new(), String::new()]);
+        d.values[0] = "Top".into();
+        s.remember(&d);
+        s.ask_for(meme(), Some(PathBuf::from("b.mp4")));
+        assert_eq!(s.ask.as_ref().unwrap().values[0], "Top");
+        let mut other = meme();
+        other.button.id = "other".into();
+        s.ask_for(other, None);
+        assert_eq!(s.ask.as_ref().unwrap().values[0], "");
+    }
+
+    #[test]
+    fn a_running_clip_button_shows_its_busy_text() {
+        let list = vec![meme()];
+        let mut hit = None;
+        let mut h = Harness::new();
+        let mut idle = |ui: &mut Ui| {
+            if let Some(i) = addon_row(ui, &list, false, None) {
+                hit = Some(i);
+            }
+        };
+        h.frame(Vec::new(), Modifiers::NONE, &mut idle);
+        h.click_text("Meme captions", &mut idle);
+        assert_eq!(hit, Some(0));
+        hit = None;
+        let mut other = |ui: &mut Ui| {
+            if let Some(i) = addon_row(ui, &list, true, None) {
+                hit = Some(i);
+            }
+        };
+        h.frame(Vec::new(), Modifiers::NONE, &mut other);
+        h.click_text("Meme captions", &mut other);
+        assert_eq!(hit, None);
+        h.frame(Vec::new(), Modifiers::NONE, &mut |ui| {
+            addon_row(ui, &list, true, Some(0));
+        });
+        assert!(h.has("Making your meme\u{2026}"));
+        assert!(!h.has("Meme captions"));
+        let mut plain = meme();
+        plain.button.busy.clear();
+        assert_eq!(busy_text(&plain), "Working\u{2026}");
     }
 }

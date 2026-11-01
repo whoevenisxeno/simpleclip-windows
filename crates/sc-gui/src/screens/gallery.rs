@@ -495,13 +495,15 @@ fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
     if list.is_empty() {
         return;
     }
-    let busy = app.settings.addon.pressing();
+    let job = app.settings.addon.running().cloned();
+    let busy = job.is_some();
     let mut hit = None;
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         for (i, h) in list.iter().enumerate().rev() {
             let glyph = crate::addon::glyph(&h.button.icon);
-            let mut r = widgets::funky_button(ui, glyph, &h.button.label, busy);
+            let mine = job.as_ref().is_some_and(|j| j.is(h));
+            let mut r = widgets::funky_button(ui, glyph, &h.button.label, mine);
             if !h.button.hint.is_empty() {
                 r = r.on_hover_text(&h.button.hint);
             }
@@ -511,8 +513,7 @@ fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
         }
     });
     if let Some(h) = hit.and_then(|i| list.get(i)) {
-        let clips = app.cfg.save.resolve_dir();
-        app.settings.addon.press(h, clips, ui.ctx());
+        sheet::start_addon(app, h, None, ui.ctx());
     }
 }
 

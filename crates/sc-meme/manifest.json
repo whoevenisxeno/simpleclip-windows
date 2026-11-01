@@ -1,0 +1,34 @@
+{
+  "name": "meme",
+  "version": "1.0.0",
+  "title": "Meme captions",
+  "about": "Adds big top and bottom text to a copy of a clip, like a classic meme.",
+  "exe": "sc-meme.exe",
+  "min_app": "7.2.0",
+  "background": false,
+  "buttons": [
+    {
+      "id": "caption",
+      "label": "Meme captions",
+      "place": "clip",
+      "icon": "text",
+      "hint": "Add big top and bottom text",
+      "busy": "Making your meme",
+      "wait": 600,
+      "ask": [
+        {
+          "key": "top",
+          "label": "Top text",
+          "hint": "WHEN THE ENEMY",
+          "max": 80
+        },
+        {
+          "key": "bottom",
+          "label": "Bottom text",
+          "hint": "PEEKS MID",
+          "max": 80
+        }
+      ]
+    }
+  ]
+}

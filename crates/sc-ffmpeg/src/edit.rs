@@ -3,7 +3,7 @@ use crate::stretch::stretch;
 use crate::{AacEncoder, Encoder, Error, Mp4Muxer, Result};
 use ffmpeg_next as ff;
 use sc_core::audio::{AudioBuffer, AudioRole};
-use sc_core::edit::{orient, Plan};
+use sc_core::edit::{orient, Overlay, Plan};
 use sc_core::time::Timestamp;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -284,6 +284,9 @@ impl Converter {
                 to.copy_from_slice(line);
             }
         }
+        if let Some(ov) = plan.overlay.as_deref() {
+            blend(dst, dst_stride, cw, ch, ov);
+        }
         if self.to_nv12.is_none() {
             self.to_nv12 = Some(
                 ff::software::scaling::Context::get(
@@ -304,6 +307,28 @@ impl Converter {
             .run(self.staged.as_ref().unwrap(), &mut self.nv12)
             .map_err(err)?;
         Ok(pack_nv12(&self.nv12, self.out))
+    }
+}
+
+fn blend(dst: &mut [u8], stride: usize, w: usize, h: usize, ov: &Overlay) {
+    let (ow, oh) = (ov.width as usize, ov.height as usize);
+    if w == 0 || h == 0 || ow == 0 || oh == 0 || ov.rgba.len() < ow * oh * 4 {
+        return;
+    }
+    let cols: Vec<usize> = (0..w).map(|x| x * ow / w).collect();
+    for y in 0..h {
+        let src = &ov.rgba[(y * oh / h) * ow * 4..][..ow * 4];
+        let row = &mut dst[y * stride..y * stride + w * 4];
+        for (d, sx) in row.as_chunks_mut::<4>().0.iter_mut().zip(&cols) {
+            let s = &src[sx * 4..sx * 4 + 4];
+            let a = s[3] as u32;
+            if a == 0 {
+                continue;
+            }
+            for c in 0..3 {
+                d[c] = ((s[c] as u32 * a + d[c] as u32 * (255 - a) + 127) / 255) as u8;
+            }
+        }
     }
 }
 
@@ -798,6 +823,65 @@ mod tests {
         let err = render(&src, &never, &plan, &stop).unwrap_err();
         assert!(err.to_string().contains(CANCELLED));
         assert!(!never.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn block(w: u32, h: u32) -> Overlay {
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        rgba[..(w * h) as usize].fill(255);
+        Overlay {
+            width: w,
+            height: h,
+            rgba,
+        }
+    }
+
+    #[test]
+    fn an_overlay_is_blended_and_scaled_to_the_picture() {
+        let mut px = vec![100u8; 4 * 4 * 4];
+        let mut ov = block(2, 2);
+        ov.rgba[3] = 128;
+        blend(&mut px, 16, 4, 4, &ov);
+        assert_eq!(&px[..4], &[178, 178, 178, 100]);
+        assert_eq!(&px[4..8], &[178, 178, 178, 100]);
+        assert_eq!(px[8], 100);
+        assert_eq!(px[16], 178);
+        assert_eq!(px[32], 100);
+        let mut same = vec![9u8; 16];
+        blend(&mut same, 8, 2, 2, &block(0, 0));
+        assert!(same.iter().all(|v| *v == 9));
+    }
+
+    #[test]
+    fn an_overlay_brightens_only_where_it_is_drawn() {
+        let dir = workdir("overlay");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 2, 320, 180, true) {
+            return;
+        }
+        let mut plan = Plan::whole(2.0);
+        let mut ov = block(320, 180);
+        ov.rgba.fill(0);
+        for p in ov.rgba[..320 * 45 * 4].as_chunks_mut::<4>().0 {
+            *p = [255, 255, 255, 255];
+        }
+        plan.overlay = Some(std::sync::Arc::new(ov));
+        assert!(plan.needs_pixels());
+        let dst = dir.join("overlay.mp4");
+        render(&src, &dst, &plan, &Progress::default()).unwrap();
+        let mean = |path: &Path, rows: std::ops::Range<usize>| {
+            let (w, _, rgb) = crate::frame_at(path, 1.0, 320).unwrap();
+            let w = w as usize * 3;
+            let part = &rgb[rows.start * w..rows.end * w];
+            part.iter().map(|v| *v as f64).sum::<f64>() / part.len() as f64
+        };
+        let (top, low) = (mean(&dst, 5..35), mean(&dst, 100..170));
+        let (was_top, was_low) = (mean(&src, 5..35), mean(&src, 100..170));
+        assert!(
+            top > 240.0 && top > was_top + 60.0,
+            "top {top} was {was_top}"
+        );
+        assert!((low - was_low).abs() < 8.0, "low {low} was {was_low}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -3600,7 +3600,7 @@ dependencies = [
 
 [[package]]
 name = "sc"
-version = "7.1.0"
+version = "7.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3612,7 +3612,7 @@ dependencies = [
 
 [[package]]
 name = "sc-capture"
-version = "7.1.0"
+version = "7.2.0"
 dependencies = [
  "ashpd",
  "crossbeam-channel",
@@ -3631,7 +3631,7 @@ dependencies = [
 
 [[package]]
 name = "sc-core"
-version = "7.1.0"
+version = "7.2.0"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -3661,7 +3661,7 @@ dependencies = [
 
 [[package]]
 name = "sc-ffmpeg"
-version = "7.1.0"
+version = "7.2.0"
 dependencies = [
  "crossbeam-channel",
  "ffmpeg-next",
@@ -3672,7 +3672,7 @@ dependencies = [
 
 [[package]]
 name = "sc-gui"
-version = "7.1.0"
+version = "7.2.0"
 dependencies = [
  "anyhow",
  "clipboard-win",
@@ -3695,6 +3695,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-keys"
+version = "1.0.0"
+dependencies = [
+ "ab_glyph",
+ "png",
+ "sc-core",
+ "serde_json",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "sc-meme"
+version = "1.0.0"
+dependencies = [
+ "ab_glyph",
+ "sc-core",
+ "sc-ffmpeg",
+ "serde_json",
+]
+
+[[package]]
 name = "sc-roulette"
 version = "1.1.0"
 dependencies = [
@@ -3705,7 +3729,7 @@ dependencies = [
 
 [[package]]
 name = "sc-voice"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "interprocess",
@@ -3720,7 +3744,7 @@ dependencies = [
 
 [[package]]
 name = "scd"
-version = "7.1.0"
+version = "7.2.0"
 dependencies = [
  "anyhow",
  "clap",

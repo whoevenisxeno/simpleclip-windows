@@ -1,0 +1,20 @@
+[package]
+name = "sc-meme"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sc-meme"
+path = "src/main.rs"
+
+[dependencies]
+sc-core.workspace = true
+sc-ffmpeg = { path = "../sc-ffmpeg" }
+serde_json.workspace = true
+ab_glyph = "0.2"
+
+[dev-dependencies]
+sc-ffmpeg = { path = "../sc-ffmpeg", features = ["sample"] }

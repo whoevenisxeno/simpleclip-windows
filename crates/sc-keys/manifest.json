@@ -1,0 +1,64 @@
+{
+  "name": "keys",
+  "version": "1.0.0",
+  "title": "Key overlay",
+  "about": "Shows the keys and mouse buttons you press, live on screen, so they show up in your clips.",
+  "exe": "sc-keys.exe",
+  "min_app": "7.2.0",
+  "background": true,
+  "settings": [
+    {
+      "key": "where",
+      "label": "Position",
+      "hint": "Drag it where you want it on the screen",
+      "kind": "place",
+      "default": [0.02, 0.72],
+      "preview": "preview.png"
+    },
+    {
+      "key": "layout",
+      "label": "Layout",
+      "kind": "choice",
+      "options": ["WASD", "Arrows", "Full keyboard"],
+      "default": "WASD"
+    },
+    {
+      "key": "size",
+      "label": "Size",
+      "kind": "number",
+      "min": 50,
+      "max": 200,
+      "default": 100,
+      "unit": "%"
+    },
+    {
+      "key": "opacity",
+      "label": "Opacity",
+      "kind": "number",
+      "min": 20,
+      "max": 100,
+      "default": 90,
+      "unit": "%"
+    },
+    {
+      "key": "theme",
+      "label": "Look",
+      "kind": "choice",
+      "options": ["Dark", "Light", "Neon"],
+      "default": "Dark"
+    },
+    {
+      "key": "mouse",
+      "label": "Show mouse buttons",
+      "kind": "toggle",
+      "default": true
+    },
+    {
+      "key": "games",
+      "label": "Only while a game is open",
+      "hint": "Hides it on the desktop and in other apps",
+      "kind": "toggle",
+      "default": true
+    }
+  ]
+}

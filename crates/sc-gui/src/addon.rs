@@ -1,8 +1,10 @@
+use crate::place::{self, Picture};
 use crate::theme::icon;
 use sc_core::addon::{self as legacy, EventsStatus};
 use sc_core::store::{self, Button, Entry, Manifest, Status};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::io::Read;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -13,9 +15,9 @@ use std::time::{Duration, Instant};
 const NO_WINDOW: u32 = 0x0800_0000;
 const REFRESH_EVERY: Duration = Duration::from_millis(1500);
 const SAVE_AFTER: Duration = Duration::from_millis(400);
-const BUTTON_WAIT: Duration = Duration::from_secs(15);
 const UNINSTALL_WAIT: Duration = Duration::from_secs(20);
 pub const EVENTS: &str = "events";
+pub const TOO_LONG: &str = "That took too long";
 
 type Slot<T> = Arc<Mutex<Option<T>>>;
 
@@ -176,6 +178,7 @@ pub fn glyph(name: &str) -> &'static str {
         "copy" => icon::COPY,
         "clips" | "film" => icon::CLIPS,
         "add" | "plus" => icon::ADD,
+        "text" | "caption" | "font" => icon::TEXT,
         _ => icon::PLAY,
     }
 }
@@ -219,18 +222,50 @@ pub fn buttons_at(
         .collect()
 }
 
-pub fn run_button(exe: &Path, id: &str, clips: &Path, wait: Duration) -> Reply {
+pub fn button_args(
+    id: &str,
+    clip: Option<&Path>,
+    clips: &Path,
+    answers: &[(String, String)],
+) -> Vec<OsString> {
+    let mut out: Vec<OsString> = vec!["--button".into(), id.into()];
+    if let Some(c) = clip {
+        out.push("--clip".into());
+        out.push(c.into());
+    }
+    out.push("--clips".into());
+    out.push(clips.into());
+    for (k, v) in answers {
+        out.push("--set".into());
+        out.push(format!("{k}={v}").into());
+    }
+    out
+}
+
+pub fn path_with(dir: &Path, path: Option<OsString>) -> OsString {
+    let rest: Vec<PathBuf> = path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    std::env::join_paths(std::iter::once(dir.to_path_buf()).chain(rest))
+        .unwrap_or_else(|_| path.unwrap_or_default())
+}
+
+pub fn run_button(exe: &Path, args: &[OsString], wait: Duration) -> Reply {
     let mut cmd = Command::new(exe);
-    cmd.arg("--button")
-        .arg(id)
-        .arg("--clips")
-        .arg(clips)
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .creation_flags(NO_WINDOW);
     if let Some(dir) = exe.parent() {
         cmd.current_dir(dir);
+    }
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
+        cmd.env("PATH", path_with(&dir, std::env::var_os("PATH")));
     }
     let Ok(mut child) = cmd.spawn() else {
         return Reply::Error("The add-on could not start".into());
@@ -251,11 +286,28 @@ pub fn run_button(exe: &Path, id: &str, clips: &Path, wait: Duration) -> Reply {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Reply::Error("The add-on took too long to answer".into());
+                return Reply::Error(TOO_LONG.into());
             }
         }
     }
     parse_reply(&reader.join().unwrap_or_default())
+}
+
+pub fn wait_of(b: &Button) -> Duration {
+    Duration::from_secs(b.wait_secs().into())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Job {
+    pub addon: String,
+    pub button: String,
+    pub clip: Option<PathBuf>,
+}
+
+impl Job {
+    pub fn is(&self, h: &Home) -> bool {
+        self.addon == h.addon && self.button == h.button.id
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -305,9 +357,10 @@ pub struct Shop {
     status: HashMap<String, Status>,
     events: Option<EventsStatus>,
     work: Option<Work>,
-    press: Option<Slot<Reply>>,
+    press: Option<(Job, Slot<Reply>)>,
     refreshed: Option<Instant>,
     frozen: bool,
+    made: HashMap<String, Arc<egui::ColorImage>>,
 }
 
 impl Shop {
@@ -413,6 +466,27 @@ impl Shop {
 
     pub fn values_mut(&mut self, id: &str) -> &mut Map<String, Value> {
         self.values.entry(id.to_string()).or_default()
+    }
+
+    pub fn pictures(&self, m: &Manifest) -> HashMap<String, Picture> {
+        let dir = self
+            .have
+            .iter()
+            .find(|(_, h)| h.name == m.name)
+            .map(|(d, _)| d);
+        m.settings
+            .iter()
+            .filter_map(|s| {
+                let store::Kind::Place { preview, .. } = &s.kind else {
+                    return None;
+                };
+                let pic = match self.made.get(&m.name) {
+                    Some(img) => Picture::Made(img.clone()),
+                    None => Picture::File(place::file_of(dir?, preview)?),
+                };
+                Some((s.key.clone(), pic))
+            })
+            .collect()
     }
 
     pub fn touch(&mut self, id: &str) {
@@ -569,22 +643,39 @@ impl Shop {
         self.press.is_some()
     }
 
-    pub fn press(&mut self, h: &Home, clips: PathBuf, ctx: &egui::Context) {
+    pub fn running(&self) -> Option<&Job> {
+        self.press.as_ref().map(|(j, _)| j)
+    }
+
+    pub fn press(
+        &mut self,
+        h: &Home,
+        clip: Option<PathBuf>,
+        answers: &[(String, String)],
+        clips: PathBuf,
+        ctx: &egui::Context,
+    ) {
         if self.press.is_some() || self.frozen {
             return;
         }
         let s = slot();
-        self.press = Some(s.clone());
-        let (exe, id, ctx) = (h.exe.clone(), h.button.id.clone(), ctx.clone());
+        let args = button_args(&h.button.id, clip.as_deref(), &clips, answers);
+        let job = Job {
+            addon: h.addon.clone(),
+            button: h.button.id.clone(),
+            clip,
+        };
+        self.press = Some((job, s.clone()));
+        let (exe, wait, ctx) = (h.exe.clone(), wait_of(&h.button), ctx.clone());
         std::thread::spawn(move || {
-            put(&s, run_button(&exe, &id, &clips, BUTTON_WAIT), &ctx);
+            put(&s, run_button(&exe, &args, wait), &ctx);
         });
     }
 
-    pub fn answer(&mut self) -> Option<Reply> {
-        let got = take(self.press.as_ref()?)?;
-        self.press = None;
-        Some(got)
+    pub fn answer(&mut self) -> Option<(Reply, Job)> {
+        let got = take(&self.press.as_ref()?.1)?;
+        let (job, _) = self.press.take()?;
+        Some((got, job))
     }
 
     pub fn demo(&mut self, events: bool) {
@@ -601,6 +692,12 @@ impl Shop {
             ..Default::default()
         };
         self.list = Some(Ok(vec![
+            entry(
+                "keys",
+                "Key overlay",
+                "Shows the keys and mouse buttons you press on screen, for tutorials and streams.",
+                "1.0.0",
+            ),
             entry(
                 EVENTS,
                 "Game events",
@@ -619,8 +716,81 @@ impl Shop {
                 "A button on Home that plays a random old clip. Nostalgia or trauma.",
                 "1.0.0",
             ),
+            entry(
+                "meme",
+                "Meme captions",
+                "Puts big top and bottom text on a clip, like a classic meme.",
+                "1.0.0",
+            ),
         ]));
         let demo = PathBuf::from("demo");
+        let board = Arc::new(place::keyboard());
+        let size = place::share([board.size[0] as f32, board.size[1] as f32]);
+        let spot = place::corner(place::Corner::BottomLeft, size);
+        self.made.insert("keys".into(), board);
+        self.values.insert(
+            "keys".into(),
+            Map::from_iter([("where".to_string(), store::place_value(spot))]),
+        );
+        let set = |key: &str, label: &str, hint: &str, kind: store::Kind| store::Setting {
+            key: key.into(),
+            label: label.into(),
+            hint: hint.into(),
+            kind,
+        };
+        self.have.push((
+            demo.join("keys"),
+            Manifest {
+                name: "keys".into(),
+                version: "1.0.0".into(),
+                title: "Key overlay".into(),
+                exe: "sc-keys.exe".into(),
+                background: true,
+                settings: vec![
+                    set(
+                        "where",
+                        "Position",
+                        "Where the overlay sits on your screen",
+                        store::Kind::Place {
+                            default: [0.03, 0.68],
+                            preview: "preview.png".into(),
+                        },
+                    ),
+                    set(
+                        "layout",
+                        "Show",
+                        "",
+                        store::Kind::Choice {
+                            options: vec!["Keys".into(), "Keys and mouse".into(), "Mouse".into()],
+                            default: "Keys and mouse".into(),
+                        },
+                    ),
+                    set(
+                        "size",
+                        "Size",
+                        "",
+                        store::Kind::Number {
+                            min: 50,
+                            max: 200,
+                            default: 100,
+                            unit: "%".into(),
+                        },
+                    ),
+                ],
+                ..Default::default()
+            },
+        ));
+        self.have.push((
+            demo.join("meme"),
+            Manifest {
+                name: "meme".into(),
+                version: "1.0.0".into(),
+                title: "Meme captions".into(),
+                exe: "sc-meme.exe".into(),
+                buttons: vec![meme_button()],
+                ..Default::default()
+            },
+        ));
         if events {
             self.have.push((
                 demo.join(EVENTS),
@@ -647,6 +817,7 @@ impl Shop {
                     place: "clips".into(),
                     icon: "dice".into(),
                     hint: "Play a random old clip".into(),
+                    ..Default::default()
                 }],
                 settings: vec![store::Setting {
                     key: "old-first".into(),
@@ -694,6 +865,25 @@ impl Shop {
     #[cfg(test)]
     pub fn values(&self, id: &str) -> Option<&Map<String, Value>> {
         self.values.get(id)
+    }
+}
+
+pub fn meme_button() -> Button {
+    let ask = |key: &str, label: &str| store::Ask {
+        key: key.into(),
+        label: label.into(),
+        max: 80,
+        ..Default::default()
+    };
+    Button {
+        id: "caption".into(),
+        label: "Meme captions".into(),
+        place: "clip".into(),
+        icon: "text".into(),
+        hint: "Add big top and bottom text".into(),
+        ask: vec![ask("top", "Top text"), ask("bottom", "Bottom text")],
+        wait: 600,
+        busy: "Making your meme".into(),
     }
 }
 
@@ -1003,14 +1193,132 @@ mod tests {
     #[test]
     fn a_program_that_will_not_start_says_so() {
         let dir = temp("nostart");
-        let got = run_button(
-            &dir.join("missing.exe"),
-            "spin",
-            &dir,
-            Duration::from_secs(1),
-        );
+        let args = button_args("spin", None, &dir, &[]);
+        let got = run_button(&dir.join("missing.exe"), &args, Duration::from_secs(1));
         assert!(matches!(got, Reply::Error(_)));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn strings(v: Vec<OsString>) -> Vec<String> {
+        v.into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_clip_button_gets_its_clip_and_answers() {
+        let answers = [
+            ("top".to_string(), "When the clip".to_string()),
+            ("bottom".to_string(), "a = b \"quoted\"".to_string()),
+        ];
+        let got = button_args(
+            "caption",
+            Some(Path::new(r"C:\clips\a b.mp4")),
+            Path::new(r"C:\clips"),
+            &answers,
+        );
+        assert_eq!(
+            strings(got),
+            vec![
+                "--button",
+                "caption",
+                "--clip",
+                r"C:\clips\a b.mp4",
+                "--clips",
+                r"C:\clips",
+                "--set",
+                "top=When the clip",
+                "--set",
+                "bottom=a = b \"quoted\"",
+            ]
+        );
+        assert_eq!(
+            strings(button_args("spin", None, Path::new(r"C:\clips"), &[])),
+            vec!["--button", "spin", "--clips", r"C:\clips"]
+        );
+    }
+
+    #[test]
+    fn the_app_folder_goes_first_on_the_path() {
+        let app = Path::new(r"C:\Program Files\SimpleClip");
+        assert_eq!(
+            path_with(app, Some(r"C:\Windows;C:\tools".into())),
+            OsString::from(r"C:\Program Files\SimpleClip;C:\Windows;C:\tools")
+        );
+        assert_eq!(path_with(app, None), OsString::from(app));
+    }
+
+    #[test]
+    fn a_button_waits_as_long_as_it_asks() {
+        assert_eq!(wait_of(&meme_button()), Duration::from_secs(600));
+        assert_eq!(wait_of(&Button::default()), Duration::from_secs(15));
+        let long = Button {
+            wait: 99_999,
+            ..Default::default()
+        };
+        assert_eq!(wait_of(&long), Duration::from_secs(900));
+    }
+
+    #[test]
+    fn a_slow_button_is_stopped_after_its_wait() {
+        let got = run_button(
+            Path::new(r"C:\Windows\System32\ping.exe"),
+            &["-n".into(), "30".into(), "127.0.0.1".into()],
+            Duration::from_millis(300),
+        );
+        assert_eq!(got, Reply::Error(TOO_LONG.into()));
+    }
+
+    #[test]
+    fn a_press_remembers_its_button_and_clip_until_it_answers() {
+        let dir = temp("press");
+        let ctx = egui::Context::default();
+        let h = Home {
+            addon: "meme".into(),
+            exe: dir.join("missing.exe"),
+            button: meme_button(),
+        };
+        let mut shop = Shop::default();
+        let clip = dir.join("a.mp4");
+        shop.press(&h, Some(clip.clone()), &[], dir.clone(), &ctx);
+        let job = shop.running().cloned().unwrap();
+        assert!(job.is(&h));
+        assert_eq!(job.clip.as_deref(), Some(clip.as_path()));
+        let start = Instant::now();
+        let got = loop {
+            if let Some(a) = shop.answer() {
+                break a;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(matches!(got.0, Reply::Error(_)));
+        assert_eq!(got.1, job);
+        assert!(shop.running().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clip_buttons_come_only_from_enabled_add_ons() {
+        let mut a = have("meme", "1.0.0");
+        a.1.buttons = vec![meme_button()];
+        let mut b = have("other", "1.0.0");
+        b.1.buttons = vec![meme_button()];
+        let mut c = have("spinner", "1.0.0");
+        c.1.buttons = vec![Button {
+            id: "spin".into(),
+            label: "Spin".into(),
+            place: "clips".into(),
+            ..Default::default()
+        }];
+        let mut values = HashMap::new();
+        let mut off = Map::new();
+        off.insert(store::ENABLED.into(), Value::Bool(false));
+        values.insert("other".to_string(), off);
+        let got = buttons_at(&[a, b, c], &values, "clip");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].addon, "meme");
+        assert_eq!(got[0].button.label, "Meme captions");
     }
 
     #[test]
@@ -1080,6 +1388,11 @@ mod tests {
         assert!(shop.events_installed());
         assert!(shop.home_buttons().is_empty());
         assert_eq!(shop.buttons_at("clips").len(), 1);
+        let meme = shop.buttons_at("clip");
+        assert_eq!(meme.len(), 1);
+        assert_eq!(meme[0].button, meme_button());
+        shop.press(&meme[0], None, &[], PathBuf::from("demo"), &ctx);
+        assert!(!shop.pressing());
         shop.touch("roulette");
         assert_eq!(shop.save_due(Duration::ZERO), None);
         shop.install("voice", false, &ctx).unwrap();

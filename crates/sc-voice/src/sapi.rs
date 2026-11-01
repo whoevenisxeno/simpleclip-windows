@@ -149,6 +149,7 @@ impl Listener {
                     .BindToFile(PCWSTR(w.as_ptr()), SPFM_OPEN_READONLY, None, None, 0)
                     .map_err(|_| Problem::BadFile)?;
                 rec.SetInput(&stream, true).map_err(|_| Problem::BadFile)?;
+                let _ = rec.SetPropertyNum(windows::core::w!("AdaptationOn"), 0);
             }
         }
         let ctx = rec.CreateRecoContext().map_err(|_| Problem::NoSpeech)?;

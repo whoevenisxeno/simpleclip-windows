@@ -9,6 +9,8 @@ mod dialogs;
 mod dupes;
 mod library;
 #[cfg(windows)]
+mod place;
+#[cfg(windows)]
 mod player;
 mod presets;
 mod screens;
