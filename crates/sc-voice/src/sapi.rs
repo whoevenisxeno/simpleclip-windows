@@ -1,4 +1,4 @@
-use crate::hear::{Heard, OPENERS};
+use crate::hear::{Heard, Phrase, OPENERS};
 use std::path::Path;
 use windows::core::{IUnknown, Interface, PCWSTR, PWSTR};
 use windows::Win32::Media::Audio::waveInGetNumDevs;
@@ -10,8 +10,6 @@ use windows::Win32::System::Com::{
 const COMMAND: u64 = 1;
 const JUNK: u64 = 2;
 const WHOLE: u32 = u32::MAX;
-const HEADS: [&str; 2] = ["simple clip", "simpleclip"];
-const TAIL: &str = "that";
 const WEAK: f32 = 0.3;
 const DICTATION: SPSTATEHANDLE = SPSTATEHANDLE(-3isize as *mut core::ffi::c_void);
 
@@ -76,6 +74,7 @@ unsafe fn language(rec: &ISpRecognizer) -> Option<u16> {
 unsafe fn command_grammar(
     ctx: &ISpRecoContext,
     lang: Option<u16>,
+    phrase: &Phrase,
 ) -> windows::core::Result<ISpRecoGrammar> {
     let g = ctx.CreateGrammar(COMMAND)?;
     if let Some(l) = lang {
@@ -106,10 +105,10 @@ unsafe fn command_grammar(
         word(top, head, Some(o), 1.0)?;
     }
     word(top, head, None, 1.0)?;
-    for h in HEADS {
-        word(head, mid, Some(h), 1.0)?;
+    for h in phrase.heads() {
+        word(head, mid, Some(&h), 1.0)?;
     }
-    word(mid, end, Some(TAIL), 1.0)?;
+    word(mid, end, Some(phrase.tail()), 1.0)?;
     word(mid, end, None, WEAK)?;
     g.AddRuleTransition(mid, end, DICTATION, WEAK, std::ptr::null())?;
     g.Commit(0)?;
@@ -125,11 +124,11 @@ unsafe fn junk_grammar(ctx: &ISpRecoContext) -> windows::core::Result<ISpRecoGra
 }
 
 impl Listener {
-    pub fn open(src: Source) -> Result<Self, Problem> {
-        unsafe { Self::build(src) }
+    pub fn open(src: Source, phrase: &Phrase) -> Result<Self, Problem> {
+        unsafe { Self::build(src, phrase) }
     }
 
-    unsafe fn build(src: Source) -> Result<Self, Problem> {
+    unsafe fn build(src: Source, phrase: &Phrase) -> Result<Self, Problem> {
         let rec: ISpRecognizer = CoCreateInstance(&SpInprocRecognizer, None, CLSCTX_ALL)
             .map_err(|_| Problem::NoSpeech)?;
         match src {
@@ -161,7 +160,7 @@ impl Listener {
         ctx.SetInterest(wanted, wanted)
             .map_err(|_| Problem::NoSpeech)?;
         let lang = language(&rec);
-        let command = command_grammar(&ctx, lang).map_err(|_| Problem::NoSpeech)?;
+        let command = command_grammar(&ctx, lang, phrase).map_err(|_| Problem::NoSpeech)?;
         let junk = junk_grammar(&ctx).map_err(|_| Problem::NoSpeech)?;
         rec.SetRecoState(SPRST_ACTIVE)
             .map_err(|_| Problem::NoSpeech)?;

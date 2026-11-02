@@ -791,6 +791,26 @@ impl Shop {
                 ..Default::default()
             },
         ));
+        self.have.push((
+            demo.join("voice"),
+            Manifest {
+                name: "voice".into(),
+                version: "1.2.0".into(),
+                title: "Clip that".into(),
+                exe: "sc-voice.exe".into(),
+                background: true,
+                settings: vec![set(
+                    "phrase",
+                    "Phrase",
+                    "What you say to save a clip, at least two words",
+                    store::Kind::Text {
+                        default: "simple clip that".into(),
+                        max: 40,
+                    },
+                )],
+                ..Default::default()
+            },
+        ));
         if events {
             self.have.push((
                 demo.join(EVENTS),
@@ -1401,7 +1421,7 @@ mod tests {
         shop.reload(&ctx);
         assert!(!shop.fetching());
         let c = shop.cards(env!("CARGO_PKG_VERSION"));
-        assert_eq!(state_of(&c, "voice"), State::Get);
+        assert_eq!(state_of(&c, "voice"), State::Current);
         assert_eq!(state_of(&c, "roulette"), State::Current);
         assert_eq!(state_of(&c, EVENTS), State::Current);
     }

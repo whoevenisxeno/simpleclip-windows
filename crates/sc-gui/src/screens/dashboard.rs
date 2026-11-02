@@ -694,6 +694,19 @@ pub fn addon_replies(app: &mut ScApp) {
         return;
     };
     match reply {
+        Reply::Open(path)
+            if path.is_file()
+                && job.clip.is_none()
+                && app.screen == crate::app::Screen::Gallery
+                && app
+                    .settings
+                    .addon
+                    .buttons_at("clips")
+                    .iter()
+                    .any(|h| job.is(h)) =>
+        {
+            crate::screens::gallery::spotlight(app, &path);
+        }
         Reply::Open(path) if path.is_file() => {
             if job.clip.is_some() {
                 app.gallery.rescan();

@@ -2,6 +2,16 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.4.0
+
+### Added
+- Clip that 1.2.0 (add-on): pick your own phrase in its settings, like "clip it now" or "save that play". It needs at least two words, and "hey", "okay" or "yo" in front still works. The "Saving clip" card shows the phrase you heard. "simple clip that" stays the default. It needs SimpleClip 7.4.0.
+- Add-on settings can now have a text box. What you type is saved when you click away or press Enter.
+
+### Changed
+- Add-on buttons in Clips, like Clip roulette, now float in the bottom right corner and stay there while you scroll. When Clip roulette picks a clip, the list scrolls to it and it glows for a few seconds, instead of opening straight away. Click it to play it.
+- Clip roulette 1.2.0 (add-on) describes the new behaviour. It needs SimpleClip 7.4.0; on older versions 1.1.0 keeps working as before.
+
 ## 7.3.0
 
 ### Changed

@@ -9,12 +9,12 @@ mod sapi;
 #[path = "nosapi.rs"]
 mod sapi;
 
-use hear::{Cooldown, Ear, Heard, Last, Settings, Strictness, COOLDOWN};
+use hear::{Cooldown, Ear, Heard, Last, Phrase, Settings, Strictness, COOLDOWN};
 use sapi::{Got, Listener, Problem, Source};
 use sc_core::store;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -24,6 +24,7 @@ struct Options {
     dir: Option<PathBuf>,
     listen: Option<PathBuf>,
     feed: Option<PathBuf>,
+    phrase: Phrase,
 }
 
 fn parse_args(args: &[String]) -> Options {
@@ -33,6 +34,9 @@ fn parse_args(args: &[String]) -> Options {
         dir: value("--dir").map(PathBuf::from),
         listen: value("--listen-file").map(PathBuf::from),
         feed: value("--feed-file").map(PathBuf::from),
+        phrase: value("--phrase")
+            .map(|p| Phrase::new(&p))
+            .unwrap_or_default(),
     }
 }
 
@@ -57,7 +61,7 @@ fn main() {
     let options = parse_args(&args);
     if let Some(wav) = options.listen.clone() {
         attach_console();
-        std::process::exit(listen_file(&wav));
+        std::process::exit(listen_file(&wav, &options.phrase));
     }
     let Some(dir) = options
         .dir
@@ -96,9 +100,9 @@ fn init_logging(dir: &Path) -> Option<tracing_appender::non_blocking::WorkerGuar
     Some(guard)
 }
 
-fn listen_file(wav: &Path) -> i32 {
+fn listen_file(wav: &Path, phrase: &Phrase) -> i32 {
     sapi::init();
-    let l = match Listener::open(Source::File(wav)) {
+    let l = match Listener::open(Source::File(wav), phrase) {
         Ok(l) => l,
         Err(p) => {
             eprintln!("{}", describe(p));
@@ -117,7 +121,7 @@ fn listen_file(wav: &Path) -> i32 {
         for g in got {
             match g {
                 Got::Heard(h) => {
-                    let yes = if hear::accepts(&h, Strictness::Normal) {
+                    let yes = if hear::accepts(&h, phrase, Strictness::Normal) {
                         "yes"
                     } else {
                         "no"
@@ -145,15 +149,26 @@ fn describe(p: Problem) -> &'static str {
     }
 }
 
-fn spawn_listener(file: Option<PathBuf>, wanted: Arc<AtomicBool>, tx: mpsc::Sender<Note>) {
+type Shared = Arc<Mutex<Phrase>>;
+
+fn current(p: &Shared) -> Phrase {
+    p.lock().map(|p| p.clone()).unwrap_or_default()
+}
+
+fn spawn_listener(
+    file: Option<PathBuf>,
+    wanted: Arc<AtomicBool>,
+    phrase: Shared,
+    tx: mpsc::Sender<Note>,
+) {
     std::thread::spawn(move || {
         sapi::init();
-        listen(file.as_deref(), &wanted, &tx);
+        listen(file.as_deref(), &wanted, &phrase, &tx);
         let _ = tx.send(Note::Done);
     });
 }
 
-fn listen(file: Option<&Path>, wanted: &AtomicBool, tx: &mpsc::Sender<Note>) {
+fn listen(file: Option<&Path>, wanted: &AtomicBool, phrase: &Shared, tx: &mpsc::Sender<Note>) {
     let mic = file.is_none();
     loop {
         if mic && !wanted.load(Ordering::Relaxed) {
@@ -161,7 +176,8 @@ fn listen(file: Option<&Path>, wanted: &AtomicBool, tx: &mpsc::Sender<Note>) {
             continue;
         }
         let src = file.map(Source::File).unwrap_or(Source::Mic);
-        let l = match Listener::open(src) {
+        let using = current(phrase);
+        let l = match Listener::open(src, &using) {
             Ok(l) => l,
             Err(p) => {
                 tracing::warn!(problem = describe(p), "could not start listening");
@@ -177,7 +193,7 @@ fn listen(file: Option<&Path>, wanted: &AtomicBool, tx: &mpsc::Sender<Note>) {
         }
         let mut checked = Instant::now();
         'live: loop {
-            if mic && !wanted.load(Ordering::Relaxed) {
+            if mic && (!wanted.load(Ordering::Relaxed) || current(phrase) != using) {
                 break;
             }
             if mic && checked.elapsed() > Duration::from_secs(3) {
@@ -218,7 +234,8 @@ fn run(dir: &Path, options: &Options) {
     let mut settings = Settings::read(&manifest, &store::read_settings(dir));
     let wanted = Arc::new(AtomicBool::new(settings.enabled));
     let (tx, rx) = mpsc::channel::<Note>();
-    spawn_listener(options.feed.clone(), wanted.clone(), tx);
+    let phrase: Shared = Arc::new(Mutex::new(settings.phrase.clone()));
+    spawn_listener(options.feed.clone(), wanted.clone(), phrase.clone(), tx);
 
     let mut mic = Ear::Starting;
     let mut last: Option<Last> = None;
@@ -242,16 +259,18 @@ fn run(dir: &Path, options: &Options) {
             }
             Ok(Note::Heard(h)) => {
                 let now = Instant::now();
-                let ok = settings.enabled && hear::accepts(&h, settings.strictness);
+                let ok =
+                    settings.enabled && hear::accepts(&h, &settings.phrase, settings.strictness);
                 tracing::info!(text = %h.text, confidence = h.confidence, words = ?h.words, command = h.command, ok, "heard");
                 if ok && cooldown.take(now) {
                     if settings.beep {
                         beep();
                     }
                     if settings.card {
-                        if let Err(e) =
-                            ipc::popup("Saving clip", "Heard \u{201C}simple clip that\u{201D}")
-                        {
+                        if let Err(e) = ipc::popup(
+                            "Saving clip",
+                            &format!("Heard \u{201C}{}\u{201D}", settings.phrase.text()),
+                        ) {
                             tracing::warn!(error = %e, "could not show the card");
                         }
                     }
@@ -276,6 +295,12 @@ fn run(dir: &Path, options: &Options) {
             last_reload = now;
             settings = Settings::read(&manifest, &store::read_settings(dir));
             wanted.store(settings.enabled, Ordering::Relaxed);
+            if let Ok(mut p) = phrase.lock() {
+                if *p != settings.phrase {
+                    tracing::info!(phrase = %settings.phrase.text(), "new phrase");
+                    *p = settings.phrase.clone();
+                }
+            }
         }
         if let Some(pid) = options.parent {
             if !parent::alive(pid) {
@@ -284,7 +309,8 @@ fn run(dir: &Path, options: &Options) {
         }
         if done || now.duration_since(last_status) > Duration::from_secs(2) {
             last_status = now;
-            let line = hear::status_line(settings.enabled, mic, last.as_ref(), now);
+            let line =
+                hear::status_line(settings.enabled, &settings.phrase, mic, last.as_ref(), now);
             let _ = store::write_status(dir, &line);
         }
         if done {

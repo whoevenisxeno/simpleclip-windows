@@ -1223,6 +1223,26 @@ fn addon_rows(
                     }
                 }
                 Kind::Place { .. } => {}
+                Kind::Text { max, .. } => {
+                    let id = egui::Id::new(("addon-text", &m.name, &set.key));
+                    let saved = now.as_str().unwrap_or_default().to_string();
+                    let mut buf = ui
+                        .data_mut(|d| d.get_temp::<String>(id))
+                        .unwrap_or_else(|| saved.clone());
+                    let mut edit = egui::TextEdit::singleline(&mut buf).desired_width(220.0);
+                    if *max > 0 {
+                        edit = edit.char_limit(*max);
+                    }
+                    let r = ui.add(edit);
+                    if r.has_focus() {
+                        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+                    } else {
+                        ui.data_mut(|d| d.remove::<String>(id));
+                    }
+                    if r.lost_focus() && buf.trim() != saved {
+                        next = Some(Value::from(buf.trim()));
+                    }
+                }
                 Kind::Number {
                     min,
                     max,

@@ -1,10 +1,10 @@
 {
   "name": "roulette",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "title": "Clip roulette",
-  "about": "A big button in Clips that plays a random old clip. Nostalgia or trauma.",
+  "about": "A big button in Clips that picks a random old clip, scrolls to it and makes it glow. Nostalgia or trauma.",
   "exe": "sc-roulette.exe",
-  "min_app": "7.1.0",
+  "min_app": "7.4.0",
   "background": false,
   "buttons": [
     {
@@ -12,7 +12,7 @@
       "label": "Clip roulette",
       "place": "clips",
       "icon": "dice",
-      "hint": "Play a random old clip"
+      "hint": "Find a random old clip"
     }
   ],
   "settings": [

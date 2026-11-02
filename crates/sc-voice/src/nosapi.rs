@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::hear::Heard;
+use crate::hear::{Heard, Phrase};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub fn has_mic() -> bool {
 }
 
 impl Listener {
-    pub fn open(_src: Source) -> Result<Self, Problem> {
+    pub fn open(_src: Source, _phrase: &Phrase) -> Result<Self, Problem> {
         Err(Problem::NoSpeech)
     }
 

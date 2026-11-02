@@ -614,6 +614,7 @@ struct Shot {
 const SHOT_PLAN: &[(&str, bool)] = &[
     ("home", true),
     ("clips", true),
+    ("clips-spot", true),
     ("clips-bookmarks", true),
     ("clips-folders", true),
     ("clips-trimmed", true),
@@ -826,7 +827,7 @@ impl ScApp {
             self.gallery.opened = self.gallery.first_video();
             self.screen = match name {
                 "home" => Screen::Dashboard,
-                "clips" | "clips-bookmarks" | "clips-folders" | "clips-trimmed"
+                "clips" | "clips-spot" | "clips-bookmarks" | "clips-folders" | "clips-trimmed"
                 | "clips-compressed" | "share" | "details" | "details-ask" | "bookmarks"
                 | "newfolder" => Screen::Gallery,
                 "update" => Screen::Dashboard,
@@ -851,6 +852,15 @@ impl ScApp {
                     }
                 }
                 "clips-folders" => self.gallery.show_by(true),
+                "clips-spot" => {
+                    let last =
+                        self.gallery.all_paths().into_iter().rfind(|p| {
+                            !self.library.is_trimmed(p) && !self.library.is_compressed(p)
+                        });
+                    if let Some(p) = last {
+                        screens::gallery::spotlight(self, &p);
+                    }
+                }
                 "details" | "details-ask" => {
                     let first = self
                         .gallery

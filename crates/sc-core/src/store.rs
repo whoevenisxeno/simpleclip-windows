@@ -102,6 +102,11 @@ pub enum Kind {
         #[serde(default)]
         unit: String,
     },
+    Text {
+        default: String,
+        #[serde(default)]
+        max: usize,
+    },
     Place {
         default: [f32; 2],
         #[serde(default)]
@@ -114,6 +119,27 @@ pub fn place_of(v: &Value) -> Option<[f32; 2]> {
     let x = a.first()?.as_f64()? as f32;
     let y = a.get(1)?.as_f64()? as f32;
     (x.is_finite() && y.is_finite()).then(|| [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+}
+
+pub fn text_of(v: Option<&Value>, default: &str, max: usize) -> String {
+    let cleaned: String = v
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let words = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = if max > 0 {
+        words.chars().take(max).collect()
+    } else {
+        words
+    };
+    let cut = cut.trim().to_string();
+    if cut.is_empty() {
+        default.to_string()
+    } else {
+        cut
+    }
 }
 
 pub fn place_value(p: [f32; 2]) -> Value {
@@ -250,6 +276,7 @@ pub fn value(m: &Manifest, values: &Map<String, Value>, key: &str) -> Option<Val
                 .clamp(*min, *max),
         ),
         Kind::Place { default, .. } => place_value(got.and_then(place_of).unwrap_or(*default)),
+        Kind::Text { default, max } => Value::String(text_of(got, default, *max)),
     })
 }
 
@@ -750,6 +777,34 @@ mod tests {
         assert!(!parse_catalog(&api).unwrap().addons.is_empty());
         assert!(!parse_catalog(&raw).unwrap().addons.is_empty());
         assert!(!fetch_catalog().unwrap().addons.is_empty());
+    }
+
+    #[test]
+    fn a_text_setting_is_tidied_cut_and_falls_back() {
+        let m: Manifest = serde_json::from_str(
+            r#"{"name":"voice","version":"1.2.0","settings":[
+                {"key":"phrase","label":"Phrase","kind":"text","default":"simple clip that","max":12}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(&m.settings[0].kind, Kind::Text { max: 12, .. }));
+        let get = |v: Value| {
+            let map = Map::from_iter([("phrase".to_string(), v)]);
+            value(&m, &map, "phrase").unwrap()
+        };
+        assert_eq!(
+            value(&m, &Map::new(), "phrase"),
+            Some(Value::from("simple clip that"))
+        );
+        assert_eq!(
+            get(Value::from("  clip   it\tnow ")),
+            Value::from("clip it now")
+        );
+        assert_eq!(
+            get(Value::from("abcdefghijk lmnop")),
+            Value::from("abcdefghijk")
+        );
+        assert_eq!(get(Value::from("   ")), Value::from("simple clip that"));
+        assert_eq!(get(Value::from(5)), Value::from("simple clip that"));
     }
 
     #[test]

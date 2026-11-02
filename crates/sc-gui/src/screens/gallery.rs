@@ -36,6 +36,14 @@ enum GroupBy {
     Bookmark,
 }
 
+pub const SPOT_FOR: Duration = Duration::from_millis(4200);
+
+pub struct Spot {
+    pub path: PathBuf,
+    pub at: Instant,
+    pub scrolled: bool,
+}
+
 #[derive(Default)]
 pub struct Cache {
     pub opened: Option<PathBuf>,
@@ -47,6 +55,7 @@ pub struct Cache {
     group: GroupBy,
     only: Option<String>,
     folders: Vec<PathBuf>,
+    spot: Option<Spot>,
 }
 
 impl Cache {
@@ -351,6 +360,78 @@ pub fn size_label(bytes: u64) -> String {
     }
 }
 
+pub fn spotlight(app: &mut ScApp, path: &Path) {
+    let lib = &app.library;
+    app.gallery.kind = if lib.is_compressed(path) {
+        ViewKind::Compressed
+    } else if lib.is_trimmed(path) {
+        ViewKind::Trimmed
+    } else {
+        ViewKind::Originals
+    };
+    app.gallery.search.clear();
+    app.gallery.only = None;
+    if !app.gallery.clips.iter().any(|c| c.path == path) {
+        app.gallery.rescan();
+    }
+    app.gallery.spot = Some(Spot {
+        path: path.to_path_buf(),
+        at: Instant::now(),
+        scrolled: false,
+    });
+}
+
+pub fn spot_glow(age: f32) -> f32 {
+    let secs = SPOT_FOR.as_secs_f32();
+    if !(0.0..secs).contains(&age) {
+        return 0.0;
+    }
+    let rise = (age / 0.25).min(1.0);
+    let fall = ((secs - age) / 0.8).min(1.0);
+    let pulse = 0.75 + 0.25 * (age * std::f32::consts::TAU * 1.4).cos();
+    rise * fall * pulse
+}
+
+fn spot_card(app: &mut ScApp, ui: &mut Ui, path: &Path, rect: egui::Rect) {
+    let Some(spot) = app.gallery.spot.as_mut().filter(|s| s.path == path) else {
+        return;
+    };
+    if !spot.scrolled {
+        spot.scrolled = true;
+        ui.scroll_to_rect(rect.expand(40.0), Some(Align::Center));
+    }
+    let age = spot.at.elapsed().as_secs_f32();
+    let k = spot_glow(age);
+    if k <= 0.0 {
+        app.gallery.spot = None;
+        return;
+    }
+    let hue = (age * 0.35).fract();
+    let a = egui::ecolor::Hsva::new(hue, 0.85, 1.0, 1.0);
+    let b = egui::ecolor::Hsva::new((hue + 0.33).fract(), 0.85, 1.0, 1.0);
+    let painter = ui.painter().with_clip_rect(rect.expand(26.0));
+    for step in 0..10 {
+        let t = step as f32 / 9.0;
+        let grow = 4.0 + t * 18.0;
+        let ca: Color32 = a.into();
+        let cb: Color32 = b.into();
+        let c = mix(ca, cb, t);
+        let fade = (1.0 - t) * (1.0 - t);
+        painter.rect_stroke(
+            rect.expand(grow),
+            Rounding::same(10.0 + grow),
+            egui::Stroke::new(2.2_f32, c.linear_multiply(k * 0.16 * fade)),
+        );
+    }
+    let c: Color32 = a.into();
+    painter.rect_stroke(
+        rect.expand(3.0),
+        Rounding::same(12.5),
+        egui::Stroke::new(3.0_f32, c.linear_multiply(k)),
+    );
+    ui.ctx().request_repaint();
+}
+
 pub fn play(app: &mut ScApp, path: &Path) {
     app.gallery.opened = Some(path.to_path_buf());
     open_path(path);
@@ -498,20 +579,27 @@ fn addon_buttons(app: &mut ScApp, ui: &mut Ui) {
     let job = app.settings.addon.running().cloned();
     let busy = job.is_some();
     let mut hit = None;
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
-        for (i, h) in list.iter().enumerate().rev() {
-            let glyph = crate::addon::glyph(&h.button.icon);
-            let mine = job.as_ref().is_some_and(|j| j.is(h));
-            let mut r = widgets::funky_button(ui, glyph, &h.button.label, mine);
-            if !h.button.hint.is_empty() {
-                r = r.on_hover_text(&h.button.hint);
-            }
-            if r.clicked() && !busy {
-                hit = Some(i);
-            }
-        }
-    });
+    let corner = ui.clip_rect().right_bottom() - vec2(26.0, 22.0);
+    egui::Area::new(egui::Id::new("clips-addon-buttons"))
+        .order(egui::Order::Middle)
+        .pivot(Align2::RIGHT_BOTTOM)
+        .fixed_pos(corner)
+        .show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                for (i, h) in list.iter().enumerate() {
+                    let glyph = crate::addon::glyph(&h.button.icon);
+                    let mine = job.as_ref().is_some_and(|j| j.is(h));
+                    let mut r = widgets::funky_button(ui, glyph, &h.button.label, mine);
+                    if !h.button.hint.is_empty() {
+                        r = r.on_hover_text(&h.button.hint);
+                    }
+                    if r.clicked() && !busy {
+                        hit = Some(i);
+                    }
+                }
+            });
+        });
     if let Some(h) = hit.and_then(|i| list.get(i)) {
         sheet::start_addon(app, h, None, ui.ctx());
     }
@@ -585,7 +673,6 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
                 (ViewKind::All, "All"),
             ],
         );
-        addon_buttons(app, ui);
     });
     ui.add_space(10.0);
 
@@ -624,6 +711,8 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
         });
         return;
     }
+
+    addon_buttons(app, ui);
 
     if in_kind.is_empty() {
         ui.add_space(24.0);
@@ -1078,6 +1167,7 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
         ui.spacing_mut().item_spacing.y = 5.0;
         let resp = preview(app, ui, clip, vec2(w, h));
         let rect = resp.rect;
+        spot_card(app, ui, &clip.path, rect);
         resp.context_menu(|ui| clip_menu(app, ui, clip));
         let hovered = ui.rect_contains_pointer(rect);
         if resp.clicked() {
@@ -1322,5 +1412,16 @@ mod tests {
     fn default_names_are_recognised() {
         assert!(is_default_name(Path::new("V/sc-apex-20261019.mp4")));
         assert!(!is_default_name(Path::new("V/my insane ace.mp4")));
+    }
+
+    #[test]
+    fn the_picked_clip_glows_then_fades_away() {
+        assert_eq!(spot_glow(-0.1), 0.0);
+        assert!(spot_glow(0.05) < spot_glow(0.6));
+        assert!(spot_glow(1.0) > 0.4);
+        let end = SPOT_FOR.as_secs_f32();
+        assert!(spot_glow(end - 0.05) < 0.1);
+        assert_eq!(spot_glow(end), 0.0);
+        assert_eq!(spot_glow(end + 1.0), 0.0);
     }
 }

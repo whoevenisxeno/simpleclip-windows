@@ -1,12 +1,20 @@
 {
   "name": "voice",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "title": "Clip that",
-  "about": "Say \"simple clip that\" (or \"hey simple clip that\") and it saves a clip. Works offline with Windows speech recognition.",
+  "about": "Say \"simple clip that\", or your own phrase, and it saves a clip. Works offline with Windows speech recognition.",
   "exe": "sc-voice.exe",
-  "min_app": "7.0.0",
+  "min_app": "7.4.0",
   "background": true,
   "settings": [
+    {
+      "key": "phrase",
+      "label": "Phrase",
+      "hint": "What you say to save a clip, at least two words. \"Hey\" or \"okay\" in front also works",
+      "kind": "text",
+      "default": "simple clip that",
+      "max": 40
+    },
     {
       "key": "secs",
       "label": "Clip length",
@@ -34,7 +42,7 @@
     {
       "key": "sensitivity",
       "label": "Sensitivity",
-      "hint": "Strict needs a clearer \"simple clip that\" and triggers by mistake less often",
+      "hint": "Strict needs you to say it more clearly and triggers by mistake less often",
       "kind": "choice",
       "options": ["Normal", "Strict"],
       "default": "Normal"
