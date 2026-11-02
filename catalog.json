@@ -34,11 +34,11 @@
                        "id":  "roulette",
                        "title":  "Clip roulette",
                        "about":  "A big button in Clips that picks a random old clip, scrolls to it and makes it glow. Nostalgia or trauma.",
-                       "version":  "1.2.0",
+                       "version":  "1.3.0",
                        "min_app":  "7.4.0",
-                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/roulette-1.2.0.zip",
-                       "size":  196615,
-                       "sha256":  "c084b073da5143e425476e043e359742f80e04e648a4393433af16ad55c52c44"
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/roulette-1.3.0.zip",
+                       "size":  198506,
+                       "sha256":  "ef3a22f9588a104667ffb5fbd66481804ea23bb35b273d348552afa8f22b7bf2"
                    },
                    {
                        "id":  "voice",
