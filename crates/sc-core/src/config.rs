@@ -100,6 +100,7 @@ pub struct EncodeSettings {
 pub struct SaveSettings {
     pub directory: Option<PathBuf>,
     pub trim_directory: Option<PathBuf>,
+    pub library_folders: Vec<PathBuf>,
     pub filename_template: String,
     pub folder_policy: FolderPolicy,
     pub container: Container,
@@ -356,6 +357,7 @@ impl Default for SaveSettings {
         Self {
             directory: None,
             trim_directory: None,
+            library_folders: Vec::new(),
             filename_template: "sc-{app}-{date}".to_string(),
             folder_policy: FolderPolicy::PerDay,
             container: Container::Mp4,

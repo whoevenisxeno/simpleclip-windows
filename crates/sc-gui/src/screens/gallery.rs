@@ -119,7 +119,12 @@ impl Cache {
     fn refresh(&mut self, dirs: &[PathBuf], lib: &crate::library::Library) {
         let stale = self.dirs != dirs || self.scanned.is_none_or(|t| t.elapsed() > RESCAN_EVERY);
         if stale {
-            let mut clips: Vec<Clip> = dirs.iter().flat_map(|d| scan(d)).collect();
+            let mut seen = std::collections::HashSet::new();
+            let mut clips: Vec<Clip> = dirs
+                .iter()
+                .flat_map(|d| scan(d))
+                .filter(|c| seen.insert(c.path.clone()))
+                .collect();
             clips.sort_by_key(|c| std::cmp::Reverse(c.modified));
             for c in &mut clips {
                 if let Some(g) = lib.game(&c.path) {
@@ -134,15 +139,25 @@ impl Cache {
     }
 }
 
-fn library_dirs(app: &ScApp) -> Vec<PathBuf> {
-    let main = app.cfg.save.resolve_dir();
-    let mut dirs = vec![main.clone()];
-    if let Some(t) = &app.cfg.save.trim_directory {
-        if !t.starts_with(&main) && !main.starts_with(t) {
-            dirs.push(t.clone());
+pub fn library_dirs(app: &ScApp) -> Vec<PathBuf> {
+    let save = &app.cfg.save;
+    let extra = save.trim_directory.iter().chain(&save.library_folders);
+    merge_dirs(save.resolve_dir(), extra)
+}
+
+pub fn merge_dirs<'a>(main: PathBuf, extra: impl IntoIterator<Item = &'a PathBuf>) -> Vec<PathBuf> {
+    let mut rest: Vec<PathBuf> = Vec::new();
+    for d in extra {
+        if d.as_os_str().is_empty()
+            || d.starts_with(&main)
+            || rest.iter().any(|have| d.starts_with(have))
+        {
+            continue;
         }
+        rest.retain(|have| !have.starts_with(d));
+        rest.push(d.clone());
     }
-    dirs
+    std::iter::once(main).chain(rest).collect()
 }
 
 const RESCAN_EVERY: Duration = Duration::from_secs(3);
@@ -1423,5 +1438,29 @@ mod tests {
         assert!(spot_glow(end - 0.05) < 0.1);
         assert_eq!(spot_glow(end), 0.0);
         assert_eq!(spot_glow(end + 1.0), 0.0);
+    }
+
+    #[test]
+    fn extra_folders_join_the_library_once() {
+        let p = |s: &str| PathBuf::from(s);
+        let main = p(r"C:\Videos\SimpleClip");
+        let extra = [
+            p(r"D:\Old clips"),
+            p(r"C:\Videos\SimpleClip\2026-10-01"),
+            p(r"D:\Old clips\Apex"),
+            p(""),
+            p(r"E:\Shadowplay\Apex"),
+            p(r"E:\Shadowplay"),
+            p(r"D:\Old clips"),
+        ];
+        assert_eq!(
+            merge_dirs(main.clone(), &extra),
+            [main, p(r"D:\Old clips"), p(r"E:\Shadowplay")]
+        );
+        let parent = [p(r"C:\Videos")];
+        assert_eq!(
+            merge_dirs(p(r"C:\Videos\SimpleClip"), &parent),
+            [p(r"C:\Videos\SimpleClip"), p(r"C:\Videos")]
+        );
     }
 }

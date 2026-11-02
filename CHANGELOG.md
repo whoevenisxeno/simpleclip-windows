@@ -2,6 +2,12 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.5.0
+
+### Added
+- Settings > Storage > Other clip folders: add as many folders as you like, for example old clips or another recorder's folder. Their clips show up in Clips, on Home and in your stats, but new clips still save to your clips folder. A folder that's gone (like an unplugged drive) is marked "Not found" and can be removed.
+- Clip roulette 1.3.0 (add-on) can pick clips from those folders too.
+
 ## 7.4.0
 
 ### Added

@@ -761,6 +761,52 @@ fn saving(app: &mut ScApp, ui: &mut Ui) {
                 );
             },
         );
+        s.row(
+            "Other clip folders",
+            Some(
+                "Show clips from more folders in Clips. New clips still save to your clips folder",
+            ),
+            |ui| {
+                if crate::dialogs::available()
+                    && widgets::quiet_button(ui, Some(theme::icon::ADD), "Add folder\u{2026}")
+                        .clicked()
+                {
+                    let start = app.cfg.save.resolve_dir();
+                    if let Some(d) = crate::dialogs::pick_folder(&start) {
+                        let save = &mut app.cfg.save;
+                        if d != save.resolve_dir() && !save.library_folders.contains(&d) {
+                            save.library_folders.push(d);
+                        }
+                    }
+                }
+            },
+        );
+        let mut gone = None;
+        for (i, d) in app.cfg.save.library_folders.iter().enumerate() {
+            let name = d
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| d.display().to_string());
+            let missing = !d.is_dir();
+            let hint = if missing {
+                format!("Not found: {}", d.display())
+            } else {
+                d.display().to_string()
+            };
+            s.row(&name, Some(&hint), |ui| {
+                if widgets::quiet_button(ui, None, "Remove").clicked() {
+                    gone = Some(i);
+                }
+                if !missing
+                    && widgets::quiet_button(ui, Some(theme::icon::FOLDER), "Open").clicked()
+                {
+                    crate::screens::gallery::open_path(d);
+                }
+            });
+        }
+        if let Some(i) = gone {
+            app.cfg.save.library_folders.remove(i);
+        }
         s.row("Organize into folders", None, |ui| {
             widgets::segmented(
                 ui,

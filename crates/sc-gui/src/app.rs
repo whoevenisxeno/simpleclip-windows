@@ -772,6 +772,11 @@ impl ScApp {
             };
             self.cfg.general.theme = shot_theme;
             self.cfg.general.accent = shot_accent;
+            self.cfg.save.library_folders = if name == "settings-storage" {
+                vec![shot.dir.clone(), PathBuf::from(r"E:\Old clips")]
+            } else {
+                Vec::new()
+            };
             self.saved_cfg = self.cfg.clone();
             self.settings = Default::default();
             #[cfg(windows)]

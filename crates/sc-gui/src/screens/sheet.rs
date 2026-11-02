@@ -87,7 +87,7 @@ impl SheetState {
 
 pub(crate) fn start_addon(app: &mut ScApp, h: &Home, clip: Option<PathBuf>, ctx: &egui::Context) {
     if h.button.ask.is_empty() {
-        let clips = app.cfg.save.resolve_dir();
+        let clips = crate::screens::gallery::library_dirs(app);
         app.settings.addon.press(h, clip, &[], clips, ctx);
     } else {
         app.sheet.ask_for(h.clone(), clip);
@@ -200,7 +200,7 @@ fn ask_dialog(app: &mut ScApp, ctx: &egui::Context) {
     app.sheet.remember(&d);
     match got {
         Some(true) => {
-            let clips = app.cfg.save.resolve_dir();
+            let clips = crate::screens::gallery::library_dirs(app);
             app.settings
                 .addon
                 .press(&d.home, d.clip.clone(), &d.answers(), clips, ctx);

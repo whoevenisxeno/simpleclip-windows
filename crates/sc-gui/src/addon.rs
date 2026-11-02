@@ -225,7 +225,7 @@ pub fn buttons_at(
 pub fn button_args(
     id: &str,
     clip: Option<&Path>,
-    clips: &Path,
+    clips: &[PathBuf],
     answers: &[(String, String)],
 ) -> Vec<OsString> {
     let mut out: Vec<OsString> = vec!["--button".into(), id.into()];
@@ -233,8 +233,10 @@ pub fn button_args(
         out.push("--clip".into());
         out.push(c.into());
     }
-    out.push("--clips".into());
-    out.push(clips.into());
+    for (i, d) in clips.iter().enumerate() {
+        out.push(if i == 0 { "--clips" } else { "--also" }.into());
+        out.push(d.into());
+    }
     for (k, v) in answers {
         out.push("--set".into());
         out.push(format!("{k}={v}").into());
@@ -652,7 +654,7 @@ impl Shop {
         h: &Home,
         clip: Option<PathBuf>,
         answers: &[(String, String)],
-        clips: PathBuf,
+        clips: Vec<PathBuf>,
         ctx: &egui::Context,
     ) {
         if self.press.is_some() || self.frozen {
@@ -1213,7 +1215,7 @@ mod tests {
     #[test]
     fn a_program_that_will_not_start_says_so() {
         let dir = temp("nostart");
-        let args = button_args("spin", None, &dir, &[]);
+        let args = button_args("spin", None, std::slice::from_ref(&dir), &[]);
         let got = run_button(&dir.join("missing.exe"), &args, Duration::from_secs(1));
         assert!(matches!(got, Reply::Error(_)));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1234,7 +1236,7 @@ mod tests {
         let got = button_args(
             "caption",
             Some(Path::new(r"C:\clips\a b.mp4")),
-            Path::new(r"C:\clips"),
+            &[PathBuf::from(r"C:\clips")],
             &answers,
         );
         assert_eq!(
@@ -1253,8 +1255,20 @@ mod tests {
             ]
         );
         assert_eq!(
-            strings(button_args("spin", None, Path::new(r"C:\clips"), &[])),
-            vec!["--button", "spin", "--clips", r"C:\clips"]
+            strings(button_args(
+                "spin",
+                None,
+                &[PathBuf::from(r"C:\clips"), PathBuf::from(r"D:\old")],
+                &[]
+            )),
+            vec![
+                "--button",
+                "spin",
+                "--clips",
+                r"C:\clips",
+                "--also",
+                r"D:\old"
+            ]
         );
     }
 
@@ -1300,7 +1314,7 @@ mod tests {
         };
         let mut shop = Shop::default();
         let clip = dir.join("a.mp4");
-        shop.press(&h, Some(clip.clone()), &[], dir.clone(), &ctx);
+        shop.press(&h, Some(clip.clone()), &[], vec![dir.clone()], &ctx);
         let job = shop.running().cloned().unwrap();
         assert!(job.is(&h));
         assert_eq!(job.clip.as_deref(), Some(clip.as_path()));
@@ -1411,7 +1425,7 @@ mod tests {
         let meme = shop.buttons_at("clip");
         assert_eq!(meme.len(), 1);
         assert_eq!(meme[0].button, meme_button());
-        shop.press(&meme[0], None, &[], PathBuf::from("demo"), &ctx);
+        shop.press(&meme[0], None, &[], vec![PathBuf::from("demo")], &ctx);
         assert!(!shop.pressing());
         shop.touch("roulette");
         assert_eq!(shop.save_due(Duration::ZERO), None);

@@ -144,8 +144,16 @@ fn old_first() -> bool {
         .unwrap_or(true)
 }
 
-fn spin(dir: Option<&Path>, old_first: bool, roll: u64) -> String {
-    let found = dir.map(|d| clips(d, SystemTime::now())).unwrap_or_default();
+fn spin(dirs: &[PathBuf], old_first: bool, roll: u64) -> String {
+    let now = SystemTime::now();
+    let mut found: Vec<Clip> = Vec::new();
+    for d in dirs {
+        for c in clips(d, now) {
+            if !found.iter().any(|f| f.path == c.path) {
+                found.push(c);
+            }
+        }
+    }
     reply(pick(&found, old_first, roll).map(|c| c.path.as_path()))
 }
 
@@ -163,8 +171,12 @@ fn main() {
     if value("--button").as_deref() != Some("spin") {
         return;
     }
-    let dir = value("--clips").map(PathBuf::from);
-    println!("{}", spin(dir.as_deref(), old_first(), roll()));
+    let dirs: Vec<PathBuf> = args
+        .windows(2)
+        .filter(|w| w[0] == "--clips" || w[0] == "--also")
+        .map(|w| PathBuf::from(&w[1]))
+        .collect();
+    println!("{}", spin(&dirs, old_first(), roll()));
 }
 
 #[cfg(test)]

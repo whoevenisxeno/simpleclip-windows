@@ -48,3 +48,24 @@ fn version_and_uninstall_work() {
     assert_eq!(run(&["--version"]).trim(), env!("CARGO_PKG_VERSION"));
     assert_eq!(run(&["--uninstall"]), "");
 }
+
+#[test]
+fn clips_in_other_library_folders_can_come_up() {
+    let main = temp("main");
+    let other = temp("other");
+    let real = other.join("old.mp4");
+    std::fs::write(&real, vec![0u8; 200_000]).unwrap();
+    let text = run(&[
+        "--button",
+        "spin",
+        "--clips",
+        main.to_str().unwrap(),
+        "--also",
+        other.to_str().unwrap(),
+    ]);
+    let v: Value = serde_json::from_str(text.trim()).unwrap();
+    let got = PathBuf::from(v["open"].as_str().unwrap());
+    assert_eq!(got.canonicalize().unwrap(), real.canonicalize().unwrap());
+    let _ = std::fs::remove_dir_all(&main);
+    let _ = std::fs::remove_dir_all(&other);
+}
