@@ -21,7 +21,10 @@ pub use compress::{
     compress, plan_compress, source_facts, source_fps, CompressPlan, Compressed, Source,
 };
 pub use convert::Bgra2Nv12;
-pub use edit::{render as render_edit, Progress as EditProgress, Rendered, CANCELLED};
+pub use edit::{
+    render as render_edit, render_painted, Canvas, Painter, Progress as EditProgress, Rendered,
+    Stamp, CANCELLED,
+};
 pub use encoder::{CodecParams, Encoder};
 pub use mux::Mp4Muxer;
 pub use player::{
@@ -29,7 +32,7 @@ pub use player::{
 };
 pub use recorder::Recorder;
 pub use thumb::{frame_at, thumbnail};
-pub use trim::{probe_duration, trim_copy};
+pub use trim::{probe_duration, trim_copy, with_sound_of};
 
 use ffmpeg_next as ff;
 use sc_core::encode::EncoderKind;

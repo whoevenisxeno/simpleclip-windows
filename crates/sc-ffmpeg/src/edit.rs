@@ -16,6 +16,132 @@ const MAX_KBPS: f64 = 60_000.0;
 
 pub const CANCELLED: &str = "cancelled";
 
+pub struct Canvas<'a> {
+    pub width: usize,
+    pub height: usize,
+    pub nv12: &'a mut [u8],
+}
+
+pub type Painter<'a> = dyn FnMut(f64, &mut Canvas) + 'a;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stamp {
+    pub width: usize,
+    pub height: usize,
+    luma: Vec<u8>,
+    alpha: Vec<u8>,
+    chroma: Vec<[u8; 3]>,
+}
+
+fn to_yuv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    (
+        16.0 + 219.0 * y / 255.0,
+        128.0 + 224.0 * (b - y) / (1.8556 * 255.0),
+        128.0 + 224.0 * (r - y) / (1.5748 * 255.0),
+    )
+}
+
+fn mix(over: u8, under: u8, a: u32) -> u8 {
+    ((over as u32 * a + under as u32 * (255 - a) + 127) / 255) as u8
+}
+
+impl Stamp {
+    pub fn from_rgba(width: usize, height: usize, rgba: &[u8]) -> Self {
+        let n = width * height;
+        let mut luma = Vec::with_capacity(n);
+        let mut alpha = Vec::with_capacity(n);
+        for p in rgba[..n * 4].as_chunks::<4>().0 {
+            luma.push(to_yuv(p[0] as f32, p[1] as f32, p[2] as f32).0.round() as u8);
+            alpha.push(p[3]);
+        }
+        let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+        let mut chroma = Vec::with_capacity(cw * ch);
+        for cy in 0..ch {
+            for cx in 0..cw {
+                let (mut u, mut v, mut a, mut k) = (0.0, 0.0, 0.0, 0.0);
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (x, y) = (cx * 2 + dx, cy * 2 + dy);
+                    if x >= width || y >= height {
+                        continue;
+                    }
+                    let p = &rgba[(y * width + x) * 4..][..4];
+                    let w = p[3] as f32;
+                    let (_, pu, pv) = to_yuv(p[0] as f32, p[1] as f32, p[2] as f32);
+                    u += pu * w;
+                    v += pv * w;
+                    a += w;
+                    k += 1.0;
+                }
+                chroma.push(if a > 0.0 {
+                    [
+                        (u / a).round() as u8,
+                        (v / a).round() as u8,
+                        (a / k).round() as u8,
+                    ]
+                } else {
+                    [128, 128, 0]
+                });
+            }
+        }
+        Stamp {
+            width,
+            height,
+            luma,
+            alpha,
+            chroma,
+        }
+    }
+}
+
+impl Canvas<'_> {
+    pub fn stamp(&mut self, x0: i64, y0: i64, s: &Stamp) {
+        let (w, h) = (self.width as i64, self.height as i64);
+        let x0 = x0 & !1;
+        let y0 = y0 & !1;
+        let (plane, uv) = self.nv12.split_at_mut(self.width * self.height);
+        for row in 0..s.height as i64 {
+            let y = y0 + row;
+            if y < 0 || y >= h {
+                continue;
+            }
+            for col in 0..s.width as i64 {
+                let x = x0 + col;
+                if x < 0 || x >= w {
+                    continue;
+                }
+                let i = (row * s.width as i64 + col) as usize;
+                let a = s.alpha[i] as u32;
+                if a == 0 {
+                    continue;
+                }
+                let d = &mut plane[(y * w + x) as usize];
+                *d = mix(s.luma[i], *d, a);
+            }
+        }
+        let cw = s.width.div_ceil(2) as i64;
+        for crow in 0..s.height.div_ceil(2) as i64 {
+            let y = y0 / 2 + crow;
+            if y < 0 || y >= h / 2 {
+                continue;
+            }
+            for ccol in 0..cw {
+                let x = x0 / 2 + ccol;
+                if x < 0 || x >= w / 2 {
+                    continue;
+                }
+                let [u, v, a] = s.chroma[(crow * cw + ccol) as usize];
+                if a == 0 {
+                    continue;
+                }
+                let at = ((y * (w / 2) + x) * 2) as usize;
+                uv[at] = mix(u, uv[at], a as u32);
+                uv[at + 1] = mix(v, uv[at + 1], a as u32);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Progress {
     permille: AtomicU32,
@@ -346,6 +472,12 @@ fn pack_nv12(frame: &ff::frame::Video, (w, h): (u32, u32)) -> Vec<u8> {
     nv12
 }
 
+fn decode_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| (n.get() / 2).clamp(1, 8))
+        .unwrap_or(2)
+}
+
 fn video_kbps(src: &Path, secs: f64, scale: f64) -> f64 {
     let bytes = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0) as f64;
     let total = bytes * 8.0 / secs.max(0.5) / 1000.0;
@@ -353,6 +485,16 @@ fn video_kbps(src: &Path, secs: f64, scale: f64) -> f64 {
 }
 
 pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Result<Rendered> {
+    render_painted(src, dst, plan, progress, None)
+}
+
+pub fn render_painted(
+    src: &Path,
+    dst: &Path,
+    plan: &Plan,
+    progress: &Progress,
+    mut paint: Option<&mut Painter>,
+) -> Result<Rendered> {
     crate::init()?;
     let info = crate::media_info(src)?;
     let mut plan = plan.clone();
@@ -387,11 +529,12 @@ pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Resul
         };
         (s.index(), s.parameters(), tb, off)
     };
-    let mut decoder = ff::codec::context::Context::from_parameters(params)
-        .map_err(err)?
-        .decoder()
-        .video()
-        .map_err(err)?;
+    let mut ctx = ff::codec::context::Context::from_parameters(params).map_err(err)?;
+    ctx.set_threading(ff::threading::Config {
+        kind: ff::threading::Type::Frame,
+        count: decode_threads(),
+    });
+    let mut decoder = ctx.decoder().video().map_err(err)?;
     let (first_start, last_end) = plan.bounds();
     if first_start > 0.05 {
         let t = ((first_start + offset) * ff::ffi::AV_TIME_BASE as f64) as i64;
@@ -444,11 +587,21 @@ pub fn render(src: &Path, dst: &Path, plan: &Plan, progress: &Progress) -> Resul
             return Ok(true);
         }
         last_out = out_t;
-        let nv12 = if pixels {
+        let mut nv12 = if pixels {
             conv.styled(frame, &plan, plan.fade_gain(out_t, total_out))?
         } else {
             conv.plain(frame)?
         };
+        if let Some(paint) = paint.as_mut() {
+            paint(
+                t,
+                &mut Canvas {
+                    width: out.0 as usize,
+                    height: out.1 as usize,
+                    nv12: &mut nv12,
+                },
+            );
+        }
         if first_out.is_none() {
             first_out = Some(out_t);
             sink.audio_pos = ((out_t * AUDIO_RATE as f64) as usize * 2).min(sink.audio.len()) & !1;
@@ -882,6 +1035,83 @@ mod tests {
             "top {top} was {was_top}"
         );
         assert!((low - was_low).abs() < 8.0, "low {low} was {was_low}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stamps_land_in_the_right_colours_and_stay_inside() {
+        let (w, h) = (8usize, 4usize);
+        let mut nv12 = vec![16u8; w * h];
+        nv12.extend(std::iter::repeat_n(128u8, w * h / 2));
+        let red = Stamp::from_rgba(2, 2, &[255, 0, 0, 255].repeat(4));
+        let mut c = Canvas {
+            width: w,
+            height: h,
+            nv12: &mut nv12,
+        };
+        c.stamp(2, 0, &red);
+        c.stamp(7, 3, &red);
+        c.stamp(-9, -9, &red);
+        let soft = Stamp::from_rgba(2, 2, &[255, 255, 255, 128].repeat(4));
+        c.stamp(4, 2, &soft);
+        assert_eq!(nv12[2], 63);
+        assert_eq!(nv12[w + 3], 63);
+        assert_eq!(nv12[0], 16);
+        let (u, v) = (nv12[w * h + 2], nv12[w * h + 3]);
+        assert!(u < 110 && v > 235, "u {u} v {v}");
+        let half = nv12[2 * w + 4];
+        assert!((120..=130).contains(&half), "{half}");
+        assert_eq!(nv12[3 * w + 6], 63, "clipped at the corner");
+    }
+
+    #[test]
+    fn painting_follows_the_clock_and_the_sound_is_copied_back() {
+        let dir = workdir("painted");
+        let src = dir.join("source.mp4");
+        if !make_clip(&src, 4, 320, 180, true) {
+            return;
+        }
+        let mut plan = Plan::whole(4.0);
+        plan.volume = 0.0;
+        let mut seen = Vec::new();
+        let white = Stamp::from_rgba(320, 45, &[255u8; 320 * 45 * 4]);
+        let mut paint = |t: f64, c: &mut Canvas| {
+            seen.push(t);
+            if t < 2.0 {
+                return;
+            }
+            c.stamp(0, 0, &white);
+        };
+        let picture = dir.join("picture.mp4");
+        render_painted(
+            &src,
+            &picture,
+            &plan,
+            &Progress::default(),
+            Some(&mut paint),
+        )
+        .unwrap();
+        assert!(seen.windows(2).all(|w| w[1] > w[0]), "{seen:?}");
+        assert!(seen[0] < 0.05 && *seen.last().unwrap() > 3.8);
+        assert_eq!(crate::media_info(&picture).unwrap().audio_streams, 0);
+        let dst = dir.join("joined.mp4");
+        crate::with_sound_of(&picture, &src, &dst).unwrap();
+        let info = crate::media_info(&dst).unwrap();
+        assert_eq!(info.audio_streams, 1);
+        assert!((info.duration - 4.0).abs() < 0.15, "{}", info.duration);
+        let (_, a) = crate::first_pts(&dst).unwrap();
+        let (_, was) = crate::first_pts(&src).unwrap();
+        assert!((a.unwrap_or(0.0) - was.unwrap_or(0.0)).abs() < 0.03);
+        let top = |at: f64| {
+            let (w, _, rgb) = crate::frame_at(&dst, at, 320).unwrap();
+            let part = &rgb[5 * w as usize * 3..35 * w as usize * 3];
+            part.iter().map(|v| *v as f64).sum::<f64>() / part.len() as f64
+        };
+        let (early, late) = (top(1.0), top(3.0));
+        assert!(
+            late > 240.0 && late > early + 60.0,
+            "early {early} late {late}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -19,6 +19,7 @@ pub struct Settings {
     pub theme: Theme,
     pub mouse: bool,
     pub games: bool,
+    pub screen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,6 +46,7 @@ impl Settings {
             theme: Theme::from_name(&text("theme")),
             mouse: on("mouse"),
             games: on("games"),
+            screen: get("screen").as_bool().unwrap_or(false),
         }
     }
 
@@ -83,6 +85,7 @@ mod tests {
                 theme: Theme::Dark,
                 mouse: true,
                 games: true,
+                screen: false,
             }
         );
     }
@@ -91,9 +94,9 @@ mod tests {
     fn saved_values_are_read_and_bad_ones_fall_back() {
         let m = manifest();
         let v = json!({"enabled": false, "where": [0.5, 2.0], "layout": "Full keyboard",
-            "size": 999, "opacity": 5, "theme": "Neon", "mouse": false, "games": false});
+            "size": 999, "opacity": 5, "theme": "Neon", "mouse": false, "games": false, "screen": true});
         let s = Settings::read(&m, v.as_object().unwrap());
-        assert!(!s.enabled && !s.mouse && !s.games);
+        assert!(!s.enabled && !s.mouse && !s.games && s.screen);
         assert_eq!(s.at, [0.5, 1.0]);
         assert_eq!((s.layout, s.theme), (Layout::Full, Theme::Neon));
         assert_eq!((s.size, s.opacity), (200, 20));

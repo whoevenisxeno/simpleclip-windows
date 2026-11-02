@@ -142,6 +142,9 @@ impl Proc {
             .arg(dir)
             .current_dir(dir)
             .creation_flags(0x0800_0000);
+        if let Some(path) = app_path() {
+            cmd.env("PATH", path);
+        }
         match cmd.spawn() {
             Ok(child) => {
                 tracing::info!(id, pid = child.id(), "add-on started");
@@ -162,6 +165,19 @@ impl Proc {
             tracing::info!(id, "add-on stopped");
         }
     }
+}
+
+pub fn path_with(dir: &Path, path: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    let rest: Vec<std::path::PathBuf> = path
+        .as_deref()
+        .map(|p| std::env::split_paths(p).collect())
+        .unwrap_or_default();
+    std::env::join_paths(std::iter::once(dir.to_path_buf()).chain(rest)).ok()
+}
+
+fn app_path() -> Option<std::ffi::OsString> {
+    let exe = std::env::current_exe().ok()?;
+    path_with(exe.parent()?, std::env::var_os("PATH"))
 }
 
 fn guard(lock: &Mutex<()>) -> Option<MutexGuard<'_, ()>> {
@@ -307,6 +323,18 @@ mod tests {
             min_app: min_app.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn add_ons_find_the_app_files_first_on_their_path() {
+        let joined = path_with(Path::new(r"C:\app"), Some(r"C:\Windows;C:\tools".into())).unwrap();
+        let parts: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+        assert_eq!(
+            parts,
+            [r"C:\app", r"C:\Windows", r"C:\tools"].map(PathBuf::from)
+        );
+        let alone = path_with(Path::new(r"C:\app"), None).unwrap();
+        assert_eq!(alone, std::ffi::OsString::from(r"C:\app"));
     }
 
     fn temp(name: &str) -> PathBuf {

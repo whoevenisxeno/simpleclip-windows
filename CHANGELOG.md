@@ -2,6 +2,16 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.3.0
+
+### Changed
+- Key overlay 2.0.0 (add-on) no longer sits on your screen. It adds your keys and mouse buttons to each clip right after it is saved, in the spot you picked, and keeps all your sound tracks as they were. A 45 second 1080p clip takes around 15 to 20 seconds, done in the background at low priority. Clips where you pressed nothing are left alone. If the clip is open somewhere and can't be replaced, a copy with your keys is saved next to it as `<name>-keys.mp4`. Turn on "Also show on my screen" in its settings to get the live overlay back. It needs SimpleClip 7.3.0.
+- To do this it now remembers which keys on its layout you pressed over the last 30 minutes, in memory only. Nothing you type is saved to disk, logged or sent anywhere, and other keys are never looked at.
+
+### Added
+- Add-ons are told when a clip is saved and exactly which moment it covers, and can use SimpleClip's own video files.
+- Edits made in SimpleClip decode faster on computers with several cores.
+
 ## 7.2.0
 
 ### Added

@@ -695,7 +695,7 @@ impl Shop {
             entry(
                 "keys",
                 "Key overlay",
-                "Shows the keys and mouse buttons you press on screen, for tutorials and streams.",
+                "Adds the keys and mouse buttons you press to your clips, right after each one is saved.",
                 "1.0.0",
             ),
             entry(
@@ -750,7 +750,7 @@ impl Shop {
                     set(
                         "where",
                         "Position",
-                        "Where the overlay sits on your screen",
+                        "Where the keys sit in your clips",
                         store::Kind::Place {
                             default: [0.03, 0.68],
                             preview: "preview.png".into(),

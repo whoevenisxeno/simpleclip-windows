@@ -1,16 +1,16 @@
 {
   "name": "keys",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "title": "Key overlay",
-  "about": "Shows the keys and mouse buttons you press, live on screen, so they show up in your clips.",
+  "about": "Adds the keys and mouse buttons you press to your clips, right after each one is saved. Nothing shows on your screen unless you want it to.",
   "exe": "sc-keys.exe",
-  "min_app": "7.2.0",
+  "min_app": "7.3.0",
   "background": true,
   "settings": [
     {
       "key": "where",
       "label": "Position",
-      "hint": "Drag it where you want it on the screen",
+      "hint": "Drag it where you want it in your clips",
       "kind": "place",
       "default": [0.02, 0.72],
       "preview": "preview.png"
@@ -56,9 +56,16 @@
     {
       "key": "games",
       "label": "Only while a game is open",
-      "hint": "Hides it on the desktop and in other apps",
+      "hint": "Ignores keys pressed on the desktop and in other apps",
       "kind": "toggle",
       "default": true
+    },
+    {
+      "key": "screen",
+      "label": "Also show on my screen",
+      "hint": "Off keeps it out of your way, it only appears in clips",
+      "kind": "toggle",
+      "default": false
     }
   ]
 }

@@ -277,6 +277,35 @@ pub fn write_status(dir: &Path, line: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, dir.join(STATUS))
 }
 
+pub const SAVES: &str = "saves.json";
+const SAVES_KEPT: usize = 20;
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Saved {
+    pub path: PathBuf,
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+pub fn read_saves(root: &Path) -> Vec<Saved> {
+    std::fs::read_to_string(root.join(SAVES))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn note_save(root: &Path, saved: Saved) -> std::io::Result<()> {
+    std::fs::create_dir_all(root)?;
+    let mut list = read_saves(root);
+    list.push(saved);
+    let extra = list.len().saturating_sub(SAVES_KEPT);
+    list.drain(..extra);
+    let tmp = root.join("saves.json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(&list).unwrap_or_default())?;
+    std::fs::rename(&tmp, root.join(SAVES))
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Catalog {
@@ -475,6 +504,27 @@ mod tests {
             sha256: "a".repeat(64),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn saved_clips_are_listed_newest_last_and_only_the_last_few_are_kept() {
+        let root = temp("saves");
+        assert!(read_saves(&root).is_empty());
+        for i in 0..25u64 {
+            let s = Saved {
+                path: PathBuf::from(format!("clip{i}.mp4")),
+                start_ms: i * 1000,
+                end_ms: i * 1000 + 500,
+            };
+            note_save(&root, s).unwrap();
+        }
+        let list = read_saves(&root);
+        assert_eq!(list.len(), SAVES_KEPT);
+        assert_eq!(list[0].path, PathBuf::from("clip5.mp4"));
+        assert_eq!(list.last().unwrap().end_ms, 24_500);
+        std::fs::write(root.join(SAVES), "nonsense").unwrap();
+        assert!(read_saves(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -107,7 +107,9 @@ impl Daemon {
             let app = crate::naming::foreground_app();
             let path = crate::naming::clip_path(&cfg, app.as_deref());
             let started = std::time::Instant::now();
+            let ended = std::time::SystemTime::now();
             let dur = p.save(secs, &path).map_err(|e| format!("{e:#}"))?;
+            note_save(&path, ended, dur);
             #[cfg(windows)]
             crate::notify::clip_saved(
                 &crate::notify::SavedClip {
@@ -240,5 +242,24 @@ impl Daemon {
 
     pub fn set_recording(&self, recording: bool) {
         self.status.lock().unwrap().recording = recording;
+    }
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn note_save(path: &std::path::Path, ended: std::time::SystemTime, secs: f64) {
+    let Some(root) = sc_core::store::root() else {
+        return;
+    };
+    let end_ms = ended
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let saved = sc_core::store::Saved {
+        path: path.to_path_buf(),
+        start_ms: end_ms.saturating_sub((secs.max(0.0) * 1000.0) as u64),
+        end_ms,
+    };
+    if let Err(e) = sc_core::store::note_save(&root, saved) {
+        tracing::warn!(error = %e, "could not note the save for add-ons");
     }
 }

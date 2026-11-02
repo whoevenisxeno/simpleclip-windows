@@ -222,6 +222,211 @@ pub fn trim_copy(src: &Path, dst: &Path, start_secs: f64, end_secs: f64) -> Resu
     }
 }
 
+unsafe fn start_secs(ic: *mut ffi::AVFormatContext, index: usize) -> f64 {
+    let st = *(*ic).streams.add(index);
+    let tb = (*st).time_base;
+    if (*st).start_time == ffi::AV_NOPTS_VALUE || (*st).start_time <= 0 {
+        return 0.0;
+    }
+    (*st).start_time as f64 * tb.num as f64 / tb.den.max(1) as f64
+}
+
+unsafe fn streams_of(ic: *mut ffi::AVFormatContext, kind: ffi::AVMediaType) -> Vec<usize> {
+    (0..(*ic).nb_streams as usize)
+        .filter(|&i| (*(**(*ic).streams.add(i)).codecpar).codec_type == kind)
+        .collect()
+}
+
+struct Feed {
+    ic: *mut ffi::AVFormatContext,
+    map: Vec<i32>,
+    shift: f64,
+    pkt: *mut ffi::AVPacket,
+    ready: Option<f64>,
+    done: bool,
+}
+
+impl Feed {
+    unsafe fn secs(&self, ts: i64, idx: usize) -> f64 {
+        let tb = (**(*self.ic).streams.add(idx)).time_base;
+        ts as f64 * tb.num as f64 / tb.den.max(1) as f64 - self.shift
+    }
+
+    unsafe fn next(&mut self) {
+        self.ready = None;
+        while !self.done {
+            if ffi::av_read_frame(self.ic, self.pkt) < 0 {
+                self.done = true;
+                return;
+            }
+            let idx = (*self.pkt).stream_index as usize;
+            let (pts, dts) = ((*self.pkt).pts, (*self.pkt).dts);
+            let ts = if dts != ffi::AV_NOPTS_VALUE { dts } else { pts };
+            if self.map.get(idx).copied().unwrap_or(-1) < 0 || ts == ffi::AV_NOPTS_VALUE {
+                ffi::av_packet_unref(self.pkt);
+                continue;
+            }
+            let shown = if pts != ffi::AV_NOPTS_VALUE { pts } else { ts };
+            if self.secs(shown, idx) < -0.0005 {
+                ffi::av_packet_unref(self.pkt);
+                continue;
+            }
+            self.ready = Some(self.secs(ts, idx));
+            return;
+        }
+    }
+
+    unsafe fn write(&mut self, oc: *mut ffi::AVFormatContext) -> Result<()> {
+        let idx = (*self.pkt).stream_index as usize;
+        let oidx = self.map[idx];
+        let in_tb = (**(*self.ic).streams.add(idx)).time_base;
+        let out_tb = (**(*oc).streams.add(oidx as usize)).time_base;
+        let off = ffi::av_rescale_q((self.shift * 1_000_000.0).round() as i64, US, in_tb);
+        if (*self.pkt).pts != ffi::AV_NOPTS_VALUE {
+            (*self.pkt).pts = ffi::av_rescale_q((*self.pkt).pts - off, in_tb, out_tb);
+        }
+        if (*self.pkt).dts != ffi::AV_NOPTS_VALUE {
+            (*self.pkt).dts = ffi::av_rescale_q((*self.pkt).dts - off, in_tb, out_tb);
+        }
+        (*self.pkt).duration = ffi::av_rescale_q((*self.pkt).duration, in_tb, out_tb);
+        (*self.pkt).stream_index = oidx;
+        (*self.pkt).pos = -1;
+        let rc = ffi::av_interleaved_write_frame(oc, self.pkt);
+        ffi::av_packet_unref(self.pkt);
+        if rc < 0 {
+            return Err(Error::Av {
+                code: rc,
+                ctx: "av_interleaved_write_frame",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Feed {
+    fn drop(&mut self) {
+        unsafe { ffi::av_packet_free(&mut self.pkt) };
+    }
+}
+
+unsafe fn copy_stream(oc: *mut ffi::AVFormatContext, st: *mut ffi::AVStream) -> Result<i32> {
+    let ost = ffi::avformat_new_stream(oc, ptr::null());
+    if ost.is_null() {
+        return Err(Error::Av {
+            code: -1,
+            ctx: "avformat_new_stream",
+        });
+    }
+    if ffi::avcodec_parameters_copy((*ost).codecpar, (*st).codecpar) < 0 {
+        return Err(Error::Av {
+            code: -1,
+            ctx: "avcodec_parameters_copy",
+        });
+    }
+    (*(*ost).codecpar).codec_tag = 0;
+    (*ost).time_base = (*st).time_base;
+    (*ost).disposition = (*st).disposition;
+    if !(*st).metadata.is_null() {
+        ffi::av_dict_copy(&mut (*ost).metadata, (*st).metadata, 0);
+    }
+    Ok((*ost).index)
+}
+
+pub fn with_sound_of(video: &Path, sound: &Path, dst: &Path) -> Result<()> {
+    let pic = Input::open(video)?;
+    let snd = Input::open(sound)?;
+    let dst_c = cpath(dst)?;
+    unsafe {
+        let mut oc: *mut ffi::AVFormatContext = ptr::null_mut();
+        let fmt = CString::new("mp4").unwrap();
+        let rc =
+            ffi::avformat_alloc_output_context2(&mut oc, ptr::null(), fmt.as_ptr(), dst_c.as_ptr());
+        if rc < 0 || oc.is_null() {
+            return Err(Error::Av {
+                code: rc,
+                ctx: "avformat_alloc_output_context2",
+            });
+        }
+        let out = Output(oc);
+
+        let v = *streams_of(pic.0, ffi::AVMediaType::AVMEDIA_TYPE_VIDEO)
+            .first()
+            .ok_or_else(|| Error::Ffmpeg("no video stream".into()))?;
+        let mut vmap = vec![-1i32; (*pic.0).nb_streams as usize];
+        vmap[v] = copy_stream(oc, *(*pic.0).streams.add(v))?;
+        let mut amap = vec![-1i32; (*snd.0).nb_streams as usize];
+        for a in streams_of(snd.0, ffi::AVMediaType::AVMEDIA_TYPE_AUDIO) {
+            amap[a] = copy_stream(oc, *(*snd.0).streams.add(a))?;
+        }
+        let sound_shift = streams_of(snd.0, ffi::AVMediaType::AVMEDIA_TYPE_VIDEO)
+            .first()
+            .map(|&i| start_secs(snd.0, i))
+            .unwrap_or(0.0);
+
+        if ffi::avio_open(&mut (*oc).pb, dst_c.as_ptr(), ffi::AVIO_FLAG_WRITE) < 0 {
+            return Err(Error::Av {
+                code: -1,
+                ctx: "avio_open",
+            });
+        }
+        let mut opts: *mut ffi::AVDictionary = ptr::null_mut();
+        let (k, val) = (
+            CString::new("movflags").unwrap(),
+            CString::new("+faststart").unwrap(),
+        );
+        ffi::av_dict_set(&mut opts, k.as_ptr(), val.as_ptr(), 0);
+        let rc = ffi::avformat_write_header(oc, &mut opts);
+        ffi::av_dict_free(&mut opts);
+        if rc < 0 {
+            return Err(Error::Av {
+                code: rc,
+                ctx: "avformat_write_header",
+            });
+        }
+
+        let mut feeds = [
+            Feed {
+                ic: pic.0,
+                map: vmap,
+                shift: start_secs(pic.0, v),
+                pkt: ffi::av_packet_alloc(),
+                ready: None,
+                done: false,
+            },
+            Feed {
+                ic: snd.0,
+                map: amap,
+                shift: sound_shift,
+                pkt: ffi::av_packet_alloc(),
+                ready: None,
+                done: false,
+            },
+        ];
+        for f in feeds.iter_mut() {
+            f.next();
+        }
+        loop {
+            let pick = match (feeds[0].ready, feeds[1].ready) {
+                (Some(a), Some(b)) => usize::from(b < a),
+                (Some(_), None) => 0,
+                (None, Some(_)) => 1,
+                (None, None) => break,
+            };
+            feeds[pick].write(oc)?;
+            feeds[pick].next();
+        }
+        drop(feeds);
+        if ffi::av_write_trailer(oc) < 0 {
+            return Err(Error::Av {
+                code: -1,
+                ctx: "av_write_trailer",
+            });
+        }
+        drop(out);
+    }
+    Ok(())
+}
+
 struct Output(*mut ffi::AVFormatContext);
 
 impl Drop for Output {

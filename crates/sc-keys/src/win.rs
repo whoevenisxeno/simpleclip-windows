@@ -6,6 +6,7 @@ use sc_keys::layout::Board;
 use sc_keys::place::{self, Front, Rect};
 use sc_keys::preview;
 use sc_keys::settings::{self, Settings, Shape};
+use sc_keys::tape::{self, Event, Input, State};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -36,8 +37,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
-const FADE: Duration = Duration::from_millis(170);
-const FLASH: Duration = Duration::from_millis(320);
 const POKE: u32 = WM_APP + 1;
 const MOVED: u32 = WM_APP + 2;
 const TICK: usize = 1;
@@ -48,11 +47,7 @@ struct Held {
     posted: bool,
     want: [bool; 256],
     mouse: bool,
-    down: [bool; 256],
-    gone: [Option<Instant>; 256],
-    buttons: [bool; 3],
-    let_go: [Option<Instant>; 3],
-    scroll: Option<(Instant, bool)>,
+    state: State,
 }
 
 impl Held {
@@ -62,11 +57,7 @@ impl Held {
             posted: false,
             want: [false; 256],
             mouse: false,
-            down: [false; 256],
-            gone: [None; 256],
-            buttons: [false; 3],
-            let_go: [None; 3],
-            scroll: None,
+            state: State::new(),
         }
     }
 
@@ -79,100 +70,56 @@ impl Held {
         }
     }
 
-    fn key(&mut self, vk: usize, down: bool) {
-        if vk >= 256 || !self.want[vk] || self.down[vk] == down {
-            return;
+    fn feed(&mut self, input: Input, down: bool) {
+        let e = Event {
+            at: tape::now(),
+            input,
+            down,
+        };
+        if self.state.apply(&e) {
+            tape::record(e);
+            self.poke();
         }
-        self.down[vk] = down;
-        self.gone[vk] = (!down).then(Instant::now);
-        self.poke();
+    }
+
+    fn key(&mut self, vk: usize, down: bool) {
+        if vk < 256 && self.want[vk] {
+            self.feed(Input::Key(vk as u8), down);
+        }
     }
 
     fn button(&mut self, i: usize, down: bool) {
-        if !self.mouse || self.buttons[i] == down {
-            return;
+        if self.mouse {
+            self.feed(Input::Button(i as u8), down);
         }
-        self.buttons[i] = down;
-        self.let_go[i] = (!down).then(Instant::now);
-        self.poke();
     }
 
     fn wheel(&mut self, up: bool) {
         if self.mouse {
-            self.scroll = Some((Instant::now(), up));
-            self.poke();
+            self.feed(Input::Wheel(up), false);
         }
     }
 
     fn clear(&mut self) {
-        self.down = [false; 256];
-        self.gone = [None; 256];
-        self.buttons = [false; 3];
-        self.let_go = [None; 3];
-        self.scroll = None;
+        self.feed(Input::Clear, false);
     }
 
-    fn lit(&self, b: &Board, now: Instant) -> (Lit, bool) {
-        let mut busy = false;
-        let mut fade = |down: bool, gone: Option<Instant>, span: Duration| -> f32 {
-            if down {
-                return 1.0;
-            }
-            let Some(at) = gone else { return 0.0 };
-            let p = now.duration_since(at).as_secs_f32() / span.as_secs_f32();
-            if p >= 1.0 {
-                return 0.0;
-            }
-            busy = true;
-            let q = 1.0 - p;
-            q * q * (3.0 - 2.0 * q)
-        };
-        let keys = b
-            .caps
-            .iter()
-            .map(|c| {
-                c.vks
-                    .iter()
-                    .map(|&v| fade(self.down[v as usize], self.gone[v as usize], FADE))
-                    .fold(0.0, f32::max)
-            })
-            .collect();
-        let mouse = [0, 1, 2].map(|i| fade(self.buttons[i], self.let_go[i], FADE));
-        let (scroll, up) = match self.scroll {
-            Some((at, up)) => (fade(false, Some(at), FLASH), up),
-            None => (0.0, false),
-        };
-        (
-            Lit {
-                keys,
-                mouse,
-                scroll,
-                up,
-            },
-            busy,
-        )
+    fn lit(&self, b: &Board) -> (Lit, bool) {
+        self.state.lit(b, tape::now())
     }
 
     fn unstick(&mut self) {
         let held = |vk: i32| unsafe { GetAsyncKeyState(vk) as u16 & 0x8000 != 0 };
-        let mut changed = false;
         for vk in 0..256 {
-            if self.down[vk] && !held(vk as i32) {
-                self.down[vk] = false;
-                self.gone[vk] = Some(Instant::now());
-                changed = true;
+            if self.state.down[vk] && !held(vk as i32) {
+                self.feed(Input::Key(vk as u8), false);
             }
         }
         let either = held(0x01) || held(0x02);
         for (i, now) in [either, held(0x04), either].into_iter().enumerate() {
-            if self.buttons[i] && !now {
-                self.buttons[i] = false;
-                self.let_go[i] = Some(Instant::now());
-                changed = true;
+            if self.state.buttons[i] && !now {
+                self.feed(Input::Button(i as u8), false);
             }
-        }
-        if changed {
-            self.poke();
         }
     }
 }
@@ -418,10 +365,12 @@ impl App {
             }
         };
         self.target = target;
-        match target {
+        if target.is_some() {
+            self.hook();
+            with(|h| h.unstick());
+        }
+        match target.filter(|_| s.screen) {
             Some(t) => {
-                self.hook();
-                with(|h| h.unstick());
                 let fresh = self.shown.is_none();
                 if self.shown != Some((t, s)) {
                     self.shown = Some((t, s));
@@ -448,7 +397,9 @@ impl App {
                         let _ = ShowWindow(self.hwnd, SW_HIDE);
                     }
                 }
-                self.unhook();
+                if target.is_none() {
+                    self.unhook();
+                }
                 self.animate(false);
             }
         }
@@ -506,11 +457,14 @@ impl App {
     }
 
     fn draw(&mut self) {
-        let now = Instant::now();
         let got = with(|h| {
             h.posted = false;
-            h.lit(&self.board, now)
+            h.lit(&self.board)
         });
+        if self.shown.is_none() {
+            self.animate(false);
+            return;
+        }
         let Some(t) = self.target else { return };
         let Some((lit, busy)) = got else { return };
         self.animate(busy);
@@ -558,13 +512,17 @@ impl App {
 
     fn status(&self) {
         let line = if !self.settings.enabled {
-            "Off"
-        } else if self.target.is_some() {
-            "Showing your keys"
+            "Off".to_string()
+        } else if let Some(note) = crate::watch::note() {
+            note
+        } else if self.target.is_none() {
+            "Waiting for a game".to_string()
+        } else if self.settings.screen {
+            "Showing your keys, and adding them to clips".to_string()
         } else {
-            "Hidden until a game is open"
+            "Adding your keys to clips".to_string()
         };
-        let _ = store::write_status(&self.dir, line);
+        let _ = store::write_status(&self.dir, &line);
     }
 
     fn tick(&mut self) -> bool {
@@ -652,6 +610,7 @@ pub fn run(dir: &Path, parent: Option<u32>) {
         }
         app.arm();
         app.write_preview();
+        crate::watch::spawn(dir.to_path_buf());
         SetTimer(Some(hwnd), TICK, 100, None);
         let mut msg = MSG::default();
         let mut alive = app.tick();
