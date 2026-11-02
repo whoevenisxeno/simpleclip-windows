@@ -13,12 +13,12 @@
                    {
                        "id":  "keys",
                        "title":  "Key overlay",
-                       "about":  "Shows the keys and mouse buttons you press, live on screen, so they show up in your clips.",
-                       "version":  "1.0.0",
-                       "min_app":  "7.2.0",
-                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/keys-1.0.0.zip",
-                       "size":  491251,
-                       "sha256":  "1813b7e5b280f8c1e347dbfeeadcf676118da044584b19eadc52ae8455fbd3ef"
+                       "about":  "Adds the keys and mouse buttons you press to your clips, right after each one is saved. Nothing shows on your screen unless you want it to.",
+                       "version":  "2.0.0",
+                       "min_app":  "7.3.0",
+                       "url":  "https://raw.githubusercontent.com/whoevenisxeno/simpleclip-windows/addons/packages/keys-2.0.0.zip",
+                       "size":  630196,
+                       "sha256":  "5f2a562ba9f4e6961f026d50b1a30b0558c5671a1f3dd5bd4dfe2a7ee5a90a53"
                    },
                    {
                        "id":  "meme",
