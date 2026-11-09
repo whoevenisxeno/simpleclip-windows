@@ -61,6 +61,7 @@ pub struct ScApp {
     #[cfg(windows)]
     pub updater: crate::update::Updater,
     shot: Option<Shot>,
+    tags_read: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -230,6 +231,7 @@ impl ScApp {
             #[cfg(windows)]
             updater: Default::default(),
             shot,
+            tags_read: None,
         };
         #[cfg(windows)]
         if app.shot.is_some() {
@@ -407,6 +409,7 @@ impl eframe::App for ScApp {
         if self.shot.is_none() || self.star.is_showing() {
             crate::star::show(self, ctx, star_busy);
         }
+        self.take_clip_tags();
         self.library.flush_if_due();
         if self.library.is_dirty() {
             ctx.request_repaint_after(Duration::from_millis(600));
@@ -611,6 +614,8 @@ struct Shot {
     requested: bool,
 }
 
+const TAGS_EVERY: Duration = Duration::from_secs(2);
+
 const SHOT_PLAN: &[(&str, bool)] = &[
     ("home", true),
     ("clips", true),
@@ -675,6 +680,19 @@ impl Shot {
 }
 
 impl ScApp {
+    fn take_clip_tags(&mut self) {
+        if self.shot.is_some() || self.tags_read.is_some_and(|t| t.elapsed() < TAGS_EVERY) {
+            return;
+        }
+        self.tags_read = Some(Instant::now());
+        let Some(root) = sc_core::store::root() else {
+            return;
+        };
+        for note in sc_core::store::take_clip_tags(&root) {
+            self.library.set_tag(&note.path, &note.tag);
+        }
+    }
+
     fn shot_demo_data(&mut self) {
         if !self.library.bookmarks.is_empty() {
             return;
@@ -697,6 +715,7 @@ impl ScApp {
         }
         if let Some(p) = paths.get(1) {
             self.library.toggle_bookmark(p, fail);
+            self.library.set_tag(p, "Clip that");
         }
         if let Some(p) = paths.get(2) {
             self.library.toggle_bookmark(p, funny);

@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 use std::time::{Duration, Instant};
 
 pub const PHRASE: &str = "simple clip that";
+pub const TAG: &str = "Clip that";
 pub const COOLDOWN: Duration = Duration::from_secs(5);
 const SHOW_SAVE_FOR: Duration = Duration::from_secs(300);
 

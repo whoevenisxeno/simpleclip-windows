@@ -304,6 +304,49 @@ pub fn write_status(dir: &Path, line: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, dir.join(STATUS))
 }
 
+pub const CLIP_TAGS: &str = "clip-tags";
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipTag {
+    pub path: PathBuf,
+    pub tag: String,
+}
+
+pub fn tag_clip(root: &Path, path: &Path, tag: &str) -> std::io::Result<()> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = root.join(CLIP_TAGS);
+    std::fs::create_dir_all(&dir)?;
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = format!("{}-{}-{n}", crate::addon::now_secs(), std::process::id());
+    let note = ClipTag {
+        path: path.to_path_buf(),
+        tag: tag.to_string(),
+    };
+    let tmp = dir.join(format!("{name}.tmp"));
+    std::fs::write(&tmp, serde_json::to_string(&note).unwrap_or_default())?;
+    std::fs::rename(&tmp, dir.join(format!("{name}.json")))
+}
+
+pub fn take_clip_tags(root: &Path) -> Vec<ClipTag> {
+    let Ok(entries) = std::fs::read_dir(root.join(CLIP_TAGS)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for path in entries.flatten().map(|e| e.path()) {
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let note = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<ClipTag>(&t).ok());
+        if std::fs::remove_file(&path).is_ok() {
+            out.extend(note.filter(|n| !n.tag.is_empty()));
+        }
+    }
+    out
+}
+
 pub const SAVES: &str = "saves.json";
 const SAVES_KEPT: usize = 20;
 
@@ -531,6 +574,24 @@ mod tests {
             sha256: "a".repeat(64),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn clip_tags_are_handed_over_once() {
+        let root = temp("tags");
+        assert!(take_clip_tags(&root).is_empty());
+        tag_clip(&root, Path::new("a.mp4"), "Clip that").unwrap();
+        tag_clip(&root, Path::new("b.mp4"), "Clip that").unwrap();
+        std::fs::write(root.join(CLIP_TAGS).join("bad.json"), "nonsense").unwrap();
+        std::fs::write(root.join(CLIP_TAGS).join("half.tmp"), "x").unwrap();
+        let mut got = take_clip_tags(&root);
+        got.sort_by(|x, y| x.path.cmp(&y.path));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].path, PathBuf::from("a.mp4"));
+        assert_eq!(got[1].tag, "Clip that");
+        assert!(take_clip_tags(&root).is_empty());
+        assert!(root.join(CLIP_TAGS).join("half.tmp").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -138,6 +138,9 @@ fn hearing_the_phrase_asks_simpleclip_for_one_clip() {
     let fed = feed(&root, "once", &w[1], r#"{"beep":false,"card":false}"#);
     assert_eq!(fed.saves, vec![None]);
     assert_eq!(fed.calls.len(), 1, "no card when it is turned off");
+    let tags = store::take_clip_tags(&root.join("once").join("addons"));
+    assert_eq!(tags.len(), 1, "the clip it saved gets a tag");
+    assert_eq!(tags[0].tag, "Clip that");
 
     let fed = feed(&root, "hey", &w[2], r#"{"beep":false}"#);
     match fed.calls.as_slice() {

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 use sc_core::ipc::{self, Envelope, Request, Response, IPC_VERSION};
 use std::io::BufReader;
+use std::path::PathBuf;
 
 fn socket_name() -> String {
     std::env::var("SC_SOCKET").unwrap_or_else(|_| ipc::DEFAULT_SOCKET_NAME.to_string())
@@ -30,9 +31,10 @@ pub fn popup(title: &str, line: &str) -> Result<(), String> {
     }
 }
 
-pub fn save(last_secs: Option<u32>) -> Result<(), String> {
+pub fn save(last_secs: Option<u32>) -> Result<Option<PathBuf>, String> {
     match request(Request::Save { last_secs }) {
-        Ok(Response::Saved { .. } | Response::Ok) => Ok(()),
+        Ok(Response::Saved { path, .. }) => Ok(Some(path)),
+        Ok(Response::Ok) => Ok(None),
         Ok(Response::Error { message }) => Err(message),
         Ok(_) => Err("unexpected answer from SimpleClip".to_string()),
         Err(e) => Err(format!("{e:#}")),

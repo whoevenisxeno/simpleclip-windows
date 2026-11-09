@@ -765,6 +765,10 @@ pub fn view(app: &mut ScApp, ui: &mut Ui) {
                 || app.library.note(&c.path).to_lowercase().contains(&needle)
                 || app
                     .library
+                    .tag(&c.path)
+                    .is_some_and(|t| t.to_lowercase().contains(&needle))
+                || app
+                    .library
                     .bookmarks_of(&c.path)
                     .iter()
                     .any(|b| b.name.to_lowercase().contains(&needle));
@@ -1210,6 +1214,23 @@ fn card(app: &mut ScApp, ui: &mut Ui, clip: &Clip, w: f32, by: GroupBy) {
                 tag,
                 Rounding::same(tag.height() / 2.0),
                 Color32::from_black_alpha(150),
+            );
+            ui.painter()
+                .galley(tag.center() - galley.size() / 2.0, galley, Color32::WHITE);
+        }
+        if let Some(label) = app.library.tag(&clip.path) {
+            let galley = ui.painter().layout_no_wrap(
+                label.to_string(),
+                FontId::new(11.0, theme::semibold()),
+                Color32::WHITE,
+            );
+            let size = galley.size() + vec2(14.0, 6.0);
+            let tag =
+                Rect::from_min_size(pos2(rect.right() - 8.0 - size.x, rect.top() + 8.0), size);
+            ui.painter().rect_filled(
+                tag,
+                Rounding::same(tag.height() / 2.0),
+                Color32::from_rgba_unmultiplied(0x6d, 0x3b, 0xf5, 225),
             );
             ui.painter()
                 .galley(tag.center() - galley.size() / 2.0, galley, Color32::WHITE);

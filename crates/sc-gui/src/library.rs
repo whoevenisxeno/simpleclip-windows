@@ -32,6 +32,8 @@ pub struct ClipMeta {
     pub compressed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
 }
 
 impl ClipMeta {
@@ -41,6 +43,7 @@ impl ClipMeta {
             && !self.trimmed
             && !self.compressed
             && self.game.is_none()
+            && self.tag.is_none()
     }
 }
 
@@ -214,6 +217,16 @@ impl Library {
         self.meta_mut(path).game = Some(game.to_string());
     }
 
+    pub fn tag(&self, path: &Path) -> Option<&str> {
+        self.meta(path).and_then(|m| m.tag.as_deref())
+    }
+
+    pub fn set_tag(&mut self, path: &Path, tag: &str) {
+        if self.tag(path) != Some(tag) {
+            self.meta_mut(path).tag = Some(tag.to_string());
+        }
+    }
+
     pub fn set_trimmed(&mut self, path: &Path, trimmed: bool) {
         if self.meta(path).is_some_and(|m| m.trimmed) == trimmed {
             return;
@@ -370,6 +383,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn a_tag_stays_with_the_clip_and_survives_a_reload() {
+        let dir = tmp("tag");
+        let file = dir.join("lib.json");
+        let mut lib = Library::load_from(file.clone());
+        let (a, b) = (dir.join("a.mp4"), dir.join("b.mp4"));
+        assert_eq!(lib.tag(&a), None);
+        lib.set_tag(&a, "Clip that");
+        lib.rekey(&a, &b);
+        assert_eq!(lib.tag(&a), None);
+        assert_eq!(lib.tag(&b), Some("Clip that"));
+        lib.save().unwrap();
+        assert_eq!(Library::load_from(file).tag(&b), Some("Clip that"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

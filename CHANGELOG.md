@@ -2,6 +2,11 @@
 
 Versions: a big update raises the first number, a minor update the middle one, and a bug fix the last one.
 
+## 7.6.1
+
+### Added
+- Clips saved by Clip that now have a small purple "Clip that" tag on them in Clips, so you can spot the ones it saved by mistake. Searching "clip that" finds them all. The tag stays when you rename or move a clip. It works for clips saved from now on, with Clip that 1.3.0 (add-on).
+
 ## 7.5.0
 
 ### Added

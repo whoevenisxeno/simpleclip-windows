@@ -229,6 +229,15 @@ fn beep() {
     });
 }
 
+fn tag_saved(dir: &Path, clip: Option<&Path>) {
+    let (Some(clip), Some(root)) = (clip, dir.parent()) else {
+        return;
+    };
+    if let Err(e) = store::tag_clip(root, clip, hear::TAG) {
+        tracing::warn!(error = %e, "could not tag the clip");
+    }
+}
+
 fn run(dir: &Path, options: &Options) {
     let manifest = hear::manifest();
     let mut settings = Settings::read(&manifest, &store::read_settings(dir));
@@ -283,11 +292,17 @@ fn run(dir: &Path, options: &Options) {
         let now = Instant::now();
         if let Some((at, secs)) = pending.filter(|(at, _)| now >= *at) {
             pending = None;
-            let result = ipc::save(secs);
-            match &result {
-                Ok(()) => tracing::info!(secs = ?secs, "clip saved"),
-                Err(e) => tracing::warn!(error = %e, "could not save"),
-            }
+            let result = match ipc::save(secs) {
+                Ok(clip) => {
+                    tracing::info!(secs = ?secs, "clip saved");
+                    tag_saved(dir, clip.as_deref());
+                    Ok(())
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not save");
+                    Err(e)
+                }
+            };
             last = Some(Last { at, result });
             last_status = long_ago;
         }
@@ -338,5 +353,21 @@ mod tests {
         assert_eq!(o.listen, None);
         let none = parse_args(&[]);
         assert!(none.parent.is_none() && none.dir.is_none() && none.feed.is_none());
+    }
+
+    #[test]
+    fn a_saved_clip_is_tagged_where_simpleclip_looks() {
+        let root = std::env::temp_dir().join(format!("sc-voice-tag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("voice");
+        std::fs::create_dir_all(&dir).unwrap();
+        tag_saved(&dir, None);
+        assert!(store::take_clip_tags(&root).is_empty());
+        tag_saved(&dir, Some(Path::new("clip.mp4")));
+        let got = store::take_clip_tags(&root);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, PathBuf::from("clip.mp4"));
+        assert_eq!(got[0].tag, "Clip that");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
